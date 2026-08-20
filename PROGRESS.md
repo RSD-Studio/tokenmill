@@ -25,8 +25,11 @@ _Last updated: 2026-08-20 by Claude Code_
 **Goal:** the plugin system and token measurement working end to end, proven by
 two deliberately trivial backends.
 
-**Phase 1's content ends at commit `e18b3d8`** (the commit after it records only
-this SHA). Tags cannot be pushed from these sessions — see Deferred work.
+**Phase 1's code and docs end at commit `e18b3d8`.** The exit gate was only
+genuinely proven later: CI had never run, and the first green run across all
+23 jobs — every platform, every Python version, and real tokenizers — was at
+**`3aa6e59`**, which is the commit to treat as Phase 1 complete. It has stayed
+green since. Tags cannot be pushed from these sessions — see Deferred work.
 
 **Built:**
 
