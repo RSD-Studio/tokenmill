@@ -27,3 +27,8 @@ models/
 
 # Benchmark scratch output; committed results live in benchmarks/results/
 benchmarks/scratch/
+
+# The sample_repo fixture is a real git repo. Its working files are
+# committed; its .git directory is recreated on demand by
+# scripts/make_fixtures.py so a clone gets the files, not an empty gitlink.
+tests/fixtures/sample_repo/.git/

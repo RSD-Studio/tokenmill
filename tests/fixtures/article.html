@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Why Your Context Window Is Mostly Navigation Menus</title>
+</head>
+<body>
+  <article>
+    <h1>Why Your Context Window Is Mostly Navigation Menus</h1>
+    <p class="standfirst">A short look at where context windows actually go.</p>
+    <h2>Where the tokens actually go</h2>
+    <p>Every time a language model reads a web page, it pays for the whole page. The header pays. The cookie banner pays. The three-deep navigation menu pays, and so does the newsletter modal, the social share rail, and the footer that repeats the navigation menu a second time in smaller type.</p>
+    <p>The article itself is often a small minority of the bytes. On a typical content site the prose a reader actually came for accounts for a fraction of the delivered markup, and the rest is scaffolding that carries no meaning for a model trying to answer a question about the text.</p>
+    <h2>The misattributed win</h2>
+    <p>This is why converting a page to Markdown appears to save so many tokens. The saving is real, but the mechanism is widely misattributed. Markdown syntax is not meaningfully cheaper than the equivalent HTML tags on a per-element basis. What actually happens is that the extraction step throws away the scaffolding, and the format conversion gets the credit.</p>
+    <p>The distinction matters because it tells you where to spend effort. If the win came from syntax, you would optimise the serialiser. Because the win comes from extraction, you should optimise the boilerplate detector, and you should measure extraction quality rather than output length.</p>
+    <h2>When extraction does not help</h2>
+    <p>It also tells you when the win will not appear. A page that is already mostly prose, such as a plain-text RFC or a documentation page rendered without a shell, has little scaffolding to remove. Running it through an extractor produces a small reduction and occasionally a regression, because aggressive extractors sometimes discard content they mistake for furniture.</p>
+    <p>There is a second, quieter effect that pushes in the opposite direction. Structure carries meaning. Headings tell a model how a document is organised; list markers tell it that items are peers; table pipes tell it which cell belongs to which column. Strip all of that in pursuit of a lower token count and you can end up with a cheaper prompt that produces worse answers.</p>
+    <h2>A rule worth remembering</h2>
+    <p>The practical rule that falls out of this is short enough to remember. Strip the boilerplate, because it is pure cost. Keep the structure, because it is load-bearing. And measure both the token count and whether the answer is still correct, because a token count on its own is not a quality metric and was never meant to be one.</p>
+    <h2>Summary table</h2>
+    <table>
+      <thead><tr><th>Backend</th><th>License</th><th>Runtime</th><th>Tables</th><th>Pages/sec</th></tr></thead>
+      <tbody>
+        <tr><td>markitdown</td><td>MIT</td><td>CPU</td><td>weak</td><td>12.0</td></tr>
+        <tr><td>docling</td><td>MIT</td><td>CPU</td><td>strong</td><td>0.8</td></tr>
+        <tr><td>pdfplumber</td><td>MIT</td><td>CPU</td><td>good</td><td>3.4</td></tr>
+        <tr><td>pypdf</td><td>BSD-3</td><td>CPU</td><td>none</td><td>18.5</td></tr>
+        <tr><td>pymupdf4llm</td><td>AGPL-3.0</td><td>CPU</td><td>good</td><td>11.1</td></tr>
+        <tr><td>marker</td><td>GPL-3.0</td><td>GPU</td><td>strong</td><td>1.9</td></tr>
+      </tbody>
+    </table>
+  </article>
+</body>
+</html>

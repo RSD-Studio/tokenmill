@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why Your Context Window Is Mostly Navigation Menus | Example Media Group</title>
+<meta name="description" content="A short look at where context windows actually go.">
+<style>.nav{display:flex;gap:1rem}.nav a{color:#333;text-decoration:none}.ad{min-height:250px;background:#eee;border:1px dashed #ccc}.cookie{position:fixed;bottom:0;left:0;right:0;background:#111;color:#fff}.modal{position:fixed;inset:0;background:rgba(0,0,0,.6)}.footer-links{columns:4}.social{display:flex}.nav{display:flex;gap:1rem}.nav a{color:#333;text-decoration:none}.ad{min-height:250px;background:#eee;border:1px dashed #ccc}.cookie{position:fixed;bottom:0;left:0;right:0;background:#111;color:#fff}.modal{position:fixed;inset:0;background:rgba(0,0,0,.6)}.footer-links{columns:4}.social{display:flex}.nav{display:flex;gap:1rem}.nav a{color:#333;text-decoration:none}.ad{min-height:250px;background:#eee;border:1px dashed #ccc}.cookie{position:fixed;bottom:0;left:0;right:0;background:#111;color:#fff}.modal{position:fixed;inset:0;background:rgba(0,0,0,.6)}.footer-links{columns:4}.social{display:flex}.nav{display:flex;gap:1rem}.nav a{color:#333;text-decoration:none}.ad{min-height:250px;background:#eee;border:1px dashed #ccc}.cookie{position:fixed;bottom:0;left:0;right:0;background:#111;color:#fff}.modal{position:fixed;inset:0;background:rgba(0,0,0,.6)}.footer-links{columns:4}.social{display:flex}.nav{display:flex;gap:1rem}.nav a{color:#333;text-decoration:none}.ad{min-height:250px;background:#eee;border:1px dashed #ccc}.cookie{position:fixed;bottom:0;left:0;right:0;background:#111;color:#fff}.modal{position:fixed;inset:0;background:rgba(0,0,0,.6)}.footer-links{columns:4}.social{display:flex}.nav{display:flex;gap:1rem}.nav a{color:#333;text-decoration:none}.ad{min-height:250px;background:#eee;border:1px dashed #ccc}.cookie{position:fixed;bottom:0;left:0;right:0;background:#111;color:#fff}.modal{position:fixed;inset:0;background:rgba(0,0,0,.6)}.footer-links{columns:4}.social{display:flex}</style>
+<script>(function(){var q=window.__adq=window.__adq||[];for(var i=0;i<40;i++){q.push({slot:'slot-'+i,sizes:[[300,250],[728,90]],targeting:{section:'technology',page:'article',variant:'control'}});}window.dataLayer=window.dataLayer||[];window.dataLayer.push({event:'pageview',contentGroup:'technology',author:'staff',wordCount:1200,paywall:false});})();</script>
+</head>
+<body>
+<div class="cookie" id="cookie-banner">
+  <p>We and our 847 partners use cookies and similar technologies to store and
+  access information on your device, personalise advertising, and measure
+  audience engagement. You may change your preferences at any time.</p>
+  <button>Accept all cookies</button><button>Manage preferences</button><button>Reject all</button>
+</div>
+
+<header>
+  <a href="/" class="logo">Example Media Group</a>
+  <nav class="nav">
+  <ul>
+    <li><strong>News</strong><ul><li><a href="/news/world">World</a></li><li><a href="/news/politics">Politics</a></li><li><a href="/news/business">Business</a></li><li><a href="/news/technology">Technology</a></li><li><a href="/news/science">Science</a></li><li><a href="/news/health">Health</a></li></ul></li>
+    <li><strong>Opinion</strong><ul><li><a href="/opinion/editorials">Editorials</a></li><li><a href="/opinion/columnists">Columnists</a></li><li><a href="/opinion/letters">Letters</a></li><li><a href="/opinion/guest-essays">Guest Essays</a></li></ul></li>
+    <li><strong>Culture</strong><ul><li><a href="/culture/books">Books</a></li><li><a href="/culture/film">Film</a></li><li><a href="/culture/music">Music</a></li><li><a href="/culture/television">Television</a></li><li><a href="/culture/theatre">Theatre</a></li><li><a href="/culture/art">Art</a></li></ul></li>
+    <li><strong>Lifestyle</strong><ul><li><a href="/lifestyle/food">Food</a></li><li><a href="/lifestyle/travel">Travel</a></li><li><a href="/lifestyle/style">Style</a></li><li><a href="/lifestyle/wellbeing">Wellbeing</a></li><li><a href="/lifestyle/home">Home</a></li><li><a href="/lifestyle/gardening">Gardening</a></li></ul></li>
+    <li><strong>More</strong><ul><li><a href="/more/newsletters">Newsletters</a></li><li><a href="/more/podcasts">Podcasts</a></li><li><a href="/more/video">Video</a></li><li><a href="/more/crosswords">Crosswords</a></li><li><a href="/more/jobs">Jobs</a></li><li><a href="/more/archive">Archive</a></li></ul></li>
+  </ul>
+  </nav>
+  <form action="/search"><input type="search" name="q" placeholder="Search"><button>Go</button></form>
+  <a class="cta" href="/subscribe">Subscribe from $1/week</a>
+</header>
+
+<div class="ad" id="ad-leaderboard">
+  <p>SPONSORED: Cut your cloud bill by 40% with one weird configuration change.</p>
+  <a href="https://ads.example.com/click?id=1">Learn more</a>
+</div>
+
+<main>
+  <article>
+    <h1>Why Your Context Window Is Mostly Navigation Menus</h1>
+    <p class="standfirst">A short look at where context windows actually go.</p>
+    <h2>Where the tokens actually go</h2>
+    <p>Every time a language model reads a web page, it pays for the whole page. The header pays. The cookie banner pays. The three-deep navigation menu pays, and so does the newsletter modal, the social share rail, and the footer that repeats the navigation menu a second time in smaller type.</p>
+    <p>The article itself is often a small minority of the bytes. On a typical content site the prose a reader actually came for accounts for a fraction of the delivered markup, and the rest is scaffolding that carries no meaning for a model trying to answer a question about the text.</p>
+    <h2>The misattributed win</h2>
+    <p>This is why converting a page to Markdown appears to save so many tokens. The saving is real, but the mechanism is widely misattributed. Markdown syntax is not meaningfully cheaper than the equivalent HTML tags on a per-element basis. What actually happens is that the extraction step throws away the scaffolding, and the format conversion gets the credit.</p>
+    <p>The distinction matters because it tells you where to spend effort. If the win came from syntax, you would optimise the serialiser. Because the win comes from extraction, you should optimise the boilerplate detector, and you should measure extraction quality rather than output length.</p>
+    <h2>When extraction does not help</h2>
+    <p>It also tells you when the win will not appear. A page that is already mostly prose, such as a plain-text RFC or a documentation page rendered without a shell, has little scaffolding to remove. Running it through an extractor produces a small reduction and occasionally a regression, because aggressive extractors sometimes discard content they mistake for furniture.</p>
+    <p>There is a second, quieter effect that pushes in the opposite direction. Structure carries meaning. Headings tell a model how a document is organised; list markers tell it that items are peers; table pipes tell it which cell belongs to which column. Strip all of that in pursuit of a lower token count and you can end up with a cheaper prompt that produces worse answers.</p>
+    <h2>A rule worth remembering</h2>
+    <p>The practical rule that falls out of this is short enough to remember. Strip the boilerplate, because it is pure cost. Keep the structure, because it is load-bearing. And measure both the token count and whether the answer is still correct, because a token count on its own is not a quality metric and was never meant to be one.</p>
+    <h2>Summary table</h2>
+    <table>
+      <thead><tr><th>Backend</th><th>License</th><th>Runtime</th><th>Tables</th><th>Pages/sec</th></tr></thead>
+      <tbody>
+        <tr><td>markitdown</td><td>MIT</td><td>CPU</td><td>weak</td><td>12.0</td></tr>
+        <tr><td>docling</td><td>MIT</td><td>CPU</td><td>strong</td><td>0.8</td></tr>
+        <tr><td>pdfplumber</td><td>MIT</td><td>CPU</td><td>good</td><td>3.4</td></tr>
+        <tr><td>pypdf</td><td>BSD-3</td><td>CPU</td><td>none</td><td>18.5</td></tr>
+        <tr><td>pymupdf4llm</td><td>AGPL-3.0</td><td>CPU</td><td>good</td><td>11.1</td></tr>
+        <tr><td>marker</td><td>GPL-3.0</td><td>GPU</td><td>strong</td><td>1.9</td></tr>
+      </tbody>
+    </table>
+  </article>
+
+  <aside class="ad" id="ad-mpu">
+    <p>SPONSORED: Cut your cloud bill by 40% with one weird configuration change.</p>
+  </aside>
+
+  <aside class="social">
+    <p>Follow us on social</p>
+    <ul><li><a href="#">Share</a></li><li><a href="#">Post</a></li><li><a href="#">Send</a></li></ul>
+  </aside>
+
+  <aside class="trending">
+    <h3>Trending right now</h3>
+    <ul>
+      <li><a href="/trending/1">Ten things about topic number 1 that will change how you work forever</a></li>
+      <li><a href="/trending/2">Ten things about topic number 2 that will change how you work forever</a></li>
+      <li><a href="/trending/3">Ten things about topic number 3 that will change how you work forever</a></li>
+      <li><a href="/trending/4">Ten things about topic number 4 that will change how you work forever</a></li>
+      <li><a href="/trending/5">Ten things about topic number 5 that will change how you work forever</a></li>
+      <li><a href="/trending/6">Ten things about topic number 6 that will change how you work forever</a></li>
+      <li><a href="/trending/7">Ten things about topic number 7 that will change how you work forever</a></li>
+      <li><a href="/trending/8">Ten things about topic number 8 that will change how you work forever</a></li>
+      <li><a href="/trending/9">Ten things about topic number 9 that will change how you work forever</a></li>
+      <li><a href="/trending/10">Ten things about topic number 10 that will change how you work forever</a></li>
+      <li><a href="/trending/11">Ten things about topic number 11 that will change how you work forever</a></li>
+      <li><a href="/trending/12">Ten things about topic number 12 that will change how you work forever</a></li>
+    </ul>
+  </aside>
+
+  <div class="modal" id="newsletter-modal">
+    <h3>Subscribe to our newsletter</h3>
+    <p>Get the stories that matter, every weekday morning, straight to your inbox.</p>
+    <form><input type="email" placeholder="you@example.com"><button>Sign up</button></form>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-links">
+  <ul>
+    <li><strong>News</strong><ul><li><a href="/news/world">World</a></li><li><a href="/news/politics">Politics</a></li><li><a href="/news/business">Business</a></li><li><a href="/news/technology">Technology</a></li><li><a href="/news/science">Science</a></li><li><a href="/news/health">Health</a></li></ul></li>
+    <li><strong>Opinion</strong><ul><li><a href="/opinion/editorials">Editorials</a></li><li><a href="/opinion/columnists">Columnists</a></li><li><a href="/opinion/letters">Letters</a></li><li><a href="/opinion/guest-essays">Guest Essays</a></li></ul></li>
+    <li><strong>Culture</strong><ul><li><a href="/culture/books">Books</a></li><li><a href="/culture/film">Film</a></li><li><a href="/culture/music">Music</a></li><li><a href="/culture/television">Television</a></li><li><a href="/culture/theatre">Theatre</a></li><li><a href="/culture/art">Art</a></li></ul></li>
+    <li><strong>Lifestyle</strong><ul><li><a href="/lifestyle/food">Food</a></li><li><a href="/lifestyle/travel">Travel</a></li><li><a href="/lifestyle/style">Style</a></li><li><a href="/lifestyle/wellbeing">Wellbeing</a></li><li><a href="/lifestyle/home">Home</a></li><li><a href="/lifestyle/gardening">Gardening</a></li></ul></li>
+    <li><strong>More</strong><ul><li><a href="/more/newsletters">Newsletters</a></li><li><a href="/more/podcasts">Podcasts</a></li><li><a href="/more/video">Video</a></li><li><a href="/more/crosswords">Crosswords</a></li><li><a href="/more/jobs">Jobs</a></li><li><a href="/more/archive">Archive</a></li></ul></li>
+  </ul>
+  </div>
+  <p>© 2026 Example Media Group. All rights reserved.
+  Terms of Service · Privacy Policy · Cookie Policy · Accessibility · Contact ·
+  Careers · Advertise with us · Corrections · Complaints</p>
+</footer>
+<script>(function(){var q=window.__adq=window.__adq||[];for(var i=0;i<40;i++){q.push({slot:'slot-'+i,sizes:[[300,250],[728,90]],targeting:{section:'technology',page:'article',variant:'control'}});}window.dataLayer=window.dataLayer||[];window.dataLayer.push({event:'pageview',contentGroup:'technology',author:'staff',wordCount:1200,paywall:false});})();</script>
+</body>
+</html>

@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pull-request templates, and the development plan and research survey committed
   under `docs/`.
 
+### Fixed
+
+- The `sample_repo` fixture was being committed as a gitlink, which would have
+  left clones with an empty directory. Its working files are now committed and
+  its `.git` directory is materialised on demand; a regression test guards it.
+
 ### Changed
 
 - Project renamed from `tokenfold` to `tokenmill` before the first commit: the

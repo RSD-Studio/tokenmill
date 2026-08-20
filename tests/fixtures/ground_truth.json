@@ -1,0 +1,337 @@
+{
+  "_generated_by": "scripts/make_fixtures.py",
+  "_note": "Structural facts about each fixture. Conversion tests assert against these rather than against byte-identical output.",
+  "fixtures": {
+    "article.html": {
+      "article_body_word_count": 388,
+      "article_paragraph_count": 7,
+      "article_title": "Why Your Context Window Is Mostly Navigation Menus",
+      "description": "Clean article with no boilerplate: the extraction baseline.",
+      "expected_headings": [
+        "Why Your Context Window Is Mostly Navigation Menus",
+        "Where the tokens actually go",
+        "The misattributed win",
+        "When extraction does not help",
+        "A rule worth remembering",
+        "Summary table"
+      ],
+      "has_boilerplate": false,
+      "must_contain": [
+        "Strip the boilerplate",
+        "load-bearing",
+        "pdfplumber"
+      ],
+      "table_columns": 5,
+      "table_count": 1,
+      "table_rows_including_header": 7
+    },
+    "boilerplate.html": {
+      "article_body_word_count": 388,
+      "article_paragraph_count": 7,
+      "article_title": "Why Your Context Window Is Mostly Navigation Menus",
+      "boilerplate_markers_must_be_absent": [
+        "Subscribe to our newsletter",
+        "SPONSORED: Cut your cloud bill by 40%",
+        "Accept all cookies",
+        "Trending right now",
+        "© 2026 Example Media Group",
+        "Follow us on social"
+      ],
+      "description": "The article.html body wrapped in heavy nav, ads, scripts, modals and footer.",
+      "expected_headings": [
+        "Why Your Context Window Is Mostly Navigation Menus",
+        "Where the tokens actually go",
+        "The misattributed win",
+        "When extraction does not help",
+        "A rule worth remembering",
+        "Summary table"
+      ],
+      "has_boilerplate": true,
+      "must_contain": [
+        "Strip the boilerplate",
+        "load-bearing",
+        "pdfplumber"
+      ],
+      "paired_clean_fixture": "article.html",
+      "table_columns": 5,
+      "table_count": 1,
+      "table_rows_including_header": 7
+    },
+    "corrupt.pdf": {
+      "description": "Truncated PDF (first third of simple.pdf). Every backend must fail cleanly.",
+      "expect_conversion_error": true,
+      "keeps_pdf_magic": true
+    },
+    "data.xlsx": {
+      "description": "Three sheets (backends, corpus, totals); totals holds one AVERAGE formula.",
+      "has_formula": true,
+      "must_contain": [
+        "pdfplumber",
+        "simple.pdf",
+        "backend_count"
+      ],
+      "sheet_names": [
+        "backends",
+        "corpus",
+        "totals"
+      ],
+      "sheet_row_counts": {
+        "backends": 7,
+        "corpus": 5,
+        "totals": 4
+      }
+    },
+    "deck.pptx": {
+      "description": "5 slides: title, three bulleted slides with speaker notes, one blank+textbox.",
+      "must_contain": [
+        "Cookie banners",
+        "Appendix: raw numbers live in the repository."
+      ],
+      "slide_count": 5,
+      "slide_titles": [
+        "Context Efficiency",
+        "Where Your Tokens Go",
+        "Strip Boilerplate, Keep Structure",
+        "Measuring Honestly"
+      ],
+      "speaker_notes": [
+        "Title slide speaker note.",
+        "Open by asking the room to guess the split. It is always worse than they think.",
+        "This is the one slide people should photograph.",
+        "A token count without a fidelity score is not a result."
+      ]
+    },
+    "long_context.md": {
+      "character_count": 79255,
+      "description": "Deliberately redundant prose sized for prompt-compression tests, with one checkable needle fact.",
+      "needle": "The internal build identifier for this corpus is RSD-TOKENMILL-4417.",
+      "needle_occurrences": 2,
+      "passage_count": 42,
+      "restatements_per_passage": 6,
+      "token_count": null,
+      "token_count_note": "Not measured yet. Sized to roughly 20k tokens using the ~4 chars/token rule of thumb for English prose; Phase 1 replaces this with a measured count per tokenizer.",
+      "word_count": 12312
+    },
+    "report.docx": {
+      "bullet_items": [
+        "Strip navigation",
+        "Strip advertising",
+        "Strip cookie banners"
+      ],
+      "description": "Deep heading hierarchy (H0-H2), bullet + numbered + nested lists, 4x3 table.",
+      "expected_headings": [
+        [
+          "Context Efficiency Report",
+          0
+        ],
+        [
+          "Where the tokens actually go",
+          1
+        ],
+        [
+          "Where the tokens actually go: detail",
+          2
+        ],
+        [
+          "The misattributed win",
+          1
+        ],
+        [
+          "The misattributed win: detail",
+          2
+        ],
+        [
+          "When extraction does not help",
+          1
+        ],
+        [
+          "When extraction does not help: detail",
+          2
+        ],
+        [
+          "A rule worth remembering",
+          1
+        ],
+        [
+          "A rule worth remembering: detail",
+          2
+        ],
+        [
+          "Checklist",
+          1
+        ],
+        [
+          "Measurements",
+          1
+        ]
+      ],
+      "heading_levels_present": [
+        0,
+        1,
+        2
+      ],
+      "must_contain": [
+        "Nested detail under the last item",
+        "16180"
+      ],
+      "numbered_items": [
+        "Keep headings",
+        "Keep list markers",
+        "Keep table structure"
+      ],
+      "table_columns": 3,
+      "table_count": 1,
+      "table_rows_including_header": 4
+    },
+    "sample_repo/": {
+      "binary_files": [
+        "assets/logo.bin"
+      ],
+      "default_branch": "main",
+      "description": "Small git repo: src/, tests/, docs/, a .gitignore'd secret and a binary blob.",
+      "git_dir_is_committed": false,
+      "git_dir_note": "The .git directory is not committed (git would store a gitlink and clones would get an empty directory). Recreate it with scripts/make_fixtures.py, or let the pytest `sample_repo` fixture do it.",
+      "head_commit": "fc5ce61ac784e113fd269d71c9ace0fa2aa6f4bc",
+      "ignored_files": [
+        "secrets.env"
+      ],
+      "must_contain": [
+        "class Widget",
+        "widgetlib",
+        "def scaled"
+      ],
+      "must_not_contain": [
+        "this-should-never-appear-in-ingested-output"
+      ],
+      "tracked_file_count": 9,
+      "tracked_files": [
+        ".gitignore",
+        "README.md",
+        "assets/logo.bin",
+        "docs/design.md",
+        "pyproject.toml",
+        "src/widgetlib/__init__.py",
+        "src/widgetlib/core.py",
+        "src/widgetlib/utils.py",
+        "tests/test_core.py"
+      ]
+    },
+    "scanned.pdf": {
+      "description": "Rasterised copy of simple.pdf: images only, no text layer.",
+      "has_text_layer": false,
+      "page_count": 2,
+      "requires_ocr": true,
+      "source_fixture": "simple.pdf"
+    },
+    "simple.pdf": {
+      "description": "Baseline digital PDF: title, four H1 sections, multi-page.",
+      "expected_headings": [
+        "Why Your Context Window Is Mostly Navigation Menus",
+        "Introduction",
+        "Method",
+        "Results",
+        "Discussion"
+      ],
+      "min_pages": 2,
+      "must_contain": [
+        "Strip the boilerplate",
+        "load-bearing"
+      ]
+    },
+    "tables.pdf": {
+      "description": "One 7x5 grid table (header + 6 rows) for table-fidelity checks.",
+      "expected_headings": [
+        "Converter Comparison",
+        "Backend characteristics"
+      ],
+      "must_contain": [
+        "pdfplumber",
+        "AGPL-3.0",
+        "18.5"
+      ],
+      "table_cells": 35,
+      "table_columns": 5,
+      "table_count": 1,
+      "table_first_column": [
+        "markitdown",
+        "docling",
+        "pdfplumber",
+        "pypdf",
+        "pymupdf4llm",
+        "marker"
+      ],
+      "table_header": [
+        "Backend",
+        "License",
+        "Runtime",
+        "Tables",
+        "Pages/sec"
+      ],
+      "table_rows_including_header": 7
+    },
+    "twocolumn.pdf": {
+      "description": "Two-column layout; ORDERMARK sentinels encode correct reading order.",
+      "expected_headings": [
+        "Two Column Reading Order"
+      ],
+      "must_contain": [
+        "ORDERMARK 01",
+        "ORDERMARK 12"
+      ],
+      "order_markers": [
+        "ORDERMARK 01",
+        "ORDERMARK 02",
+        "ORDERMARK 03",
+        "ORDERMARK 04",
+        "ORDERMARK 05",
+        "ORDERMARK 06",
+        "ORDERMARK 07",
+        "ORDERMARK 08",
+        "ORDERMARK 09",
+        "ORDERMARK 10",
+        "ORDERMARK 11",
+        "ORDERMARK 12"
+      ]
+    },
+    "unicode.docx": {
+      "description": "Multi-script text (RTL, CJK, Devanagari, emoji ZWJ, math) for encoding regressions.",
+      "expected_headings": [
+        "Unicode Round-Trip",
+        "Urdu",
+        "Arabic",
+        "Chinese",
+        "Japanese",
+        "Korean",
+        "Russian",
+        "Hindi",
+        "Greek",
+        "Emoji",
+        "Math"
+      ],
+      "must_contain": [
+        "ٹوکن کی بچت ایک اہم مسئلہ ہے۔ دستاویز کو مارک ڈاؤن میں تبدیل کریں۔",
+        "توفير الرموز مسألة مهمة. حوّل المستند إلى ماركداون.",
+        "令牌节省是一个重要问题。请将文档转换为 Markdown 格式。",
+        "トークンの節約は重要な課題です。ドキュメントをマークダウンに変換します。",
+        "토큰 절약은 중요한 문제입니다. 문서를 마크다운으로 변환하십시오.",
+        "Экономия токенов — важная задача. Преобразуйте документ в Markdown.",
+        "टोकन की बचत एक महत्वपूर्ण समस्या है। दस्तावेज़ को मार्कडाउन में बदलें।",
+        "Η εξοικονόμηση διακριτικών είναι σημαντική. Μετατρέψτε το έγγραφο.",
+        "Tokens saved 🎉 — pipeline 📄 ➡️ 📝 at 80% 🔻 (family: 👨‍👩‍👧‍👦, flag: 🇵🇰)",
+        "Compression ratio ρ ≈ 0.31, Δtokens = −13 030, ∑ᵢ tᵢ ≤ 4 096"
+      ],
+      "scripts": {
+        "Arabic": "توفير الرموز مسألة مهمة. حوّل المستند إلى ماركداون.",
+        "Chinese": "令牌节省是一个重要问题。请将文档转换为 Markdown 格式。",
+        "Emoji": "Tokens saved 🎉 — pipeline 📄 ➡️ 📝 at 80% 🔻 (family: 👨‍👩‍👧‍👦, flag: 🇵🇰)",
+        "Greek": "Η εξοικονόμηση διακριτικών είναι σημαντική. Μετατρέψτε το έγγραφο.",
+        "Hindi": "टोकन की बचत एक महत्वपूर्ण समस्या है। दस्तावेज़ को मार्कडाउन में बदलें।",
+        "Japanese": "トークンの節約は重要な課題です。ドキュメントをマークダウンに変換します。",
+        "Korean": "토큰 절약은 중요한 문제입니다. 문서를 마크다운으로 변환하십시오.",
+        "Math": "Compression ratio ρ ≈ 0.31, Δtokens = −13 030, ∑ᵢ tᵢ ≤ 4 096",
+        "Russian": "Экономия токенов — важная задача. Преобразуйте документ в Markdown.",
+        "Urdu": "ٹوکن کی بچت ایک اہم مسئلہ ہے۔ دستاویز کو مارک ڈاؤن میں تبدیل کریں۔"
+      }
+    }
+  }
+}
