@@ -25,8 +25,8 @@ _Last updated: 2026-08-20 by Claude Code_
 **Goal:** the plugin system and token measurement working end to end, proven by
 two deliberately trivial backends.
 
-**Final commit for Phase 1:** `PHASE1_SHA` (tags cannot be pushed from these
-sessions — see Deferred work).
+**Phase 1's content ends at commit `e18b3d8`** (the commit after it records only
+this SHA). Tags cannot be pushed from these sessions — see Deferred work.
 
 **Built:**
 
@@ -766,7 +766,7 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
   `--cov-fail-under` scoped to those two packages would pass today.
 - **Phase tags still cannot be pushed** (`send-pack: unexpected disconnect`, as
   in Phase 0). Recording the commit SHA here instead, as instructed. Phase 0
-  ended at `772d99b`; Phase 1 ends at `PHASE1_SHA`.
+  ended at `772d99b`; Phase 1's content ends at `e18b3d8`.
 
 ### Carried over from Phase 0
 
