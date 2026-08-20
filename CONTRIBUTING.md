@@ -25,6 +25,15 @@ uv run pytest -q --cov=tokenmill
 uv run python scripts/make_fixtures.py --check   # corpus is reproducible
 ```
 
+Some tests are opt-in because they need something the machine may not have.
+They report as skips, not silence:
+
+```bash
+uv run pytest -q -m network    # real tokenizer vocabulary downloads
+uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (Phase 9)
+uv run pytest -q -m compress   # the compress extra plus a model (Phase 6)
+```
+
 CI runs all of these across Python 3.11/3.12/3.13 on Linux, macOS and Windows,
 plus a **clean core install** job that `pip install .` with no extras and imports
 the package. That job is the guard on our central promise; if your change makes
@@ -75,11 +84,71 @@ change, and confirm `--check` still passes.
 
 ## Adding a backend
 
-See [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) *(written in Phase 1)*.
-The short version: implement the `Converter` protocol, declare a `BackendInfo`
-including the licence and install extra, register an entry point in the
-`tokenmill.backends` group, and add an integration test that skips cleanly when
-the dependency is absent. No core edits should be needed.
+[`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) has the full tutorial with
+a complete, working example you can copy. The short version:
+
+1. **Subclass `BaseConverter`** and implement one method:
+
+   ```python
+   def _convert(self, source, options, context) -> str: ...
+   ```
+
+   Availability, format support and the size limit have already been checked by
+   the time it runs. Return text. **Do not count tokens** — the pipeline
+   measures every stage, and a backend that measured its own output would
+   bypass that accounting.
+
+2. **Declare a `BackendInfo`** with `license`, `license_tier`, `isolation` and
+   `install_extra`. The licence fields are enforced, not decorative: a copyleft
+   or non-commercial backend claiming `IsolationMode.IN_PROCESS` raises at
+   construction (rule 2 above).
+
+3. **Import the dependency inside `_convert`**, never at module scope, and
+   override `_probe` to check for it with `importlib.util.find_spec` — not a
+   real import, because the probe runs on every `tokenmill backends` listing
+   (rule 3 above). Return `Availability.missing_dependency(..., hint=...)` when
+   it is absent, so the user gets an install command rather than a mystery.
+
+4. **Register an entry point** and nothing else:
+
+   ```toml
+   [project.entry-points."tokenmill.backends"]
+   yourbackend = "your_package.backend:YourConverter"
+   ```
+
+   No core edits. If your change needs one, that is a bug in the registry and
+   worth raising as an issue.
+
+5. **Raise inside the taxonomy.** `ConversionError` subclasses only, from
+   [`tokenmill/core/errors.py`](src/tokenmill/core/errors.py). Recoverable
+   oddities go to `context.warn(...)` instead; structured facts (page count,
+   tables found) go to `context.note(...)`.
+
+6. **Write the tests**, including error paths, and mark integration tests so
+   they skip cleanly when the dependency is absent. Installing your backend
+   automatically enrols it in the conformance suite:
+
+   ```bash
+   uv run pytest tests/unit/test_protocol.py -v
+   ```
+
+   That suite parametrises over every backend the entry points expose, so it
+   checks yours the moment it is installed.
+
+Post-processors and tokenizers work the same way, through the
+`tokenmill.postprocessors` and `tokenmill.tokenizers` groups. A post-processor
+that can discard information the user might have wanted must set
+`destructive = True`; the default chain is built by excluding those, so it
+cannot damage a document.
+
+## Design decisions
+
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) records why the architecture is
+the way it is — why the data model is dataclasses rather than pydantic, why the
+protocol is only three methods, why discovery is cached, why a broken plugin
+degrades instead of propagating, and why a measurement failure never becomes a
+conversion failure. Read it before proposing a change to the contract; changes
+to it are breaking changes needing the owner's agreement.
 
 ## Commits and branches
 

@@ -1,0 +1,405 @@
+# Adding a backend
+
+A backend is a Python class plus an entry point. You do not fork tokenmill, you
+do not edit anything in `src/tokenmill/core/`, and you do not register anything
+by hand — `pip install` is the whole installation step.
+
+This page walks through a **complete, working** backend. Everything in it has
+been built, installed and run; the verification log in
+[`PROGRESS.md`](../PROGRESS.md) records the session. Copy it and change the
+parts that matter.
+
+Read [`ARCHITECTURE.md`](ARCHITECTURE.md) first if you want the reasoning behind
+the contract. This page is the mechanics.
+
+---
+
+## The contract, in one screen
+
+```python
+class Converter(Protocol):
+    info: BackendInfo
+
+    def is_available(self) -> Availability: ...  # cheap, cached, never raises
+    def supports(self, source: Source) -> bool: ...
+    def convert(self, source: Source, options: ConvertOptions) -> ConversionResult: ...
+```
+
+You will almost always subclass `BaseConverter`, which implements all three and
+leaves you one method to write:
+
+```python
+def _convert(self, source, options, context) -> str: ...
+```
+
+By the time it is called, availability, format support and the size limit have
+been checked. You return text. **You do not count tokens** — the pipeline
+measures every stage, and a backend that measured its own output would bypass
+that accounting.
+
+---
+
+## A complete example: `csvtable`
+
+A backend that turns a CSV file into a Markdown table. Small enough to read in
+one go, real enough to exercise everything: metadata, a probe, error handling,
+warnings and structured metadata.
+
+### Layout
+
+```
+tokenmill-csvtable/
+├── pyproject.toml
+├── src/
+│   └── tokenmill_csvtable/
+│       ├── __init__.py
+│       └── backend.py
+└── tests/
+    └── test_csvtable.py
+```
+
+### `src/tokenmill_csvtable/backend.py`
+
+```python
+"""A tokenmill backend that renders CSV files as Markdown tables."""
+
+from __future__ import annotations
+
+import csv
+import io
+
+from tokenmill import (
+    BackendInfo,
+    BaseConverter,
+    ConversionContext,
+    ConvertOptions,
+    CorruptSource,
+    Domain,
+    LicenseTier,
+    OutputFormat,
+    Source,
+)
+
+__all__ = ["CsvTableConverter"]
+
+
+class CsvTableConverter(BaseConverter):
+    """Renders a CSV file as a Markdown table.
+
+    Attributes:
+        info: Static metadata for this backend.
+    """
+
+    info = BackendInfo(
+        id="csvtable",
+        name="CSV to Markdown table",
+        description="Renders a CSV file as a Markdown table, header row included.",
+        domains=(Domain.DOCUMENTS,),
+        input_formats=("csv", "tsv"),
+        output_formats=(OutputFormat.MARKDOWN,),
+        license="MIT",
+        license_tier=LicenseTier.PERMISSIVE,
+        upstream_url="https://github.com/example/tokenmill-csvtable",
+        install_extra=None,
+        priority=20,
+    )
+
+    def _convert(self, source: Source, options: ConvertOptions, context: ConversionContext) -> str:
+        """Render the source CSV as a Markdown table.
+
+        Args:
+            source: The CSV to convert.
+            options: Unused; this backend takes no settings.
+            context: Collects row and column counts, and any warning.
+
+        Returns:
+            The Markdown table.
+
+        Raises:
+            CorruptSource: If the file has no rows at all.
+        """
+        del options
+
+        delimiter = "\t" if source.format == "tsv" else ","
+        rows = list(csv.reader(io.StringIO(source.read_text()), delimiter=delimiter))
+        rows = [row for row in rows if any(cell.strip() for cell in row)]
+
+        if not rows:
+            raise CorruptSource(
+                f"{source.name} contains no rows",
+                backend_id=self.info.id,
+                hint="check the file is a CSV and not empty",
+            )
+
+        width = max(len(row) for row in rows)
+        if any(len(row) != width for row in rows):
+            # Ragged input is recoverable, so pad rather than fail — but say so,
+            # because silently inventing empty cells would be worse than either.
+            context.warn(
+                f"{source.name} has rows of differing lengths; short rows were "
+                f"padded to {width} columns"
+            )
+        padded = [[*row, *[""] * (width - len(row))] for row in rows]
+
+        header, *body = padded
+        lines = [
+            "| " + " | ".join(_escape(cell) for cell in header) + " |",
+            "| " + " | ".join("---" for _ in header) + " |",
+        ]
+        lines.extend("| " + " | ".join(_escape(cell) for cell in row) + " |" for row in body)
+
+        context.note("rows", len(body))
+        context.note("columns", width)
+        return "\n".join(lines) + "\n"
+
+
+def _escape(cell: str) -> str:
+    """Make a cell safe to place inside a Markdown table.
+
+    Args:
+        cell: The raw cell value.
+
+    Returns:
+        The cell with pipes escaped and newlines flattened.
+    """
+    return cell.replace("|", "\\|").replace("\n", " ").strip()
+```
+
+### `pyproject.toml`
+
+The entry point is the whole registration mechanism. The group name is
+`tokenmill.backends`; the entry point's name is conventionally the backend's
+`id`, and its value is `module:Class`.
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tokenmill-csvtable"
+version = "0.1.0"
+description = "A tokenmill backend that renders CSV as a Markdown table"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["tokenmill>=0.1"]
+
+[project.entry-points."tokenmill.backends"]
+csvtable = "tokenmill_csvtable.backend:CsvTableConverter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tokenmill_csvtable"]
+```
+
+The entry point must resolve to a **zero-argument callable returning a
+Converter**. A class satisfies that; so does a factory function, if you need one.
+
+### Install and check
+
+```console
+$ pip install -e .
+$ tokenmill backends
+id                domains    license     tier        isolation   availability
+----------------  ---------  ----------  ----------  ----------  ------------
+csvtable          documents  MIT         permissive  in-process  available
+markdownify_html  web        MIT         permissive  in-process  available
+plaintext         text       Apache-2.0  permissive  in-process  available
+
+$ tokenmill convert data.csv --tokenizer bytes
+| Backend | License | Tables |
+| --- | --- | --- |
+| markitdown | MIT | weak |
+| docling | MIT | strong |
+source:   data.csv
+backend:  csvtable
+format:   markdown
+duration: 14 ms
+post:     normalize_whitespace
+tokens:   62 -> 106  (+71.0%, bytes)
+```
+
+No core edit. That is the entire mechanism.
+
+*(That output is real, and note what it says: the Markdown is 71% **larger**
+than the CSV, because table pipes and separator rows cost more than commas.
+tokenmill reports that as growth rather than dressing it up — this exact case is
+what `RESEARCH.md` Category 7 means about serialisation-format tradeoffs, and it
+is why `--tokenizer bytes` is a size measure rather than a verdict.)*
+
+### `tests/test_csvtable.py`
+
+```python
+"""Tests for the csvtable backend."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from tokenmill import ConvertOptions, CorruptSource, Source
+from tokenmill_csvtable.backend import CsvTableConverter
+
+
+def write(tmp_path: Path, content: str, name: str = "data.csv") -> Source:
+    path = tmp_path / name
+    path.write_text(content, encoding="utf-8")
+    return Source.from_path(path)
+
+
+def test_it_renders_a_markdown_table(tmp_path: Path) -> None:
+    result = CsvTableConverter().convert(write(tmp_path, "a,b\n1,2\n"), ConvertOptions())
+
+    assert result.text == "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
+    assert result.metadata["rows"] == 1
+    assert result.metadata["columns"] == 2
+
+
+def test_ragged_rows_are_padded_and_reported(tmp_path: Path) -> None:
+    result = CsvTableConverter().convert(write(tmp_path, "a,b,c\n1,2\n"), ConvertOptions())
+
+    assert "| 1 | 2 |  |" in result.text
+    assert any("differing lengths" in w for w in result.warnings)
+
+
+def test_pipes_in_cells_are_escaped(tmp_path: Path) -> None:
+    result = CsvTableConverter().convert(write(tmp_path, 'a\n"x|y"\n'), ConvertOptions())
+
+    assert "x\\|y" in result.text
+
+
+def test_an_empty_file_is_reported_as_corrupt(tmp_path: Path) -> None:
+    with pytest.raises(CorruptSource, match="no rows"):
+        CsvTableConverter().convert(write(tmp_path, "\n\n"), ConvertOptions())
+
+
+def test_it_declares_a_permissive_licence_and_in_process_isolation() -> None:
+    info = CsvTableConverter().info
+
+    assert info.license_tier.value == "permissive"
+    assert info.isolation.value == "in-process"
+```
+
+---
+
+## Backends with a dependency
+
+`csvtable` uses only the standard library, so it is always available. A backend
+wrapping a third-party library has two extra obligations.
+
+**Import inside `_convert`, never at module scope.** The module must import
+cleanly with the dependency absent. This is `CONTRIBUTING.md` rule 3, and it is
+what makes a missing dependency a greyed-out row rather than a crash at
+start-up.
+
+**Override `_probe`, and probe without importing.**
+
+```python
+import importlib.util
+
+from tokenmill import Availability
+
+
+class PdfSqueezeConverter(BaseConverter):
+    info = BackendInfo(
+        ...,
+        install_extra="documents",
+    )
+
+    def _probe(self) -> Availability:
+        """Check that pdfsqueeze is importable."""
+        if importlib.util.find_spec("pdfsqueeze") is None:
+            return Availability.missing_dependency(
+                "pdfsqueeze", hint='pip install "tokenmill[documents]"'
+            )
+        return Availability.present()
+
+    def _convert(self, source, options, context) -> str:
+        import pdfsqueeze  # imported here, not above
+
+        ...
+```
+
+`find_spec` rather than a `try: import` because the probe runs on every
+`tokenmill backends` listing, and importing costs whatever the dependency costs.
+
+---
+
+## Copyleft and non-Python tools
+
+**AGPL and GPL code is never imported into the tokenmill process.** Not as a
+style preference — as the licence position the whole project rests on. See
+`CONTRIBUTING.md` rule 2 and `RESEARCH.md` Category 1–3 for which tools this
+covers (PyMuPDF4LLM, Marker, Surya, Pandoc, Firecrawl core, omniparse).
+
+The model enforces it. This raises `ValueError` at import time:
+
+```python
+BackendInfo(
+    id="pymupdf4llm",
+    license="AGPL-3.0",
+    license_tier=LicenseTier.COPYLEFT,
+    isolation=IsolationMode.IN_PROCESS,   # ValueError: must run out of process
+    ...,
+)
+```
+
+Such a backend declares `IsolationMode.SUBPROCESS` (or `SERVICE`) and invokes
+the tool as a child process. The hardened `SubprocessConverter` base — binary
+discovery, timeouts, temp-file lifecycle, stderr capture, list arguments and
+never `shell=True` — lands in **Phase 7**. Until then, a subprocess backend must
+build that itself; the protocol supports it, but the shared machinery is not
+there yet.
+
+The same applies to Node and Rust tools (Repomix, code2prompt): subprocess, with
+`Availability.missing_binary(...)` and an install hint when the executable is not
+on `PATH`.
+
+Non-commercial weights (ReaderLM, CC-BY-NC-4.0) use
+`LicenseTier.NON_COMMERCIAL`, which is likewise barred from in-process
+isolation and excluded by default.
+
+---
+
+## What your backend is held to
+
+Installing a backend automatically enrols it in
+`tests/unit/test_protocol.py`, which parametrises over every backend the entry
+points expose. It checks, among other things, that:
+
+- the metadata is complete and the id is a lowercase token;
+- a licence and tier are declared, and a non-permissive tier implies
+  out-of-process isolation;
+- input formats are bare lowercase extensions — `pdf`, not `.pdf`;
+- `is_available()` never raises, is cached, and offers a hint when unavailable;
+- `supports()` agrees with the declared formats;
+- converting an unsupported source raises inside the `ConversionError` taxonomy;
+- the result carries no token counts;
+- a source over `max_bytes` is refused.
+
+Run it against your backend with:
+
+```console
+$ pytest tests/unit/test_protocol.py -v
+```
+
+---
+
+## Checklist
+
+- [ ] Subclasses `BaseConverter`; implements `_convert` only.
+- [ ] `BackendInfo` complete, with `license`, `license_tier` and `isolation`.
+- [ ] Copyleft or non-commercial? Then `SUBPROCESS` or `SERVICE`, never
+      `IN_PROCESS`.
+- [ ] Heavy dependency imported inside `_convert`, probed with `find_spec` in
+      `_probe`.
+- [ ] `Availability` failures carry a hint that says how to fix them.
+- [ ] Failures raise a `ConversionError` subclass; recoverable oddities become
+      `context.warn(...)`.
+- [ ] Structured facts recorded with `context.note(...)`.
+- [ ] Entry point declared under `[project.entry-points."tokenmill.backends"]`.
+- [ ] Tests written, including the error paths.
+- [ ] `pytest tests/unit/test_protocol.py` green with your backend installed.
+- [ ] If it produces poor output on some input, that goes in
+      `docs/BACKENDS.md` under failure modes. A wrapper that hides a bad
+      converter is worse than no wrapper.
