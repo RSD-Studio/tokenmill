@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Model and tokenizer caches pulled at runtime by optional backends
+.cache/
+models/
+
+# Benchmark scratch output; committed results live in benchmarks/results/
+benchmarks/scratch/

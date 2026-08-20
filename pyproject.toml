@@ -1,0 +1,225 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tokenmill"
+dynamic = ["version"]
+description = "One interface over the best open-source document, web, repo and prompt converters — with honest before/after token accounting."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "RSD Studio" }]
+keywords = [
+    "markdown",
+    "tokens",
+    "tokenizer",
+    "pdf",
+    "docx",
+    "document-conversion",
+    "web-scraping",
+    "llm",
+    "context",
+    "prompt-compression",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+
+# ---------------------------------------------------------------------------
+# The "core" tier (DEVELOPMENT_PLAN.md §1.6).
+#
+# `pip install tokenmill` must succeed on a clean machine with no compiler, no
+# GPU and no system binary, in under a minute. Nothing heavy, nothing copyleft,
+# nothing that pulls PyTorch may ever appear in this list.
+#
+# Phase 0 ships zero product logic, so this list is deliberately empty. Phase 1
+# adds the first real entries (tiktoken, typer, pydantic); each later phase adds
+# only what that phase's code actually imports.
+# ---------------------------------------------------------------------------
+dependencies = []
+
+[project.optional-dependencies]
+# `core` is an alias for the default dependency set above. It exists so that
+# `pip install "tokenmill[core]"` and `uv pip install -e ".[dev,core]"` work as
+# written in the development plan; the real core deps live in `dependencies`.
+core = []
+
+# Phase 2 — light CPU document backends (markitdown, kreuzberg).
+documents = []
+
+# Phase 2 — Docling. Kept in its own group because it pulls PyTorch; it must
+# never be reachable from `core`.
+docling = []
+
+# Phase 3 — JS-rendering web backends (crawl4ai + playwright; browser download).
+web = []
+
+# Phase 6 — prompt compression (llmlingua, transformers). CPU-feasible.
+compress = []
+
+# Phase 2/9 — OCR engines needing a system binary or downloaded models.
+ocr = []
+
+# Phase 9 — GPU tier (marker, mineru, olmocr, surya). Documented as install
+# instructions only. This group stays EMPTY forever: heavy backends are invoked
+# out of process and must never become a declared dependency of tokenmill.
+heavy = []
+
+# Phase 8 — GUI (nicegui + fastapi).
+gui = []
+
+# Development toolchain.
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.122",
+    "ruff>=0.14",
+    "mypy>=1.14",
+    "pre-commit>=4.0",
+]
+
+# Everything `scripts/make_fixtures.py` needs to build the synthetic test
+# corpus. Dev-only: no product code may import these.
+fixtures = [
+    "reportlab>=4.2",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "openpyxl>=3.1",
+    "pypdfium2>=4.30",
+    "pillow>=11.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/RSD-Studio/tokenmill"
+Repository = "https://github.com/RSD-Studio/tokenmill"
+Issues = "https://github.com/RSD-Studio/tokenmill/issues"
+Changelog = "https://github.com/RSD-Studio/tokenmill/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/tokenmill/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tokenmill"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/tokenmill", "tests", "scripts", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
+
+# ---------------------------------------------------------------------------
+# Ruff — lint + format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+# Synthetic source code used as conversion input, not part of this project.
+extend-exclude = ["tests/fixtures/sample_repo"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "A",      # flake8-builtins
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez
+    "T20",    # flake8-print  (no print outside the CLI presentation layer)
+    "PT",     # flake8-pytest-style
+    "RET",    # flake8-return
+    "SIM",    # flake8-simplify
+    "PTH",    # flake8-use-pathlib
+    "ARG",    # flake8-unused-arguments
+    "S",      # flake8-bandit  (security: no shell=True, no bare asserts in src)
+    "D",      # pydocstyle
+    "ANN",    # flake8-annotations
+    "RUF",
+]
+ignore = [
+    "D203",   # conflicts with D211
+    "D213",   # conflicts with D212
+    "ANN401", # allow typing.Any where genuinely needed
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert, may skip docstrings, and may hardcode "insecure" values.
+"tests/**" = ["S101", "D100", "D101", "D102", "D103", "D104", "ANN001", "ANN201"]
+# Fixture/utility scripts print progress to stdout by design.
+"scripts/**" = ["T201"]
+# make_fixtures.py embeds HTML templates verbatim (reflowing them would change
+# the generated fixture bytes) and deliberately contains multi-script text,
+# which is the entire point of the unicode.docx fixture.
+"scripts/make_fixtures.py" = ["T201", "E501", "RUF001", "RUF002", "RUF003"]
+# The CLI presentation layer is the one place allowed to write to stdout.
+"src/tokenmill/cli/**" = ["T201"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# mypy — strict everywhere in src/ (the plan mandates strict on core/ and
+# tokens/; at this size there is no reason to be laxer elsewhere). Thin
+# third-party adapters may get a documented per-module relaxation later.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "scripts", "tests"]
+# The sample_repo fixture is synthetic source code used as conversion input.
+exclude = ["^tests/fixtures/"]
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+# Fixture-generation dependencies ship no type stubs.
+module = ["docx.*", "pptx.*", "reportlab.*", "pypdfium2.*", "openpyxl.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# tests/fixtures/sample_repo is a *fixture*: a synthetic package with its own
+# test file. It is data for the repo-ingestion backends, not our test suite.
+addopts = "--strict-markers --strict-config -ra --ignore=tests/fixtures"
+markers = [
+    "integration: exercises a real backend against a real fixture",
+    "heavy: needs a GPU or a multi-gigabyte model download; skipped by default",
+    "compress: needs the `compress` extra and a model download",
+    "network: performs real network I/O; skipped by default",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["src/tokenmill"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
