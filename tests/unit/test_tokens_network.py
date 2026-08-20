@@ -52,18 +52,32 @@ class TestRealTiktoken:
     def test_the_same_text_counts_differently_under_different_encodings(self) -> None:
         """Why a bare int is never enough: the tokenizer is part of the number.
 
-        Both counts are correct; they are simply not the same measurement, which
-        is exactly what ``TokenCount`` exists to keep straight.
+        Asserted across a set of texts, and only that **at least one** differs.
+        The first version of this test picked a single sentence and asserted the
+        two counts differed; CI showed they were both 8. That was a real result
+        and the test was wrong — two encodings agreeing on one short ASCII
+        sentence is a coincidence, not a contradiction. o200k_base has a far
+        larger vocabulary than r50k_base and merges much more aggressively on
+        non-English text, so a difference is certain across a varied sample and
+        merely likely for any one string.
         """
         registry = TokenizerRegistry()
-        text = "Tokenisation is not a universal constant."
+        modern = registry.get("o200k_base")
+        legacy = registry.get("r50k_base")
+        texts = [
+            "Tokenisation is not a universal constant.",
+            "分词器的选择会改变每一个答案。",
+            "def compute_reduction(before: int, after: int) -> float: ...",
+            "🙂👨‍👩‍👧🇵🇰",
+            "internationalisation antidisestablishmentarianism",
+        ]
 
-        modern = registry.get("o200k_base").count(text)
-        legacy = registry.get("r50k_base").count(text)
+        counts = [(modern.count(t), legacy.count(t)) for t in texts]
 
-        assert modern > 0
-        assert legacy > 0
-        assert modern != legacy
+        assert all(m > 0 and legacy_count > 0 for m, legacy_count in counts)
+        assert any(m != legacy_count for m, legacy_count in counts), (
+            f"o200k_base and r50k_base agreed on every sample: {counts}"
+        )
 
     def test_special_token_text_is_counted_as_ordinary_text(self) -> None:
         """A document containing "<|endoftext|>" must not blow up the count."""

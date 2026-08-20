@@ -1397,6 +1397,17 @@ def main(argv: list[str] | None = None) -> int:
             generate(scratch)
             expected = digests(args.out)
             actual = digests(scratch)
+
+        # The .gitignore'd files are generated but deliberately never committed
+        # (git applies the fixture repo's own ignore rules to this repository
+        # too), so they are absent from a fresh clone by design. Comparing them
+        # would report a mismatch on every clone that has not run the generator.
+        # They are restored on demand by ensure_sample_repo_ignored_files().
+        for relative in SAMPLE_REPO_IGNORED:
+            uncommittable = f"sample_repo/{relative}"
+            expected.pop(uncommittable, None)
+            actual.pop(uncommittable, None)
+
         if expected == actual:
             print(f"OK: {len(actual)} files reproduced byte-for-byte")
             return 0
@@ -1410,7 +1421,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Generating fixtures into {args.out}")
     generate(args.out)
-    print(f"Done: {len(digests(args.out))} files")
+    print(f"Done: {len(digests(args.out))} files")  # includes the uncommitted ones
     return 0
 
 
