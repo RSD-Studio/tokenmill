@@ -230,6 +230,9 @@ def _plausible_source(converter: Converter, tmp_path: Path) -> Source | None:
         converter: The backend to build a sample for.
         tmp_path: A directory to write the sample into.
 
+    A backend claiming only formats with no sample here is skipped rather than
+    failed. Adding a sample below is how a new format joins the suite.
+
     Returns:
         The source, or ``None`` if no sample is known for the backend's formats.
     """
@@ -242,6 +245,10 @@ def _plausible_source(converter: Converter, tmp_path: Path) -> Source | None:
         "html": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
         "htm": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
         "xhtml": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+        "csv": "name,value\nalpha,1\n",
+        "tsv": "name\tvalue\nalpha\t1\n",
+        "json": '{"name": "alpha", "value": 1}',
+        "xml": "<doc><name>alpha</name></doc>",
     }
     for fmt in converter.info.input_formats:
         content = samples.get(fmt)
