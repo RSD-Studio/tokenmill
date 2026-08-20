@@ -347,6 +347,14 @@ correction is recorded under Decisions.
   each is written in the phase that produces the thing it documents (1, 1, 7, 2,
   10, 12 respectively). The README links to them and marks which phase each is
   due in.
+- **The `phase-0-complete` tag exists locally but is not on the remote.** This
+  session's git remote accepts branch refs but rejects tag pushes (`send-pack:
+  unexpected disconnect`, reproduced on four attempts with backoff). The plan
+  asks for a tag per completed phase so progress can be diffed. The four
+  commits are all pushed; only the tag is missing. Either push it yourself from
+  a normal clone (`git tag phase-0-complete 772d99b && git push origin
+  phase-0-complete`) or tell me and I will drop the tagging convention in favour
+  of recording each phase's commit SHA here instead.
 - **Release checklist in `CONTRIBUTING.md`.** Stubbed as "fills out in Phase 11"
   because publishing does not exist yet.
 
