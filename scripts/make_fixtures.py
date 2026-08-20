@@ -1166,6 +1166,30 @@ SAMPLE_REPO_IGNORED: Final[dict[str, str]] = {
 }
 
 
+def ensure_sample_repo_ignored_files(root: Path) -> None:
+    """Write the fixture's ``.gitignore``d files if they are missing.
+
+    These files exist so that repository-ingestion backends can be caught
+    leaking something they were told to skip. They are deliberately listed in
+    the fixture's own ``.gitignore``, and git applies nested ignore files to the
+    outer repository as well — so they are **not** committed to tokenmill and a
+    fresh clone does not have them. Like ``.git``, they are materialised on
+    demand: from ``scripts/make_fixtures.py`` or from the pytest ``sample_repo``
+    fixture.
+
+    Idempotent, and safe to call before ``git init``: the files stay untracked
+    either way, so the pinned commit hash is unaffected.
+
+    Args:
+        root: The ``sample_repo`` directory.
+    """
+    for relative, content in SAMPLE_REPO_IGNORED.items():
+        target = root / relative
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8", newline="\n")
+
+
 def ensure_sample_repo_git(root: Path) -> str:
     """Make ``root`` a git repository with the fixture's pinned commit.
 
@@ -1215,6 +1239,8 @@ def ensure_sample_repo_git(root: Path) -> str:
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    ensure_sample_repo_ignored_files(root)
 
     if not (root / ".git").is_dir():
         run("init", "--quiet", "--initial-branch=main")

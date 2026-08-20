@@ -33,20 +33,31 @@ def ground_truth(fixture_dir: Path) -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def sample_repo(fixture_dir: Path) -> Path:
-    """Return the sample repository, materialising its ``.git`` if absent.
+    """Return the sample repository, restoring anything git could not carry.
 
-    The fixture's working files are committed but its ``.git`` directory is not,
-    because git stores a nested repository as a gitlink and clones would end up
-    with an empty directory. Recreating it is deterministic: the commit dates
-    are pinned, so the HEAD hash matches the one recorded in
+    Two parts of this fixture cannot live in the tokenmill repository:
+
+    * ``.git`` — git stores a nested repository as a gitlink and keeps none of
+      its contents, so clones would end up with an empty directory.
+    * ``secrets.env`` — the fixture's own ``.gitignore`` lists it, and git
+      applies nested ignore files to the outer repository too, so it is never
+      committed. Repo-ingestion backends must be catchable leaking it.
+
+    Both are recreated here on demand. Recreating ``.git`` is deterministic: the
+    commit dates are pinned, so the HEAD hash matches the one recorded in
     ``ground_truth.json``.
     """
     root = fixture_dir / "sample_repo"
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    try:
+        from make_fixtures import ensure_sample_repo_git, ensure_sample_repo_ignored_files
+    except ImportError:  # pragma: no cover - only when scripts/ is absent
+        pytest.skip("scripts/make_fixtures.py is not importable")
+
+    # Both are uncommittable for the same reason and are restored the same way:
+    # git stores a nested .git as a gitlink, and the fixture's own .gitignore
+    # hides secrets.env from the outer repository too.
+    ensure_sample_repo_ignored_files(root)
     if not (root / ".git").is_dir():
-        sys.path.insert(0, str(SCRIPTS_DIR))
-        try:
-            from make_fixtures import ensure_sample_repo_git
-        except ImportError:  # pragma: no cover - only when scripts/ is absent
-            pytest.skip("scripts/make_fixtures.py is not importable")
         ensure_sample_repo_git(root)
     return root
