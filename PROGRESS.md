@@ -64,8 +64,8 @@ this SHA). Tags cannot be pushed from these sessions — see Deferred work.
 |---|---|---|
 | 1 | A backend can be added by dropping in a module + entry point, no core edits | ✅ **Observed.** Built a separate distribution (`tokenmill-csvtable`) outside the repo, straight from the code blocks in `ADDING_A_BACKEND.md`, installed it, and it appeared in `tokenmill backends` and converted a file. No tokenmill file was touched. |
 | 2 | Registry lists backends with correct availability when a dep is absent | ✅ **Observed.** Unit-tested against a backend whose probe reports a missing dependency, and end-to-end at the CLI with a plugin that raises on import. |
-| 3 | Token counts match a hand-verified tiktoken result on a known string | ❌ **Not verified anywhere yet.** `openaipublic.blob.core.windows.net` is still denied by the sandbox proxy, so no real BPE vocabulary can be loaded here. The assertions live in `tests/unit/test_tokens_network.py` behind the `network` marker and have **never been executed** — and, as the follow-up entry in the verification log records, neither had CI. CI is now fixed and has a blocking `tokenizers` job that runs them; **the first green run of that job is what will close this criterion.** |
-| 4 | `tokenmill convert tests/fixtures/boilerplate.html` returns Markdown and a real before/after count | ⚠️ **Partly observed.** Markdown: yes, read and judged correct. A real before/after count: yes with `--tokenizer bytes` (12,481 → 6,802 UTF-8 bytes, −45.5%); **not** with `o200k_base`, which cannot load here. Byte counts are not token counts. |
+| 3 | Token counts match a hand-verified tiktoken result on a known string | ✅ **Verified in CI** (run 3, commit `3aa6e59`, `11 passed`). `"hello world"` is **2 tokens** under `o200k_base`, as written. Still not reproducible in this sandbox — the proxy denies tiktoken's vocabulary host — so it is CI-verified rather than locally observed, and the CI job that proves it is blocking so it cannot quietly stop running. |
+| 4 | `tokenmill convert tests/fixtures/boilerplate.html` returns Markdown and a real before/after count | ✅ **Met.** Markdown: observed here, read and judged correct. Before/after in UTF-8 bytes: observed here (12,481 → 6,802, −45.5%). Before/after in **real `o200k_base` tokens**: verified in CI by `test_converting_the_boilerplate_fixture_reports_a_real_reduction`, which asserts both counts carry the `o200k_base` id and that the reduction is a genuine fraction. |
 | 5 | *(exit gate)* Protocol-conformance test passes for both reference backends | ✅ **Observed.** 16 conformance checks per backend, parametrised over the installed entry points rather than a hard-coded list. |
 | 6 | *(exit gate)* A deliberately broken backend is reported as unavailable rather than crashing the CLI | ✅ **Observed.** Installed a real `.dist-info` whose entry point raises `ImportError`; the CLI listed it as "failed to load", kept working, and exited 0. |
 | 7 | *(exit gate)* Architecture docs committed | ✅ Both written and committed. |
@@ -650,6 +650,89 @@ Phase 0 left open whether the GitHub repository had been renamed from
 **The repository is `RSD-Studio/tokenmill`.** The URLs in `pyproject.toml` and
 the README are correct. Phase 0's Open question 2 is closed.
 
+### 2026-08-20 — First CI runs: five failures, then all green
+
+The CI trigger fix meant the workflow finally ran. It failed, in exactly the
+three places Phases 0 and 1 had flagged as unverified, and none of the three
+could have been caught in this sandbox.
+
+**Run 1 (`0cfca94`) — 18 jobs green, 5 red.**
+
+| Job | Result |
+|---|---|
+| Lint and format, Type check, Coverage gate | ✅ |
+| Test — ubuntu ×3, macOS ×3 | ✅ |
+| Clean core install — 9 cells (3 OS × 3 Python) | ✅ |
+| **Test — windows ×3** | ❌ |
+| **Fixture corpus is reproducible** | ❌ |
+| **Real tokenizers (network)** | ❌ |
+
+1. **Windows, all three Python versions**, one test each:
+   `test_sample_repo_is_a_real_git_repo_with_a_pinned_commit`, `324 passed,
+   1 failed`. The rebuilt fixture repo landed on `7d690e6cdcae...` instead of
+   the recorded `fc5ce61ac784...`. Cause: git's `core.autocrlf` defaults to true
+   on Windows, so checkout rewrote LF to CRLF inside `tests/fixtures/`. Different
+   bytes, different tree, different commit — and the corpus was not
+   byte-reproducible on Windows either, which is the claim `--check` exists to
+   enforce. Fixed with a `.gitattributes` marking `tests/fixtures/** -text`: the
+   corpus is data, and git must not rewrite it on any platform. Rule order
+   matters — later patterns win, so `* text=auto` comes first and the exception
+   after.
+   **Note that only that one test failed.** All 324 others passed on Windows,
+   including every piece of Phase 1.
+
+2. **Fixture reproducibility**: `MISMATCH sample_repo/secrets.env:
+   committed=None regenerated=b99b52de...`. `--check` compares the regenerated
+   corpus against the committed one, and `secrets.env` is deliberately never
+   committed. So it is absent from every fresh clone by design and the
+   comparison reported a mismatch on all of them. The same root cause as the
+   test failure fixed in `2eced0d`, surfacing in a second place that only a
+   clone which has never run the generator could reveal. `--check` now excludes
+   the uncommittable files; the reported count drops from 23 to 22 for that
+   reason.
+
+3. **Real tokenizers**: `1 failed, 10 passed`.
+   `test_the_same_text_counts_differently_under_different_encodings` failed with
+   `assert 8 != 8` — I had asserted that "Tokenisation is not a universal
+   constant." counts differently under `o200k_base` and `r50k_base`, and it does
+   not. **The result was right and my test was wrong**, which is what I said
+   would happen to these numbers if any of them were wrong, and what I said I
+   would do about it. Two encodings agreeing on one short ASCII sentence is a
+   coincidence, not a contradiction. The test now samples five kinds of text
+   (English prose, Chinese, Python source, emoji, a very long word) and asserts
+   that **at least one** differs — the property that actually holds. The
+   expectation was corrected; the assertion was not loosened.
+
+   **The other ten passed**, including the two that matter most:
+   - `test_a_known_string_counts_as_expected_under_o200k_base` — `"hello world"`
+     is **2 tokens** under `o200k_base`. That is acceptance criterion 3, and the
+     number I wrote from published behaviour without being able to run it was
+     correct.
+   - `test_converting_the_boilerplate_fixture_reports_a_real_reduction` — the
+     full pipeline on `boilerplate.html` produces before and after counts that
+     both carry the `o200k_base` id, with the after strictly smaller. That is
+     acceptance criterion 4 in real model tokens rather than bytes.
+
+**Run 3 (`3aa6e59`) — all 23 jobs green.**
+
+- `Real tokenizers (network)`: `uv run pytest -q -m network -rs` →
+  **`11 passed, 325 deselected in 3.56s`**
+- `Fixture corpus is reproducible`: **`OK: 22 files reproduced byte-for-byte`**
+- `Test`: green on **ubuntu, macOS and Windows × Python 3.11, 3.12 and 3.13** —
+  nine cells
+- `Clean core install`: green on the same nine cells
+- `Coverage gate (core and tokens)`, `Lint and format`, `Type check`: green
+
+**What this closes.** Three things Phase 0 recorded as deferred-because-
+unverifiable are now verified: Windows behaviour, macOS behaviour, and Python
+3.12/3.13. So is acceptance criterion 3, which had been unverified since the
+phase began. The sandbox still cannot reach either tokenizer host, so token
+counting remains CI-verified rather than locally observed — but it is now
+verified by a blocking job that cannot silently stop running.
+
+**Verdict: PASS.** Phase 1 is green on every platform and Python version in the
+matrix, and its central claim is proven against a real tokenizer.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned
@@ -694,8 +777,8 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 
 | Id | Provider | Licence | Counts | Wired | Tested | Notes |
 |---|---|---|---|---|---|---|
-| `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base` | tiktoken | MIT (verified) | BPE tokens | ✅ | ⚠️ CI only | Resolution, error paths and the "unavailable" path are tested here; **no real count has ever been produced in this sandbox** |
-| `hf:<model>` | HuggingFace `tokenizers` | Apache-2.0 | model tokens | ✅ | ⚠️ CI only | Behind the `tokenizers` extra. Same download constraint |
+| `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base` | tiktoken | MIT (verified) | BPE tokens | ✅ | ✅ CI | Resolution, error paths and the "unavailable" path are tested locally; real counting is verified in the blocking `tokenizers` CI job. No real count has ever been produced *in this sandbox* |
+| `hf:<model>` | HuggingFace `tokenizers` | Apache-2.0 | model tokens | ✅ | ✅ CI | Behind the `tokenizers` extra. Verified in CI against `bert-base-uncased` |
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
@@ -858,12 +941,13 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 
 ## Deferred / future work
 
-- **A real BPE token count has never been produced in this sandbox.** Everything
-  in `tests/unit/test_tokens_network.py` is unexecuted. The expected values in
-  it (for instance `"hello world"` counting as 2 tokens under `o200k_base`) are
-  written from the published behaviour of those encodings and **the first CI run
-  is what confirms them**. If one is wrong, the number gets corrected — not the
-  assertion loosened. Blocks acceptance criterion 3; see Open question 1.
+- **A real BPE token count still cannot be produced in this sandbox**, and that
+  has not changed — the proxy still denies both tokenizer hosts. What has changed
+  is that `tests/unit/test_tokens_network.py` now runs in CI on every push, in a
+  blocking job, and passes: `"hello world"` really is 2 tokens under
+  `o200k_base`. Token counting is therefore **CI-verified, not locally
+  observed**, and any future work on the measurement layer inherits that
+  one-round-trip feedback loop until the hosts are allow-listed.
 - **Fallback chains between backends.** Phase 1 selects one backend and reports
   it. Trying the next when the preferred one fails, and recording which actually
   ran, is a Phase 2 deliverable and is not stubbed here.
@@ -888,9 +972,8 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
   links and images and deliberately leaves `[text][ref]` untouched rather than
   mangling it. Full link handling (inline / reference / strip) is a Phase 5
   deliverable.
-- **Coverage is not gated in CI, only reported.** Open question 4 from Phase 0 is
-  still unanswered. `core` is at 99.4% and `tokens` at 88.5%, so a
-  `--cov-fail-under` scoped to those two packages would pass today.
+- ~~**Coverage is not gated in CI.**~~ **Done.** Gated at 85% on `core` and
+  `tokens`; the job passes at 96.07%.
 - **Phase tags still cannot be pushed** (`send-pack: unexpected disconnect`, as
   in Phase 0). Recording the commit SHA here instead, as instructed. Phase 0
   ended at `772d99b`; Phase 1's content ends at `e18b3d8`.
@@ -902,15 +985,15 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
   footnote XML parts is brittle enough that it is not worth it until a backend
   actually needs testing against them. The fixture uses a `Note:` paragraph
   instead. Belongs to Phase 2 if a document backend claims footnote support.
-- **Windows and macOS verification.** Everything above was observed on Linux
-  only — this sandbox has no other platform. The CI matrix covers
-  ubuntu/macos/windows from the first commit, so the first CI run is the real
-  cross-platform check. Until it goes green, treat Windows path and encoding
-  behaviour as unverified.
-- **Python 3.12 and 3.13 verification.** Only 3.11.15 exists locally. Same
-  situation: CI is the check.
-- **GitHub name availability check.** Not performable from this session (see the
-  verification log). The owner controls the namespace.
+- ~~**Windows and macOS verification.**~~ **Done.** The first CI runs happened
+  during Phase 1's follow-up. Windows initially failed on line-ending
+  translation inside the fixture corpus; with that fixed, the suite is green on
+  ubuntu, macOS and Windows. See the verification log entry "First CI runs".
+- ~~**Python 3.12 and 3.13 verification.**~~ **Done.** Green across
+  3.11/3.12/3.13 on all three operating systems — nine test cells and nine
+  clean-core-install cells.
+- ~~**GitHub name availability check.**~~ **Done.** `RSD-Studio/tokenmill`
+  resolves over both git and the GitHub API.
 - **`docs/ARCHITECTURE.md`, `ADDING_A_BACKEND.md`, `LICENSES.md`, `BACKENDS.md`,
   `BENCHMARKS.md`, `FAQ.md`.** Deliberately not created as empty placeholders —
   each is written in the phase that produces the thing it documents (1, 1, 7, 2,
@@ -929,21 +1012,18 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 
 ## Open questions for the owner
 
-Everything that was mine to decide has been decided and implemented; the
-decisions are listed above. What remains needs access I do not have.
+Everything that was mine to decide has been decided, implemented and verified in
+CI. One thing remains, and it needs repository-admin access I do not have.
 
-**Both of these are now blocking the same thing** — proving that tokenmill
-counts tokens correctly. Nothing else in the project is waiting on anything.
+1. **Create `main` and make it the default branch.** The repository still has no
+   default branch — its only branches are the three `claude/**` ones, so "Phase 0
+   is complete and merged" is not true in git terms; there is nothing to have
+   merged into. This is why CI had never run before today, and it will keep
+   causing trouble: pull requests have no base, `CHANGELOG.md`'s `[Unreleased]`
+   link points at `/commits/main` and 404s, a CI status badge has no branch to
+   report on, and the Phase 11 release workflow will assume it exists.
 
-1. **Create `main` and make it the default branch.** The repository has no
-   default branch: its only branches are the three `claude/**` ones, so "Phase 0
-   is complete and merged" is not yet true in git terms — there is nothing to
-   have merged into. This is why CI had never run, and it will keep causing
-   trouble (pull requests have no base, `CHANGELOG.md`'s `[Unreleased]` link
-   points at `/commits/main` and 404s, and the Phase 11 release workflow will
-   assume it).
-
-   Suggested, from a clone:
+   From a clone:
 
    ```bash
    git fetch origin claude/phase-1-core-architecture
@@ -951,47 +1031,29 @@ counts tokens correctly. Nothing else in the project is waiting on anything.
    git push origin main
    ```
 
-   Then set `main` as the default branch in **Settings → General → Default
-   branch**. Phases 0 and 1 are already in that history, so nothing needs
-   merging retroactively.
+   Then **Settings → General → Default branch** → `main`. Phases 0 and 1 are
+   already in that history, so nothing needs merging retroactively, and the
+   branch is green on all 23 CI jobs.
 
    I have not done this myself: creating a repository's default branch changes
-   how the project looks to everyone who visits it, and it needs a settings
-   change I cannot make.
+   how the project looks to everyone who visits it, and the settings change is
+   not something I can make.
 
-2. **Watch the first `tokenizers` CI job, or unblock local verification.**
-   Acceptance criterion 3 is still unverified. CI is now fixed and pushing this
-   branch should trigger it; the `tokenizers` job is what will finally execute
-   `tests/unit/test_tokens_network.py` against a real BPE vocabulary. **If that
-   job fails, the expected counts in it are mine and are wrong** — they were
-   written from published encoding behaviour and never executed. Send me the
-   failure and I will correct the numbers, not loosen the assertions.
-
-   Separately, and still my recommendation: allow-listing
-   `openaipublic.blob.core.windows.net` and `huggingface.co` for these sessions
-   would let me verify token counting where I develop it, instead of finding out
-   one round-trip later. Failing that, the cheapest unblock is to run this on
-   any networked machine and send me the resulting directory:
-
-   ```bash
-   TIKTOKEN_CACHE_DIR=./tiktoken-cache python -c "
-   import tiktoken
-   for n in ('o200k_base', 'cl100k_base', 'p50k_base', 'r50k_base'):
-       tiktoken.get_encoding(n)
-   "
-   ```
-
-   It is four files, and tiktoken hash-checks them, so a corrupted copy is
-   refused rather than silently miscounting. I would use it via
-   `TIKTOKEN_CACHE_DIR` and **not** commit it — vendoring a vocabulary into the
-   repository is still the option I would rather avoid.
+2. **Optional, and no longer blocking: allow-list the two tokenizer hosts** for
+   these sessions. Token counting is now verified — but in CI, one push at a
+   time. Every future phase that touches measurement gets its feedback a
+   round-trip later than it could. The alternative, if allow-listing is
+   unattractive, is a warmed tiktoken cache (four files, hash-checked by
+   tiktoken so a bad copy is refused); the exact command is in the README under
+   "Working offline". Neither is urgent. Phase 2 does not depend on it.
 
 ### Closed
 
 | # | Question | Outcome |
 |---|---|---|
-| Phase 0 #1 | Token counting unverifiable in the sandbox | Superseded by #2 above. Fallback (b) implemented and now actually works, since CI runs |
+| Phase 0 #1 | Token counting unverifiable in the sandbox | Closed — verified in CI by a blocking job. `"hello world"` is 2 tokens under `o200k_base` |
 | Phase 0 #2 | Is the GitHub repository still named `tokenfold`? | Closed — it is `RSD-Studio/tokenmill`; verified over git and the API |
 | Phase 0 #3 | Branch convention | Closed — `claude/phase-<n>-<slug>` canonical, harness branches mirrored. In `CONTRIBUTING.md` |
 | Phase 0 #4 | Should CI gate coverage? | Closed — gated at 85% on `core` and `tokens`; passing at 96.07% |
 | Phase 1 #3 | Should the `bytes` tokenizer ship? | Closed — yes, with the fencing it already has |
+| Phase 1 #4 | Branch naming | Closed — same as Phase 0 #3 |

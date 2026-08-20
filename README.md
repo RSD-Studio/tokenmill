@@ -9,10 +9,12 @@
 > pipeline and the token measurement layer work end to end, proven by two
 > deliberately trivial backends (`plaintext` and `markdownify_html`). Real
 > document, web and repository backends arrive in Phases 2–4, and the GUI in
-> Phase 8. See [`PROGRESS.md`](PROGRESS.md) for exactly where things stand,
-> including what has been verified and what has only been verified in CI.
-> Nothing below is claimed to work until `PROGRESS.md` records a verification
-> run for it.
+> Phase 8. The suite is green on Linux, macOS and Windows across Python
+> 3.11/3.12/3.13, and token counting is verified against real tiktoken and
+> HuggingFace vocabularies in CI. See [`PROGRESS.md`](PROGRESS.md) for exactly
+> where things stand, including which claims are CI-verified rather than locally
+> observed. Nothing below is claimed to work until `PROGRESS.md` records a
+> verification run for it.
 
 ---
 

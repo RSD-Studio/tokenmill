@@ -94,6 +94,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by design, but the CI `test` job runs a plain `pytest`, which skips them too —
   so the tests covering real token counting, the product's central feature, were
   executed by nobody. A blocking `tokenizers` job now runs them explicitly.
+- **The test corpus was not byte-reproducible on Windows.** Git's
+  `core.autocrlf` rewrote LF to CRLF inside `tests/fixtures/` on checkout, which
+  changed the fixtures' digests and made the sample repository rebuild to a
+  different commit hash. A `.gitattributes` now marks the corpus `-text`, since
+  it is data rather than source. Caught by the first Windows CI job that ever
+  ran.
+- **`make_fixtures.py --check` compared files that are never committed.**
+  `sample_repo/secrets.env` is deliberately excluded from the repository, so
+  `--check` reported a mismatch on every fresh clone. It is now excluded from
+  the comparison.
 - `tokenmill convert` reported a conversion that made a document **larger** as
   though it were a saving — a 62→106 byte increase printed as `-71.0%`. The
   percentage now follows the count, so growth shows as `+71.0%`. Found by
