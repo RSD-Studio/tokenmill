@@ -46,11 +46,22 @@ classifiers = [
 # GPU and no system binary, in under a minute. Nothing heavy, nothing copyleft,
 # nothing that pulls PyTorch may ever appear in this list.
 #
-# Phase 0 ships zero product logic, so this list is deliberately empty. Phase 1
-# adds the first real entries (tiktoken, typer, pydantic); each later phase adds
-# only what that phase's code actually imports.
+# Each phase adds only what that phase's code actually imports. Phase 1 adds
+# three, all permissive, all pure Python or shipping wheels for every platform
+# in the CI matrix:
+#
+#   typer        MIT     the CLI (pulls click, rich, shellingham)
+#   tiktoken     MIT     token counting; fetches its vocabulary on first use
+#   markdownify  MIT     the markdownify_html reference backend (pulls bs4)
+#
+# The data model uses stdlib dataclasses rather than pydantic, deliberately:
+# `import tokenmill` then pulls in nothing at all. See docs/ARCHITECTURE.md.
 # ---------------------------------------------------------------------------
-dependencies = []
+dependencies = [
+    "typer>=0.12",
+    "tiktoken>=0.8",
+    "markdownify>=0.13",
+]
 
 [project.optional-dependencies]
 # `core` is an alias for the default dependency set above. It exists so that
@@ -82,6 +93,11 @@ heavy = []
 # Phase 8 — GUI (nicegui + fastapi).
 gui = []
 
+# Phase 1 — the HuggingFace tokenizer adapter (`--tokenizer hf:<model>`).
+# Apache-2.0 and light, but counting Llama tokens is not something every user
+# needs, so it stays out of the core tier.
+tokenizers = ["tokenizers>=0.20"]
+
 # Development toolchain.
 dev = [
     "pytest>=8.3",
@@ -108,6 +124,30 @@ Homepage = "https://github.com/RSD-Studio/tokenmill"
 Repository = "https://github.com/RSD-Studio/tokenmill"
 Issues = "https://github.com/RSD-Studio/tokenmill/issues"
 Changelog = "https://github.com/RSD-Studio/tokenmill/blob/main/CHANGELOG.md"
+
+# ---------------------------------------------------------------------------
+# Plugin registration.
+#
+# The built-in backends, post-processors and tokenizers register through the
+# same entry point groups a third-party plugin uses. There is no hard-coded
+# import list anywhere in the codebase, which is what makes "add a backend
+# without touching core" true rather than aspirational.
+# ---------------------------------------------------------------------------
+[project.scripts]
+tokenmill = "tokenmill.cli.main:main"
+
+[project.entry-points."tokenmill.backends"]
+plaintext = "tokenmill.backends.plaintext:PlaintextConverter"
+markdownify_html = "tokenmill.backends.web.markdownify_html:MarkdownifyHtmlConverter"
+
+[project.entry-points."tokenmill.postprocessors"]
+normalize_whitespace = "tokenmill.post.whitespace:WhitespaceNormalizer"
+links = "tokenmill.post.links:LinkHandler"
+
+[project.entry-points."tokenmill.tokenizers"]
+tiktoken = "tokenmill.tokens.tiktoken_adapter:TiktokenProvider"
+hf = "tokenmill.tokens.hf_adapter:HuggingFaceProvider"
+units = "tokenmill.tokens.units_adapter:UnitsProvider"
 
 [tool.hatch.version]
 path = "src/tokenmill/__init__.py"
@@ -162,7 +202,17 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests may use assert, may skip docstrings, and may hardcode "insecure" values.
-"tests/**" = ["S101", "D100", "D101", "D102", "D103", "D104", "ANN001", "ANN201"]
+"tests/**" = [
+    "S101",
+    "D100", "D101", "D102", "D103", "D104", "D107",
+    "ANN001", "ANN201", "ANN202",
+]
+# The error taxonomy is fixed by DEVELOPMENT_PLAN.md §1.4, which names
+# UnsupportedFormat, BackendUnavailable, BackendFailed, Timeout, CorruptSource
+# and NetworkRequired. Those names are the architecture contract that backends
+# and the GUI are written against, so N818's "must end in Error" does not apply
+# here; renaming them would be a breaking change made for a lint rule.
+"src/tokenmill/core/errors.py" = ["N818"]
 # Fixture/utility scripts print progress to stdout by design.
 "scripts/**" = ["T201"]
 # make_fixtures.py embeds HTML templates verbatim (reflowing them would change
@@ -194,6 +244,13 @@ pretty = true
 [[tool.mypy.overrides]]
 # Fixture-generation dependencies ship no type stubs.
 module = ["docx.*", "pptx.*", "reportlab.*", "pypdfium2.*", "openpyxl.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Backend dependencies that ship no type stubs. Adapters wrapping these are
+# responsible for narrowing whatever they return back to a typed value at the
+# boundary, so the untyped surface stops at the adapter.
+module = ["markdownify.*", "tokenizers.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
