@@ -126,6 +126,30 @@ def _stage_delta(previous: StageCount | None, current: StageCount) -> str:
     return f"{change:+.1f}%{unit}"
 
 
+def _percent_change(before: int, after: int) -> str:
+    """Describe the change in a count as a signed percentage of the count.
+
+    The sign follows the **count**, not the saving: ``-45.5%`` means the text
+    got 45.5% cheaper, ``+71.0%`` means it got 71% more expensive. Reporting a
+    conversion that made a document bigger as though it were a reduction would
+    be exactly the kind of misleading number this project must not print, so
+    growth is shown as growth.
+
+    Args:
+        before: The count going in.
+        after: The count coming out.
+
+    Returns:
+        The signed percentage, or ``unchanged``/``n/a`` where no percentage is
+        meaningful.
+    """
+    if before == after:
+        return "unchanged"
+    if before == 0:
+        return "n/a"
+    return f"{(after - before) / before * 100:+.1f}%"
+
+
 def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
     """Render the human-readable report for one conversion.
 
@@ -147,12 +171,9 @@ def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
 
     before, after = result.tokens_before, result.tokens_after
     if before is not None and after is not None:
-        ratio = result.reduction_ratio
-        change = "unchanged" if ratio is None or ratio == 0 else f"{ratio * 100:+.1f}%"
-        if ratio is not None and ratio > 0:
-            change = f"-{ratio * 100:.1f}%"
         lines.append(
-            f"tokens:   {before.value:,} -> {after.value:,}  ({change}, {before.tokenizer_id})"
+            f"tokens:   {before.value:,} -> {after.value:,}  "
+            f"({_percent_change(before.value, after.value)}, {before.tokenizer_id})"
         )
     else:
         lines.append("tokens:   not measured — see warnings below")

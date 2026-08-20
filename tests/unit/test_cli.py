@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tokenmill.cli.format import format_table, format_tokens
+from tokenmill.cli.format import _percent_change, format_table, format_tokens
 from tokenmill.cli.main import app
 from tokenmill.core.models import TokenCount
 
@@ -308,6 +308,23 @@ class TestFormatting:
 
     def test_counts_get_thousands_separators(self) -> None:
         assert format_tokens(TokenCount(1234567, "t")) == "1,234,567"
+
+    def test_a_reduction_is_reported_as_a_negative_change(self) -> None:
+        assert _percent_change(1000, 550) == "-45.0%"
+
+    def test_growth_is_reported_as_growth_not_as_a_reduction(self) -> None:
+        """A conversion that made the document bigger must not read as a saving.
+
+        Observed on a real third-party backend whose Markdown table was larger
+        than its CSV input: the report said "-71.0%" for a 71% increase.
+        """
+        assert _percent_change(62, 106) == "+71.0%"
+
+    def test_no_change_says_so_rather_than_printing_zero_percent(self) -> None:
+        assert _percent_change(100, 100) == "unchanged"
+
+    def test_a_change_from_zero_has_no_meaningful_percentage(self) -> None:
+        assert _percent_change(0, 50) == "n/a"
 
 
 class TestBrokenBackendDoesNotCrashTheCli:
