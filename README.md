@@ -176,8 +176,37 @@ but it is not a model tokenizer and tokenmill will not let you forget it: the
 CLI prints its unit as `UTF-8 bytes` and warns that the number must not be
 quoted as a token count.
 
-To use tiktoken offline, populate its cache on a networked machine and point
-`TIKTOKEN_CACHE_DIR` at the result.
+### Working offline
+
+tiktoken and HuggingFace both fetch their vocabulary the first time you use
+them. On a machine that cannot reach `openaipublic.blob.core.windows.net`, warm
+tiktoken's cache somewhere that can and copy it across:
+
+```bash
+# on a networked machine
+TIKTOKEN_CACHE_DIR=./tiktoken-cache python -c "
+import tiktoken
+for name in ('o200k_base', 'cl100k_base'):
+    tiktoken.get_encoding(name)
+"
+
+# then, on the offline machine
+export TIKTOKEN_CACHE_DIR=/path/to/tiktoken-cache
+tokenmill tokens page.html --tokenizer o200k_base
+```
+
+The cache is keyed by a SHA-1 of the download URL, and tiktoken verifies the
+contents against an expected hash before use — a wrong or truncated file is
+deleted and refused rather than used, so an offline cache cannot silently
+produce wrong counts. (Verified: see the `PROGRESS.md` verification log.)
+
+For HuggingFace tokenizers, point `HF_HOME` at a warmed cache and set
+`HF_HUB_OFFLINE=1`.
+
+If no tokenizer can be loaded at all, `tokenmill convert` still produces the
+document with its counts marked unavailable and a warning explaining why.
+`tokenmill tokens` exits non-zero, because counting is that command's entire
+job.
 
 The core install must stay light. Everything heavy lives behind extras:
 

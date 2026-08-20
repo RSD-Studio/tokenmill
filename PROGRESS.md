@@ -64,7 +64,7 @@ this SHA). Tags cannot be pushed from these sessions — see Deferred work.
 |---|---|---|
 | 1 | A backend can be added by dropping in a module + entry point, no core edits | ✅ **Observed.** Built a separate distribution (`tokenmill-csvtable`) outside the repo, straight from the code blocks in `ADDING_A_BACKEND.md`, installed it, and it appeared in `tokenmill backends` and converted a file. No tokenmill file was touched. |
 | 2 | Registry lists backends with correct availability when a dep is absent | ✅ **Observed.** Unit-tested against a backend whose probe reports a missing dependency, and end-to-end at the CLI with a plugin that raises on import. |
-| 3 | Token counts match a hand-verified tiktoken result on a known string | ⚠️ **Not verified here — CI only.** `openaipublic.blob.core.windows.net` is still denied by the sandbox proxy, so no real BPE vocabulary can be loaded. The assertions live in `tests/unit/test_tokens_network.py` behind the `network` marker and have **never been executed**. See Open question 1. |
+| 3 | Token counts match a hand-verified tiktoken result on a known string | ❌ **Not verified anywhere yet.** `openaipublic.blob.core.windows.net` is still denied by the sandbox proxy, so no real BPE vocabulary can be loaded here. The assertions live in `tests/unit/test_tokens_network.py` behind the `network` marker and have **never been executed** — and, as the follow-up entry in the verification log records, neither had CI. CI is now fixed and has a blocking `tokenizers` job that runs them; **the first green run of that job is what will close this criterion.** |
 | 4 | `tokenmill convert tests/fixtures/boilerplate.html` returns Markdown and a real before/after count | ⚠️ **Partly observed.** Markdown: yes, read and judged correct. A real before/after count: yes with `--tokenizer bytes` (12,481 → 6,802 UTF-8 bytes, −45.5%); **not** with `o200k_base`, which cannot load here. Byte counts are not token counts. |
 | 5 | *(exit gate)* Protocol-conformance test passes for both reference backends | ✅ **Observed.** 16 conformance checks per backend, parametrised over the installed entry points rather than a hard-coded list. |
 | 6 | *(exit gate)* A deliberately broken backend is reported as unavailable rather than crashing the CLI | ✅ **Observed.** Installed a real `.dist-info` whose entry point raises `ImportError`; the CLI listed it as "failed to load", kept working, and exited 0. |
@@ -557,6 +557,99 @@ not by reading it):
    not `txt`, so tests probing format handling must use real files. Corrected the
    tests, not the behaviour.
 
+### 2026-08-20 — Post-Phase-1 follow-up: CI, and a correction
+
+The owner accepted the recommendations from the open questions. Implementing
+them meant checking that the thing several of them lean on — CI — actually
+works. It did not.
+
+**Finding: `.github/workflows/ci.yml` had never run, not once.**
+
+- Query: GitHub Actions `list_workflows` for `RSD-Studio/tokenmill`
+- Result: `total_count: 1`, and the one workflow is
+  `dynamic/dependabot/update-graph`. **Our CI workflow was not registered with
+  Actions at all.**
+- Query: `list_workflow_runs`
+- Result: `total_count: 1` — a single Dependabot dependency-graph run on
+  2026-08-20. No lint, no types, no test, no `clean-core-install` run has ever
+  happened.
+- Query: `list_branches`
+- Result: `claude/phase-1-core-architecture`,
+  `claude/tokenfold-project-setup-9m3i5o`, `claude/tokenmill-phase-1-pr3rd7`.
+  **There is no `main` branch.**
+- Cause: the workflow triggered on `push` to `main` and on `pull_request`.
+  `main` does not exist and no pull request has been opened, so neither trigger
+  could ever fire. A workflow that never fires is never registered, which is why
+  it did not even appear in the workflow list.
+
+**Correction to the Phase 1 exit-gate entry above.** That entry records
+acceptance criterion 3 (token counts match a hand-verified tiktoken result) as
+"not verified here — CI only". That was wrong in the second half: CI had never
+run, so those assertions were verified *nowhere*. Worse, the `test` job runs a
+plain `pytest`, which **skips** `network`-marked tests, so even a working CI
+would not have executed them. The criterion's status is unchanged — still
+unverified — but the reason was misstated and is corrected here rather than
+edited away.
+
+**Fixes applied:**
+
+- `on.push.branches` now includes `claude/**`, so CI runs on the branches work
+  actually happens on rather than only on a branch that does not exist.
+- New **`tokenizers` job**, running `uv run pytest -q -m network -rs` with the
+  `tokenizers` extra. This is the only place real token counting is verified, so
+  it is a blocking job, not an advisory one.
+- New **`coverage` job**, enforcing the plan's ≥85% target on `core` and
+  `tokens` specifically.
+
+- Command: `uv run python -c "import yaml; yaml.safe_load(...)"`
+- Result: valid YAML; triggers
+  `{'push': {'branches': ['main', 'claude/**']}, 'pull_request': None, 'workflow_dispatch': None}`;
+  jobs `['lint', 'types', 'test', 'coverage', 'tokenizers', 'fixtures', 'clean-core-install']`.
+
+- Command: `uv run pytest -q --cov=tokenmill.core --cov=tokenmill.tokens --cov-fail-under=85`
+- Result: `Required test coverage of 85% reached. Total coverage: 96.07%`,
+  `325 passed, 11 skipped`. The gate passes today, so it locks in the current
+  standard rather than demanding new work.
+
+### 2026-08-20 — tiktoken's offline cache, verified
+
+Checked before documenting it, rather than after.
+
+- Read `tiktoken/load.py` in the installed package: `read_file_cached` consults
+  `TIKTOKEN_CACHE_DIR`, then `DATA_GYM_CACHE_DIR`, then
+  `<tempdir>/data-gym-cache`, keyed by `sha1(url)`, **before** attempting any
+  download. Cache keys for our four encodings, computed and recorded so the
+  instructions can be checked: `o200k_base` →
+  `fb374d419588a4632f3f557e76b4b70aebbca790`, `cl100k_base` →
+  `9b5ad71b2ce5302211f9c61530b329a4922fc6a4`, `p50k_base` →
+  `ec7223a39ce59f226a68acc30dc1af2788490e15`, `r50k_base` →
+  `0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4`.
+
+- Command: `TIKTOKEN_CACHE_DIR=<empty dir> uv run tokenmill tokens --text "hello world" -t o200k_base`
+- Result: the usual 403 network error — an empty cache correctly falls through
+  to the download rather than failing in some other way.
+
+- Command: wrote a junk file to the exact `o200k_base` cache key, then re-ran
+  the same command
+- Result: **the junk was refused and deleted.** Same 403 error, and the cache
+  directory was empty afterwards (`0 file(s)`). tiktoken hash-checks cached
+  content before use, so a wrong or truncated cache **cannot silently produce
+  wrong token counts**. That is the property that makes recommending the offline
+  cache safe, and it is now verified rather than assumed.
+
+### 2026-08-20 — Repository name confirmed
+
+Phase 0 left open whether the GitHub repository had been renamed from
+`tokenfold`.
+
+- Command: `git ls-remote --heads https://github.com/RSD-Studio/tokenmill`
+- Result: succeeds, returning the three branches.
+- Query: GitHub API `list_branches` for owner `RSD-Studio`, repo `tokenmill`
+- Result: succeeds.
+
+**The repository is `RSD-Studio/tokenmill`.** The URLs in `pyproject.toml` and
+the README are correct. Phase 0's Open question 2 is closed.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned
@@ -606,6 +699,40 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
+
+### Post-Phase-1 follow-up (owner accepted the recommendations)
+
+- **2026-08-20 — CI now runs on `claude/**` branches.** It had never run at all:
+  the trigger named only `main`, which does not exist. The whole "verified in
+  CI" fallback rested on a workflow that could not fire. See the verification
+  log entry for the full finding and the correction it forced.
+- **2026-08-20 — A blocking `tokenizers` CI job runs the `network` tests.**
+  Marking those tests `network` kept the local suite fast and offline, but the
+  existing `test` job runs a plain `pytest`, which skips them — so the marker
+  had quietly turned "verified in CI" into "verified nowhere". The new job
+  selects them explicitly. It is deliberately **not** `continue-on-error`: it is
+  the only verification of the product's central feature, and an advisory job
+  that goes yellow unnoticed is the same as no job.
+- **2026-08-20 — Coverage is gated, not just reported.** `--cov-fail-under=85`
+  scoped to `core` and `tokens`, the two packages the plan names. It passes at
+  96.07% today, so it locks in the current standard rather than demanding new
+  work. Closes Phase 0's Open question 4.
+- **2026-08-20 — The `bytes` tokenizer ships.** Owner accepted the
+  recommendation. It stays fenced exactly as built: never the default,
+  `is_model_tokenizer=False`, its unit printed as `UTF-8 bytes`, and an explicit
+  CLI warning against quoting it as a token count. Closes Open question 3.
+- **2026-08-20 — Branch convention: `claude/phase-<n>-<slug>` is canonical.**
+  The harness also assigns an auto-generated branch name per session; those are
+  pushed as identical mirrors so nothing is stranded if a session ends
+  unexpectedly, and can be deleted once the phase branch is merged. Recorded in
+  `CONTRIBUTING.md`. Closes Open question 4 from Phase 1.
+- **2026-08-20 — The repository name question is closed.** `RSD-Studio/tokenmill`
+  resolves over both git and the GitHub API; the URLs in `pyproject.toml` and
+  the README are correct. Closes Phase 0's Open question 2.
+- **2026-08-20 — The offline tiktoken cache is a documented, verified path.**
+  `TIKTOKEN_CACHE_DIR` is consulted before any download, and cached content is
+  hash-checked, so a wrong cache is refused rather than used. That last property
+  is what makes it safe to recommend, and it was tested rather than assumed.
 
 - **2026-08-20 (Phase 1) — The data model is stdlib dataclasses, not pydantic.**
   The plan sanctioned either. Dataclasses win because `import tokenmill` then
@@ -802,58 +929,69 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 
 ## Open questions for the owner
 
-1. **Token counting is still unverified, and this is now the one real gap in
-   Phase 1.** I re-probed both hosts at the start of the session as instructed;
-   both are still denied with a 403 at the CONNECT tunnel, and the proxy's own
-   status endpoint logs the denials. I did not route around it.
+Everything that was mine to decide has been decided and implemented; the
+decisions are listed above. What remains needs access I do not have.
 
-   What that costs, precisely: the registry, the pipeline, the per-stage
-   accounting, `TokenMeter`'s arithmetic and the CLI's rendering are all
-   verified — I watched them count and subtract real numbers using the `bytes`
-   tokenizer and a deterministic fake. What is **not** verified is that
-   `tiktoken` produces the number we think it does for a given string. That is
-   acceptance criterion 3, and I will not mark it done on an assumption.
+**Both of these are now blocking the same thing** — proving that tokenmill
+counts tokens correctly. Nothing else in the project is waiting on anything.
 
-   I still recommend **(a)**: allow-list `openaipublic.blob.core.windows.net`
-   and `huggingface.co`. Failing that, **(b)** — accept CI as the verifier —
-   is what I have built for, and it works, but it means every future phase that
-   touches measurement reports "verified in CI, not observed". A third option
-   has appeared since Phase 0: if you can run `python -c "import tiktoken;
-   tiktoken.get_encoding('o200k_base')"` on any networked machine and send me
-   the resulting `~/.cache/tiktoken` directory, `TIKTOKEN_CACHE_DIR` makes it
-   work here without vendoring anything into the repository.
+1. **Create `main` and make it the default branch.** The repository has no
+   default branch: its only branches are the three `claude/**` ones, so "Phase 0
+   is complete and merged" is not yet true in git terms — there is nothing to
+   have merged into. This is why CI had never run, and it will keep causing
+   trouble (pull requests have no base, `CHANGELOG.md`'s `[Unreleased]` link
+   points at `/commits/main` and 404s, and the Phase 11 release workflow will
+   assume it).
 
-2. **The GitHub repository name.** Unchanged from Phase 0: the package, CLI,
-   module and all docs are `tokenmill`, and `pyproject.toml` and the README
-   point at `https://github.com/RSD-Studio/tokenmill`. Your brief says the repo
-   was renamed from `tokenfold`, so I have assumed those URLs now resolve. If
-   they do not, say so and I will fix them in one commit.
+   Suggested, from a clone:
 
-3. **Do you want the `bytes` tokenizer to ship?** I added it and I want your
-   explicit sign-off, because it changes what the product offers rather than how
-   it is built.
+   ```bash
+   git fetch origin claude/phase-1-core-architecture
+   git branch main origin/claude/phase-1-core-architecture
+   git push origin main
+   ```
 
-   The case for it: without it, an air-gapped user gets a converter and no
-   measurement at all, and in this sandbox it is the only reason I could observe
-   the measurement path end to end. It counts a real thing exactly.
+   Then set `main` as the default branch in **Settings → General → Default
+   branch**. Phases 0 and 1 are already in that history, so nothing needs
+   merging retroactively.
 
-   The case against: any number next to a converted document invites being read
-   as a token count. I have fenced it as hard as I can — it is never the
-   default, `is_model_tokenizer` is `False`, the CLI prints the unit as `UTF-8
-   bytes` and warns explicitly that it must not be quoted as a token count, and
-   the README and `ARCHITECTURE.md` both say so. If you would still rather not
-   have it in the product, say so and I will move it into the test suite as a
-   test double; the cost is that `tokenmill convert` produces no measurement of
-   any kind on a machine without network access.
+   I have not done this myself: creating a repository's default branch changes
+   how the project looks to everyone who visits it, and it needs a settings
+   change I cannot make.
 
-4. **Branch naming.** You asked for `claude/phase-1-core-architecture`; the
-   session harness designates `claude/tokenmill-phase-1-pr3rd7`. Rather than
-   pick one and lose work if I guessed wrong, I pushed the same commits to both.
-   Tell me which convention you want and I will use only that one from Phase 2,
-   and you can delete the other.
+2. **Watch the first `tokenizers` CI job, or unblock local verification.**
+   Acceptance criterion 3 is still unverified. CI is now fixed and pushing this
+   branch should trigger it; the `tokenizers` job is what will finally execute
+   `tests/unit/test_tokens_network.py` against a real BPE vocabulary. **If that
+   job fails, the expected counts in it are mine and are wrong** — they were
+   written from published encoding behaviour and never executed. Send me the
+   failure and I will correct the numbers, not loosen the assertions.
 
-5. **Should CI gate coverage** (carried over from Phase 0, question 4, still
-   unanswered). `core` is at 99.4% and `tokens` at 88.5%, both above the plan's
-   85% target, so a `--cov-fail-under=85` scoped to those two packages would
-   pass today and would stop the number drifting down quietly. Say the word and
-   I will add it.
+   Separately, and still my recommendation: allow-listing
+   `openaipublic.blob.core.windows.net` and `huggingface.co` for these sessions
+   would let me verify token counting where I develop it, instead of finding out
+   one round-trip later. Failing that, the cheapest unblock is to run this on
+   any networked machine and send me the resulting directory:
+
+   ```bash
+   TIKTOKEN_CACHE_DIR=./tiktoken-cache python -c "
+   import tiktoken
+   for n in ('o200k_base', 'cl100k_base', 'p50k_base', 'r50k_base'):
+       tiktoken.get_encoding(n)
+   "
+   ```
+
+   It is four files, and tiktoken hash-checks them, so a corrupted copy is
+   refused rather than silently miscounting. I would use it via
+   `TIKTOKEN_CACHE_DIR` and **not** commit it — vendoring a vocabulary into the
+   repository is still the option I would rather avoid.
+
+### Closed
+
+| # | Question | Outcome |
+|---|---|---|
+| Phase 0 #1 | Token counting unverifiable in the sandbox | Superseded by #2 above. Fallback (b) implemented and now actually works, since CI runs |
+| Phase 0 #2 | Is the GitHub repository still named `tokenfold`? | Closed — it is `RSD-Studio/tokenmill`; verified over git and the API |
+| Phase 0 #3 | Branch convention | Closed — `claude/phase-<n>-<slug>` canonical, harness branches mirrored. In `CONTRIBUTING.md` |
+| Phase 0 #4 | Should CI gate coverage? | Closed — gated at 85% on `core` and `tokens`; passing at 96.07% |
+| Phase 1 #3 | Should the `bytes` tokenizer ship? | Closed — yes, with the fencing it already has |

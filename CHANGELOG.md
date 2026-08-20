@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that has been built, installed and run).
 - Core dependencies: `typer`, `tiktoken` and `markdownify`, all MIT. The clean
   core install is 19 packages, about a second, no PyTorch and no system binary.
+- CI `coverage` job enforcing the plan's ≥85% target on `core` and `tokens`
+  (currently 96.07%), and a `tokenizers` job that runs the `network`-marked
+  tests against real tiktoken and HuggingFace vocabularies.
+- Documented offline tokenizer use via `TIKTOKEN_CACHE_DIR` and `HF_HOME`,
+  including the verified property that tiktoken hash-checks cached data, so a
+  wrong cache is refused rather than silently miscounting.
+- A branch convention in `CONTRIBUTING.md`: `claude/phase-<n>-<slug>` per phase.
 
 #### Phase 0 — scaffolding
 
@@ -79,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI had never run.** The workflow triggered only on pushes to `main` and on
+  pull requests; the repository has no `main` branch and no pull request has
+  been opened, so it never fired and was never even registered with GitHub
+  Actions. It now also runs on `claude/**` branches.
+- **The `network`-marked tests were not run anywhere.** They are skipped locally
+  by design, but the CI `test` job runs a plain `pytest`, which skips them too —
+  so the tests covering real token counting, the product's central feature, were
+  executed by nobody. A blocking `tokenizers` job now runs them explicitly.
 - `tokenmill convert` reported a conversion that made a document **larger** as
   though it were a saving — a 62→106 byte increase printed as `-71.0%`. The
   percentage now follows the count, so growth shows as `+71.0%`. Found by
