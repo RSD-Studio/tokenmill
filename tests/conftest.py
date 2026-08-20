@@ -12,6 +12,36 @@ import pytest
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
+#: Markers whose tests need something this machine may not have, mapped to what
+#: that something is. They are skipped unless the run explicitly asks for them
+#: with ``-m <marker>``, so a default ``pytest`` run is fast, offline and green.
+OPT_IN_MARKERS: dict[str, str] = {
+    "network": "needs real network access (a tokenizer vocabulary download)",
+    "heavy": "needs a GPU or a multi-gigabyte model download",
+    "compress": "needs the `compress` extra and a model download",
+}
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip opt-in tests unless the run selected their marker.
+
+    Reported as skips rather than deselected, so it stays visible that they
+    exist and did not run — a silently empty test run is how "verified" claims
+    stop being true.
+
+    Args:
+        config: The pytest config, read for the ``-m`` expression.
+        items: The collected tests, marked in place.
+    """
+    selected = config.getoption("-m", default="") or ""
+    for marker, need in OPT_IN_MARKERS.items():
+        if marker in selected:
+            continue
+        skip = pytest.mark.skip(reason=f"{need}; run with -m {marker}")
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip)
+
 
 @pytest.fixture(scope="session")
 def fixture_dir() -> Path:
