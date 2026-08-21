@@ -9,12 +9,15 @@ gets the whole structure right at once::
     ### Where the tokens actually go: detail
     - Strip navigation
     1. Keep headings
+    1. Nested detail under the last item
     | Stage          |   Tokens | Delta   |
 
-The title stays a heading, the H1s and H2s nest beneath it, both lists keep
-their markers, and the table gets a correct header row. MarkItDown loses the
-title and the bullets and emits an empty header row; Kreuzberg flattens the
-title and the H1s to the same level and loses both lists.
+Three correct heading levels with the title at the top, both lists with their
+markers, the sub-list restarted as a nested list rather than flattened, and a
+real table header row. MarkItDown keeps the list markers too, but demotes the
+title to body text, flattens the sub-list into the parent numbering and emits
+an **empty header row** above the real one; Kreuzberg collides the title with
+the H1s and loses both lists entirely.
 
 It is also the most expensive thing tokenmill can install. ``pip install
 docling`` resolves to **122 packages and about 5.2 GB**, PyTorch and the CUDA
