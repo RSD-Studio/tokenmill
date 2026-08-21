@@ -55,8 +55,9 @@ egress proxy denies ``huggingface.co``, so the models cannot be fetched here.
 
 from __future__ import annotations
 
-from contextlib import suppress
-from typing import Any
+import warnings
+from contextlib import contextmanager, suppress
+from typing import TYPE_CHECKING, Any
 
 from tokenmill.backends.documents._common import (
     classify_failure,
@@ -76,7 +77,45 @@ from tokenmill.core.models import (
 )
 from tokenmill.core.protocol import BaseConverter, ConversionContext
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from collections.abc import Iterator
+
 __all__ = ["DoclingConverter"]
+
+
+@contextmanager
+def _docling_own_deprecations_muted() -> Iterator[None]:
+    """Stop Docling's internal deprecation warnings from failing a conversion.
+
+    Docling 2.121.0's PDF pipeline reads its own deprecated
+    ``generate_table_images`` field during ``_init_models``, and pydantic
+    dutifully raises a ``DeprecationWarning`` about it. Under ``-W error`` —
+    which this project's own test suite sets, and which plenty of applications
+    embedding tokenmill will too — that warning becomes an exception, and a
+    perfectly good PDF conversion fails with a message about a field the user
+    has never heard of and cannot set.
+
+    Nothing tokenmill does causes it and nothing tokenmill can do avoids it, so
+    the only honest options are to suppress it or to let a third-party library's
+    internal housekeeping break real conversions. The filter is scoped to this
+    one call and matched on the message, so an unrelated warning still gets
+    through.
+
+    Note that :func:`warnings.catch_warnings` manipulates global state and is
+    not thread-safe. That is fine today — nothing runs conversions concurrently
+    — and is recorded in ``PROGRESS.md`` as something the Phase 8 batch runner
+    has to account for.
+
+    Yields:
+        Nothing; the filter is active for the duration of the block.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"This field is deprecated\.",
+            category=DeprecationWarning,
+        )
+        yield
 
 
 class DoclingConverter(BaseConverter):
@@ -156,7 +195,8 @@ class DoclingConverter(BaseConverter):
 
         with source_as_file(source, self.info.id) as path:
             try:
-                converted = converter.convert(str(path))
+                with _docling_own_deprecations_muted():
+                    converted = converter.convert(str(path))
                 document = converted.document
                 text = str(document.export_to_markdown())
             except ConversionError:

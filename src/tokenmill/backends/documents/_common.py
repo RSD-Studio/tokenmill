@@ -18,6 +18,8 @@ Three of them carry real decisions:
 * :func:`source_as_file` gives libraries that only accept a path one, without
   making every adapter reimplement temporary-file handling for byte and text
   sources.
+* :func:`warnings_as_conversion_warnings` stops a third-party library's
+  import-time chatter from being fatal under ``-W error``, without hiding it.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import tempfile
+import warnings
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,6 +49,7 @@ __all__ = [
     "render_markdown_table",
     "source_as_file",
     "warn_on_empty_output",
+    "warnings_as_conversion_warnings",
 ]
 
 #: Substrings that mark a failure as "this file is damaged", checked
@@ -161,6 +165,46 @@ def source_as_file(source: Source, backend_id: str) -> Iterator[Path]:
         path = Path(directory) / f"source{suffix}"
         path.write_bytes(data)
         yield path
+
+
+@contextmanager
+def warnings_as_conversion_warnings(context: ConversionContext, *, activity: str) -> Iterator[None]:
+    """Turn warnings raised inside the block into conversion warnings.
+
+    A library that warns at import time must not be able to fail a conversion.
+    Under ``-W error`` — which this project's own test suite sets, and which
+    applications embedding tokenmill may too — any such warning becomes an
+    exception, and ``BaseConverter`` then reports a perfectly healthy converter
+    as broken.
+
+    This is not hypothetical. ``markitdown`` imports ``magika``, which imports
+    ``onnxruntime``, which warns ``Unsupported Windows version (2025server)``
+    the moment it loads. On the Windows CI runners that turned every MarkItDown
+    conversion into ``BackendFailed``, for a reason that had nothing to do with
+    the document.
+
+    Suppressing it outright would be the wrong fix — "your platform is
+    unsupported" is exactly the kind of thing a user should hear. So each
+    warning is captured and handed to the user as a conversion warning instead:
+    non-fatal, still visible, attributed to the thing that raised it.
+
+    Note that :func:`warnings.catch_warnings` manipulates global state and is
+    not thread-safe. That is fine today — nothing runs conversions concurrently
+    — and is recorded in ``PROGRESS.md`` as something the Phase 8 batch runner
+    has to account for.
+
+    Args:
+        context: Collects whatever was warned about.
+        activity: What was happening, for the message.
+
+    Yields:
+        Nothing; warnings are collected for the duration of the block.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield
+    for entry in caught:
+        context.warn(f"{activity}: {entry.category.__name__}: {entry.message}")
 
 
 def classify_failure(exc: Exception, *, source: Source, backend_id: str) -> ConversionError:

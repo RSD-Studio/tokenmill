@@ -59,10 +59,13 @@ FORMAT_PREFERENCES: Final[Mapping[str, Mapping[str, int]]] = {
         "pypdf": 30,
         "docling": 10,
     },
-    # docling is the only backend that keeps report.docx's title as a heading,
-    # nests H1/H2 beneath it correctly, and preserves both the bullet and the
-    # numbered list. It needs no downloaded model for Office formats, so
-    # preferring it here costs nothing a user did not already install.
+    # docling is the only backend that keeps report.docx's title as a heading
+    # *and* nests the H1s and H2s beneath it, giving three correct levels where
+    # markitdown gives two and loses the title and kreuzberg collides the title
+    # with the H1s. It also keeps the nested list item nested, and gives the
+    # table a real header row where markitdown emits an empty one above it. It
+    # needs no downloaded model for Office formats, so preferring it here costs
+    # nothing a user did not already install.
     "docx": {"docling": 80, "markitdown": 60, "kreuzberg": 40},
     # markitdown is the only backend that keeps deck.pptx's speaker notes.
     "pptx": {"markitdown": 80, "docling": 50, "kreuzberg": 30},
@@ -91,8 +94,9 @@ _RATIONALE: Final[Mapping[str, str]] = {
         "order. docling last: its PDF path downloads models on first use."
     ),
     "docx": (
-        "docling first: the only backend that keeps the title as a heading, "
-        "nests H1/H2 under it and preserves both list types."
+        "docling first: the only backend that keeps the title as a heading and "
+        "nests H1/H2 beneath it, and the only one that keeps a nested list "
+        "nested and gives the table a real header row."
     ),
     "pptx": "markitdown first: the only backend that keeps speaker notes.",
     "xlsx": "markitdown and kreuzberg keep sheet names as headings; docling drops them.",

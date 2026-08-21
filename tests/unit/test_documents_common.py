@@ -11,6 +11,7 @@ damaged.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from tokenmill.backends.documents._common import (
     render_markdown_table,
     source_as_file,
     warn_on_empty_output,
+    warnings_as_conversion_warnings,
 )
 from tokenmill.core.errors import BackendFailed, CorruptSource, NetworkRequired
 from tokenmill.core.models import AvailabilityStatus, Source
@@ -200,6 +202,65 @@ class TestWarnOnEmptyOutput:
         warn_on_empty_output("\n\n", source=SOURCE, context=context, reason="no text layer")
 
         assert context.metadata["empty_output"] is True
+
+
+class TestWarningsAsConversionWarnings:
+    def test_a_warning_inside_the_block_becomes_a_conversion_warning(self) -> None:
+        context = ConversionContext()
+
+        with warnings_as_conversion_warnings(context, activity="importing something"):
+            warnings.warn("your platform is unsupported", UserWarning, stacklevel=1)
+
+        assert context.warnings == [
+            "importing something: UserWarning: your platform is unsupported"
+        ]
+
+    def test_a_warning_inside_the_block_is_not_fatal_under_error_filters(self) -> None:
+        """The whole point: -W error must not turn a library's chatter into a failure."""
+        context = ConversionContext()
+
+        def noisy_import() -> None:
+            with warnings_as_conversion_warnings(context, activity="importing something"):
+                warnings.warn("noisy but harmless", UserWarning, stacklevel=1)
+
+        # The error filter has to be established *outside* the helper, which is
+        # the situation the helper exists for: pytest's filterwarnings=error is
+        # already in force by the time a backend imports its dependency.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            noisy_import()
+
+        assert len(context.warnings) == 1
+
+    def test_a_quiet_block_adds_nothing(self) -> None:
+        context = ConversionContext()
+
+        with warnings_as_conversion_warnings(context, activity="importing something"):
+            pass
+
+        assert context.warnings == []
+
+    def test_several_warnings_are_all_reported(self) -> None:
+        context = ConversionContext()
+
+        with warnings_as_conversion_warnings(context, activity="importing something"):
+            warnings.warn("first", UserWarning, stacklevel=1)
+            warnings.warn("second", DeprecationWarning, stacklevel=1)
+
+        assert len(context.warnings) == 2
+        assert "DeprecationWarning: second" in context.warnings[1]
+
+    def test_an_exception_inside_the_block_still_propagates(self) -> None:
+        """It downgrades warnings, not errors."""
+        context = ConversionContext()
+
+        def blow_up() -> None:
+            with warnings_as_conversion_warnings(context, activity="importing something"):
+                msg = "boom"
+                raise RuntimeError(msg)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            blow_up()
 
 
 class TestMissingBinaryNote:

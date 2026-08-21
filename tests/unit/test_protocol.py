@@ -20,8 +20,9 @@ import pytest
 
 from tests.conftest import FIXTURE_DIR
 from tests.doubles import EchoConverter, ExplodingConverter
-from tokenmill.core.errors import ConversionError
+from tokenmill.core.errors import ConversionError, NetworkRequired
 from tokenmill.core.models import (
+    ConversionResult,
     ConvertOptions,
     Domain,
     IsolationMode,
@@ -187,14 +188,7 @@ class TestProtocolConformance:
             converter.convert(source, ConvertOptions())
 
     def test_it_converts_a_source_it_claims(self, converter: Converter, tmp_path: Path) -> None:
-        if not converter.is_available():
-            pytest.skip(f"{converter.info.id} is not available here")
-
-        source = _plausible_source(converter, tmp_path)
-        if source is None:
-            pytest.skip(f"no plausible sample for {converter.info.id}")
-
-        result = converter.convert(source, ConvertOptions())
+        result = _convert_a_sample(converter, tmp_path)
 
         assert isinstance(result.text, str)
         assert result.backend_id == converter.info.id
@@ -207,14 +201,7 @@ class TestProtocolConformance:
         A backend that counted tokens itself would have to know about
         tokenizers, and its numbers would bypass the per-stage accounting.
         """
-        if not converter.is_available():
-            pytest.skip(f"{converter.info.id} is not available here")
-
-        source = _plausible_source(converter, tmp_path)
-        if source is None:
-            pytest.skip(f"no plausible sample for {converter.info.id}")
-
-        result = converter.convert(source, ConvertOptions())
+        result = _convert_a_sample(converter, tmp_path)
 
         assert result.tokens_before is None
         assert result.tokens_after is None
@@ -231,6 +218,45 @@ class TestProtocolConformance:
 
         with pytest.raises(ConversionError, match="over the"):
             converter.convert(source, ConvertOptions(max_bytes=1))
+
+
+def _convert_a_sample(converter: Converter, tmp_path: Path) -> ConversionResult:
+    """Convert a sample this backend claims, or skip with a visible reason.
+
+    Three reasons a backend legitimately produces no result here, all reported
+    as skips rather than failures:
+
+    * it is not installed;
+    * no sample exists for any format it claims;
+    * it needs to download a model and ``ConvertOptions.allow_network`` is
+      ``False``, which is the default. ``NetworkRequired`` is the correct
+      answer to that, so the contract checked is that it raises *that*, with a
+      hint — not that it somehow converts anyway.
+
+    Args:
+        converter: The backend under test.
+        tmp_path: A directory to write the sample into.
+
+    Returns:
+        The conversion result.
+    """
+    if not converter.is_available():
+        pytest.skip(f"{converter.info.id} is not available here")
+
+    source = _plausible_source(converter, tmp_path)
+    if source is None:
+        pytest.skip(f"no plausible sample for {converter.info.id}")
+
+    try:
+        return converter.convert(source, ConvertOptions())
+    except NetworkRequired as exc:
+        needs_network = exc
+
+    assert needs_network.hint, "a backend that needs the network must say what to do about it"
+    pytest.skip(
+        f"{converter.info.id} needs network access for {source.format!r} "
+        f"and allow_network is False: {needs_network.message}"
+    )
 
 
 def _write(directory: Path, name: str, content: str = "x") -> Path:

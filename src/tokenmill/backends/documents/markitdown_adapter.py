@@ -18,14 +18,21 @@ Where it loses, quoted in ``docs/BACKENDS.md``:
   columns and invents an empty one. The six data rows are correct, so 30 of the
   35 cells survive in the right shape and five do not.
 * ``report.docx`` — the document Title becomes body text rather than a heading,
-  the bullet list loses its markers, and the table is emitted with an **empty
-  header row** above the real one.
+  the nested numbered item is flattened to the top level (``4.`` where the
+  source has a sub-list), and the table is emitted with an **empty header row**
+  above the real one. Both lists do keep their markers.
 * ``twocolumn.pdf`` — reading order is wrong; the output starts mid-document at
   ``ORDERMARK 08``.
 * Images and audio need ``exiftool`` and ``ffmpeg``. Without them MarkItDown
   returns an empty string and no error, so this adapter checks ``PATH`` and says
   which binary is missing. A silent empty document is the failure mode this
   project exists to not have.
+* It imports ``onnxruntime`` (through ``magika``, which it uses for type
+  detection), and onnxruntime warns at import time on platforms it does not
+  recognise — ``Unsupported Windows version (2025server)`` on the Windows CI
+  runners. Under ``-W error`` that is fatal, so the import is wrapped and the
+  warning is passed to the user as a conversion warning rather than as a
+  failure.
 
 Plugins are disabled. MarkItDown will load third-party converter plugins from
 the environment if asked, and a backend whose behaviour depends on what else is
@@ -49,6 +56,7 @@ from tokenmill.backends.documents._common import (
     probe_module,
     source_as_file,
     warn_on_empty_output,
+    warnings_as_conversion_warnings,
 )
 from tokenmill.core.errors import ConversionError
 from tokenmill.core.models import (
@@ -143,7 +151,14 @@ class MarkItDownConverter(BaseConverter):
         del options
 
         # Imported here, not at module scope: CONTRIBUTING.md rule 3.
-        from markitdown import MarkItDown
+        #
+        # Wrapped because MarkItDown pulls in onnxruntime (via magika) and
+        # onnxruntime warns at import time on some platforms — on Windows
+        # Server it says the OS is unsupported. Under `-W error` that warning
+        # is an exception, and a healthy converter would be reported as broken
+        # over it. The warning still reaches the user, as a warning.
+        with warnings_as_conversion_warnings(context, activity="importing markitdown"):
+            from markitdown import MarkItDown
 
         self._warn_about_missing_binaries(source, context)
 

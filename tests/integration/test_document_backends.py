@@ -299,13 +299,13 @@ class TestMarkItDown:
         for title in ground_truth["deck.pptx"]["slide_titles"]:
             assert title in result.text
 
-    def test_it_renders_one_table_per_spreadsheet_sheet(
+    def test_it_renders_one_table_per_spreadsheet_sheet_under_its_name(
         self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
     ) -> None:
         result = convert(pipeline, fixture_dir / "data.xlsx", "markitdown")
+        titles = [title for _, title in heading_levels(result.text)]
 
-        for sheet in ground_truth["data.xlsx"]["sheet_names"]:
-            assert sheet in result.text
+        assert titles == ground_truth["data.xlsx"]["sheet_names"]
         assert len(table_rows(result.text)) >= sum(
             ground_truth["data.xlsx"]["sheet_row_counts"].values()
         )
@@ -324,6 +324,28 @@ class TestMarkItDown:
         )
         assert (1, "Where the tokens actually go") in headings
         assert (2, "Where the tokens actually go: detail") in headings
+
+    def test_it_keeps_both_docx_list_types_but_flattens_the_nested_item(
+        self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
+    ) -> None:
+        """Markers survive; the sub-list does not.
+
+        An earlier draft of docs/BACKENDS.md claimed markitdown loses the
+        bullets entirely. It does not — that claim came from reading a filtered
+        dump that did not match ``*`` — and this is here so the correction
+        cannot quietly come undone.
+        """
+        result = convert(pipeline, fixture_dir / "report.docx", "markitdown")
+        lines = [line.strip() for line in result.text.splitlines()]
+
+        for item in ground_truth["report.docx"]["bullet_items"]:
+            assert f"* {item}" in lines
+        for item in ground_truth["report.docx"]["numbered_items"]:
+            assert any(line.endswith(item) and line[0].isdigit() for line in lines)
+        assert "4. Nested detail under the last item" in lines, (
+            "markitdown flattens the sub-list into the parent numbering; if that "
+            "changed, docs/BACKENDS.md needs updating"
+        )
 
     def test_the_docx_table_gets_a_spurious_empty_header_row(
         self, fixture_dir: Path, pipeline: Pipeline
@@ -425,6 +447,33 @@ class TestKreuzberg:
             "need updating"
         )
 
+    def test_it_loses_both_docx_list_types(
+        self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
+    ) -> None:
+        """The documented failure mode: the items survive, the markers do not."""
+        result = convert(pipeline, fixture_dir / "report.docx", "kreuzberg")
+        lines = [line.strip() for line in result.text.splitlines()]
+        expected = ground_truth["report.docx"]
+
+        for item in (*expected["bullet_items"], *expected["numbered_items"]):
+            assert item in result.text, "the text itself must survive"
+        assert not any(line.startswith(("- ", "* ", "+ ")) for line in lines), (
+            "kreuzberg now keeps DOCX bullet markers; docs/BACKENDS.md needs updating"
+        )
+
+    def test_it_collides_the_docx_title_with_the_h1s(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        """The documented failure mode that keeps it behind docling for docx."""
+        result = convert(pipeline, fixture_dir / "report.docx", "kreuzberg")
+        headings = heading_levels(result.text)
+
+        assert (1, "Context Efficiency Report") in headings
+        assert (1, "Where the tokens actually go") in headings, (
+            "kreuzberg now nests DOCX H1s under the title; docs/BACKENDS.md and "
+            "core/preferences.py need updating"
+        )
+
     def test_it_drops_the_decks_speaker_notes(
         self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
     ) -> None:
@@ -438,13 +487,13 @@ class TestKreuzberg:
             "core/preferences.py need updating"
         )
 
-    def test_it_renders_spreadsheet_sheets_as_tables(
+    def test_it_renders_spreadsheet_sheets_as_tables_under_their_names(
         self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
     ) -> None:
         result = convert(pipeline, fixture_dir / "data.xlsx", "kreuzberg")
+        titles = [title for _, title in heading_levels(result.text)]
 
-        for sheet in ground_truth["data.xlsx"]["sheet_names"]:
-            assert sheet in result.text
+        assert titles == ground_truth["data.xlsx"]["sheet_names"]
         assert ["Backend", "License", "Runtime", "Tables", "Pages/sec"] in table_rows(result.text)
 
     def test_every_script_in_the_unicode_fixture_round_trips(
@@ -502,9 +551,10 @@ class TestDoclingOnOfficeFormats:
         assert (2, "Where the tokens actually go") in headings
         assert (3, "Where the tokens actually go: detail") in headings
 
-    def test_it_keeps_both_list_types_in_the_docx(
+    def test_it_keeps_both_list_types_and_the_nesting(
         self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
     ) -> None:
+        """MarkItDown keeps the markers too; docling also keeps the sub-list nested."""
         result = convert(pipeline, fixture_dir / "report.docx", "docling")
         lines = [line.strip() for line in result.text.splitlines()]
 
@@ -512,6 +562,9 @@ class TestDoclingOnOfficeFormats:
             assert f"- {item}" in lines
         for item in ground_truth["report.docx"]["numbered_items"]:
             assert any(line.endswith(item) and line[0].isdigit() for line in lines)
+        assert "1. Nested detail under the last item" in lines, (
+            "the sub-list restarts its numbering, where markitdown flattens it to 4."
+        )
 
     def test_the_docx_table_has_a_real_header_row(
         self, fixture_dir: Path, pipeline: Pipeline
@@ -533,17 +586,21 @@ class TestDoclingOnOfficeFormats:
         )
 
     def test_it_drops_the_spreadsheet_sheet_names(
-        self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
+        self, fixture_dir: Path, pipeline: Pipeline
     ) -> None:
-        """The documented failure mode that keeps it behind markitdown for xlsx."""
+        """The documented failure mode that keeps it behind markitdown for xlsx.
+
+        Asserted on headings, not on a substring search: the ``totals`` sheet
+        has a row labelled ``corpus_items``, so looking for the sheet name
+        ``corpus`` anywhere in the text finds it whether or not the sheet name
+        survived. That false positive is how the first version of this test
+        claimed docling kept the names when it does not.
+        """
         result = convert(pipeline, fixture_dir / "data.xlsx", "docling")
 
         assert table_rows(result.text), "the tables themselves survive"
-        assert not any(
-            sheet in result.text for sheet in ground_truth["data.xlsx"]["sheet_names"]
-        ), (
-            "docling now keeps XLSX sheet names; docs/BACKENDS.md and core/preferences.py "
-            "need updating"
+        assert heading_levels(result.text) == [], (
+            "docling now labels XLSX sheets; docs/BACKENDS.md and core/preferences.py need updating"
         )
 
     def test_every_script_in_the_unicode_fixture_round_trips(
