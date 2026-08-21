@@ -5,16 +5,17 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-> **Status: Phase 1 — core architecture.** The plugin system, the conversion
-> pipeline and the token measurement layer work end to end, proven by two
-> deliberately trivial backends (`plaintext` and `markdownify_html`). Real
-> document, web and repository backends arrive in Phases 2–4, and the GUI in
-> Phase 8. The suite is green on Linux, macOS and Windows across Python
-> 3.11/3.12/3.13, and token counting is verified against real tiktoken and
-> HuggingFace vocabularies in CI. See [`PROGRESS.md`](PROGRESS.md) for exactly
-> where things stand, including which claims are CI-verified rather than locally
-> observed. Nothing below is claimed to work until `PROGRESS.md` records a
-> verification run for it.
+> **Status: Phase 2 — document backends.** Real document conversion works:
+> PDF, DOCX, PPTX and XLSX to Markdown through five adapters, with a per-format
+> preference map and a fallback chain that records which backend actually ran.
+> Web and repository backends arrive in Phases 3–4, and the GUI in Phase 8. The
+> suite is green on Linux, macOS and Windows across Python 3.11/3.12/3.13, and
+> token counting is verified against real tiktoken and HuggingFace vocabularies
+> in CI. See [`PROGRESS.md`](PROGRESS.md) for exactly where things stand,
+> including which claims are CI-verified rather than locally observed, and
+> [`docs/BACKENDS.md`](docs/BACKENDS.md) for what each backend gets *wrong* on
+> our own fixtures. Nothing below is claimed to work until `PROGRESS.md` records
+> a verification run for it.
 
 ---
 
@@ -82,42 +83,92 @@ clone.)*
 pip install tokenmill              # core: pure Python, CPU-only, no system binary
 ```
 
-The core install pulls in 19 packages, all pure Python or wheel-shipping, all
-permissively licensed, and takes about a second. No PyTorch, no CUDA, no system
-binary. A CI job installs with no extras on every commit and fails the build if
-that ever stops being true.
+```bash
+pip install "tokenmill[documents]"   # + MarkItDown and Kreuzberg: Office, mail, archives
+pip install "tokenmill[docling]"     # + Docling: best structure fidelity, ~5.2 GB, pulls PyTorch
+```
+
+The core install is pure Python or wheel-shipping, permissively licensed, and
+takes about a second. It includes the two light PDF readers. No PyTorch, no
+CUDA, no system binary. A CI job installs with no extras on every commit, on
+nine OS/Python combinations, and fails the build if that ever stops being true.
 
 ## Quickstart
 
 ```console
 $ tokenmill backends
-id                domains  license     tier        isolation   availability
-----------------  -------  ----------  ----------  ----------  ------------
-markdownify_html  web      MIT         permissive  in-process  available
-plaintext         text     Apache-2.0  permissive  in-process  available
+id                domains    license       tier        isolation   availability
+----------------  ---------  ------------  ----------  ----------  ------------
+kreuzberg         documents  MIT           permissive  in-process  available
+markdownify_html  web        MIT           permissive  in-process  available
+markitdown        documents  MIT           permissive  in-process  available
+pdfplumber        documents  MIT           permissive  in-process  available
+plaintext         text       Apache-2.0    permissive  in-process  available
+pypdf             documents  BSD-3-Clause  permissive  in-process  available
 
-$ tokenmill convert page.html --tokenizer bytes -o page.md --show-stages
-wrote page.md
-source:   page.html
-backend:  markdownify_html
+$ tokenmill convert report.pdf --tokenizer bytes -o report.md --show-stages
+wrote report.md
+source:   tables.pdf
+backend:  pdfplumber
 format:   markdown
-duration: 83 ms
+duration: 73 ms
 post:     normalize_whitespace
-tokens:   12,481 -> 6,802  (-45.5%, bytes)
+tokens:   2,795 -> 599  (-78.6%, bytes)
 
-stage                 chars   tokens  change
---------------------  ------  ------  ------
-source                12,472  12,481  -
-convert               6,800   6,809   -45.4%
-normalize_whitespace  6,793   6,802   -0.1%
+stage                 chars  tokens  change
+--------------------  -----  ------  ---------
+source                2,140  2,795   -
+convert               599    599     -78.6%
+normalize_whitespace  599    599     no change
+
+warning:  tables.pdf is a binary format, so the before-count is its own bytes
+decoded as text, not text any model would be given. The after-count is real; the
+percentage between them is not a token saving
 ```
 
-That transcript is real output on `tests/fixtures/boilerplate.html`, measured
-with `--tokenizer bytes` because the machine it was run on cannot reach
-tiktoken's vocabulary host. **It is a byte count, not a token count**, and the
-45.5% is markup removal — script, style and tag characters — not boilerplate
-extraction. `--tokenizer o200k_base` is the default and gives real BPE token
+That transcript is real output on `tests/fixtures/tables.pdf`, measured with
+`--tokenizer bytes` because the machine it was run on cannot reach tiktoken's
+vocabulary host. **It is a byte count, not a token count**, and — as the warning
+says — the "before" figure is the PDF's own bytes, which is not text any model
+would be given. `--tokenizer o200k_base` is the default and gives real BPE
 counts wherever that host is reachable.
+
+The Markdown that came out has the fixture's 7×5 table intact, all 35 cells:
+
+```markdown
+| Backend | License | Runtime | Tables | Pages/sec |
+| --- | --- | --- | --- | --- |
+| markitdown | MIT | CPU | weak | 12.0 |
+| docling | MIT | CPU | strong | 0.8 |
+...
+```
+
+### Choosing a backend
+
+tokenmill picks one per format, and tells you which it used. Override it when
+you know better — `docs/BACKENDS.md` says when you might:
+
+```console
+$ tokenmill convert twocolumn.pdf --backend pypdf     # correct multi-column reading order
+$ tokenmill convert report.docx --backend docling     # best heading and list fidelity
+$ tokenmill convert deck.pptx                         # markitdown: the only one that keeps speaker notes
+```
+
+If the preferred backend is not installed, or fails on that particular file, the
+next one gets a turn — and the result says so rather than quietly attributing
+the measurement to a converter that never ran:
+
+```console
+$ tokenmill convert page.html --tokenizer bytes
+source:   page.html
+backend:  markitdown
+attempts: markdownify_html (failed) -> markitdown
+
+warning:  backend 'markdownify_html' failed and tokenmill fell back to the next
+one: page.html is empty
+```
+
+`--no-fallback` turns that off. An explicit `--backend` never falls back.
 
 Converted text goes to **stdout**, the report to **stderr**, so
 `tokenmill convert page.html > page.md` writes exactly the Markdown.
@@ -146,23 +197,34 @@ never substitutes an estimate for a measurement.**
 
 ## Backends
 
-| Backend | Domain | Licence | Tier | Install | Status |
-|---|---|---|---|---|---|
-| `plaintext` | text | Apache-2.0 (ours) | permissive, in-process | core | ✅ Phase 1 |
-| `markdownify_html` | web | MIT | permissive, in-process | core | ✅ Phase 1 |
-| markitdown, pdfplumber, pypdf, kreuzberg, docling | documents | MIT / BSD-3 | permissive | `documents`, `docling` | Phase 2 |
-| trafilatura, markdownify, readability, crawl4ai | web | Apache-2.0 / MIT | permissive | core, `web` | Phase 3 |
-| gitingest, repomix, code2prompt | repo | MIT | permissive; Node/Rust via subprocess | core, subprocess | Phase 4 |
-| llmlingua2 | compress | MIT | permissive | `compress` | Phase 6 |
-| pymupdf4llm, pandoc, libreoffice | documents | **AGPL-3.0 / GPL-2.0+ / MPL-2.0** | **copyleft — subprocess only, never imported** | isolated | Phase 7 |
-| marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | GPU, out of process | install docs only | Phase 9 |
+Every licence below was verified against the **installed package metadata** when
+its adapter was written, not taken from a README.
 
-`markdownify_html` converts HTML markup faithfully; it does **not** strip
-boilerplate. Navigation, cookie banners and advertisements survive it.
-Boilerplate removal — and with it the 70–90% reductions cited above — is
-Trafilatura's job and arrives in Phase 3. See
-[`PROGRESS.md`](PROGRESS.md) for the measured Phase 1 numbers and what they do
-and do not show.
+| Backend | Domain | Licence | Install | Best at | Status |
+|---|---|---|---|---|---|
+| `plaintext` | text | Apache-2.0 (ours) | core | passing text through | ✅ Phase 1 |
+| `markdownify_html` | web | MIT | core | faithful HTML markup | ✅ Phase 1 |
+| `pdfplumber` | documents | MIT | core | **PDF tables** — all 35 cells of our fixture | ✅ Phase 2 |
+| `pypdf` | documents | BSD-3-Clause | core | multi-column reading order; tiny | ✅ Phase 2 |
+| `markitdown` | documents | MIT | `documents` | breadth; **PPTX speaker notes** | ✅ Phase 2 |
+| `kreuzberg` | documents | MIT | `documents` | speed; reading order; heading inference | ✅ Phase 2 |
+| `docling` | documents | MIT | `docling` | **document structure** — headings, lists, table headers | ⚠️ Phase 2 — Office paths verified, **PDF path unverified** |
+| trafilatura, readability, crawl4ai | web | Apache-2.0 / MIT | core, `web` | boilerplate extraction | Phase 3 |
+| gitingest, repomix, code2prompt | repo | MIT | core, subprocess | repository ingestion | Phase 4 |
+| llmlingua2 | compress | MIT | `compress` | prompt compression | Phase 6 |
+| pymupdf4llm, pandoc, libreoffice | documents | **AGPL-3.0 / GPL-2.0+ / MPL-2.0** | isolated | — | Phase 7 — **subprocess only, never imported** |
+| marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | install docs only | GPU tier | Phase 9 |
+
+**What Phase 2 does not do.** None of these backends does OCR, so a scanned PDF
+converts to an empty document — loudly, with a warning, never silently. That is
+Phase 9. And `markdownify_html` converts HTML markup faithfully without stripping
+boilerplate; the 70–90% reductions cited above are Trafilatura's job in Phase 3.
+
+[`docs/BACKENDS.md`](docs/BACKENDS.md) documents what each backend gets **wrong**
+on our fixtures, quoted from real output: pdfplumber interleaving two-column
+pages, MarkItDown mis-splitting a PDF table header, Kreuzberg flattening a table
+into prose. Every one of those failure modes is asserted by a test, so if an
+upstream release fixes one the test fails and the documentation gets corrected.
 
 ## Tokenizers
 
@@ -215,8 +277,8 @@ The core install must stay light. Everything heavy lives behind extras:
 | Extra | Contents | Why it is optional |
 |---|---|---|
 | *(default)* | tokenizers, light converters, CLI | Pure Python, CPU, permissive licences |
-| `documents` | MarkItDown, Kreuzberg | Light-ish, still CPU-only |
-| `docling` | Docling | Pulls PyTorch — kept out of core deliberately |
+| `documents` | MarkItDown, Kreuzberg | Light-ish, still CPU-only; pulls pandas, lxml and onnxruntime |
+| `docling` | Docling | **122 packages, about 5.2 GB**, pulls PyTorch and the CUDA runtime — kept out of core deliberately |
 | `web` | Crawl4AI + Playwright | Requires a browser download |
 | `compress` | LLMLingua-2, transformers | Requires a model download |
 | `ocr` | pytesseract, PaddleOCR | Requires a system binary or model weights |
@@ -243,7 +305,7 @@ tokenmill itself is Apache-2.0.
 
 ```bash
 uv venv
-uv sync --extra dev --extra fixtures
+uv sync --extra dev --extra fixtures --extra documents
 
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
@@ -264,7 +326,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md) | The landscape survey this project is built on |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed, in Keep a Changelog format |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Plugin/adapter design, data model, pipeline, error taxonomy |
-| `docs/BACKENDS.md` | Per-backend reference, including observed failure modes *(Phase 2+)* |
+| [`docs/BACKENDS.md`](docs/BACKENDS.md) | Per-backend reference, including observed failure modes |
 | [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
 | `docs/LICENSES.md` | Tiering rules and isolation rationale *(Phase 7)* |
 | `docs/BENCHMARKS.md` | Our own measured results *(Phase 10)* |

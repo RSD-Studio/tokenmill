@@ -10,10 +10,15 @@ for where it is going.
 git clone https://github.com/RSD-Studio/tokenmill
 cd tokenmill
 uv venv
-uv sync --extra dev --extra fixtures
+uv sync --extra dev --extra fixtures --extra documents
 uv run pre-commit install
 uv run python scripts/make_fixtures.py
 ```
+
+`--extra documents` is worth having locally: without it the MarkItDown and
+Kreuzberg integration tests skip, and mypy sees `Any` for their adapters. The
+`docling` extra is deliberately not in that line — it resolves to 122 packages
+and about 5.2 GB.
 
 ## The checks that must pass
 
@@ -30,9 +35,21 @@ They report as skips, not silence:
 
 ```bash
 uv run pytest -q -m network    # real tokenizer vocabulary downloads
-uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (Phase 9)
+uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path, Phase 9)
 uv run pytest -q -m compress   # the compress extra plus a model (Phase 6)
 ```
+
+A test that needs an optional dependency declares it and skips cleanly without
+one:
+
+```python
+@pytest.mark.requires("markitdown")
+def test_it_keeps_the_speaker_notes(...): ...
+```
+
+Run with `-rs` to see every skip and its reason. A test that quietly vanishes
+from the run is how a "verified" claim stops being true without anyone
+noticing.
 
 CI runs all of these across Python 3.11/3.12/3.13 on Linux, macOS and Windows,
 plus a **clean core install** job that `pip install .` with no extras and imports
@@ -62,8 +79,16 @@ from our own benchmark harness on our own corpus. We do not restate vendor
 marketing claims as fact, and we do not estimate where we can measure.
 
 **5. Report backends honestly.** If a converter produces garbage on our
-fixtures, that goes in `docs/BACKENDS.md` under failure modes. A wrapper that
-hides a bad converter is worse than no wrapper.
+fixtures, that goes in [`docs/BACKENDS.md`](docs/BACKENDS.md) under failure
+modes, quoted from real output. A wrapper that hides a bad converter is worse
+than no wrapper.
+
+Write a test for the failure too. Every claim in `docs/BACKENDS.md` — Kreuzberg
+flattening a PDF table into prose, MarkItDown mis-splitting a header row — is
+asserted in `tests/integration/test_document_backends.py`, with a message
+saying what to update. When an upstream release fixes one, the test fails and
+the documentation gets corrected rather than quietly becoming a lie about a tool
+that has since improved.
 
 **6. No stubs.** Modules ship complete: imports, error handling, type hints,
 docstrings and tests. If something belongs in a later phase, leave it out and
@@ -134,6 +159,22 @@ a complete, working example you can copy. The short version:
 
    That suite parametrises over every backend the entry points expose, so it
    checks yours the moment it is installed.
+
+7. **Say where your backend should rank.** If your backend competes with an
+   existing one for a format, and it is better or worse at that format for a
+   reason you can demonstrate on the corpus, add it to
+   `FORMAT_PREFERENCES` in [`tokenmill/core/preferences.py`](src/tokenmill/core/preferences.py)
+   with the evidence. A backend the map does not mention keeps its own declared
+   `priority`, and a high enough `priority` outranks everything the map names —
+   so a third-party backend never *needs* a core edit, and the map stays a
+   default rather than a gate.
+
+8. **Do not let a dependency's noise become your failure.** A library that warns
+   at import time will fail a conversion under `-W error`. Use
+   `warnings_as_conversion_warnings` from
+   `tokenmill.backends.documents._common` so the warning reaches the user as a
+   warning rather than as a broken backend. Likewise, an empty result is not a
+   success: say so with `warn_on_empty_output`.
 
 Post-processors and tokenizers work the same way, through the
 `tokenmill.postprocessors` and `tokenmill.tokenizers` groups. A post-processor

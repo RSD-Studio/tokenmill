@@ -2,11 +2,15 @@ name: CI
 
 on:
   push:
-    # `main` does not exist yet and every phase so far has lived on a `claude/**`
-    # branch, so a `main`-only filter meant this workflow had never run once —
-    # it was not even registered with Actions. Phase 1 caught that. The filter
-    # now covers the branches work actually happens on.
-    branches: ["main", "claude/**"]
+    # Phase 1 found this workflow had never run once: the filter named `main`,
+    # which did not exist, and every phase lived on a `claude/**` branch.
+    #
+    # Phase 2 found the second half of the same bug. The default branch is now
+    # `Main`, with a capital M, and GitHub matches these patterns
+    # case-sensitively — so a push to the default branch still would not have
+    # triggered anything. Both spellings are listed until the branch is renamed;
+    # see PROGRESS.md, Open questions.
+    branches: ["main", "Main", "claude/**"]
   pull_request:
   workflow_dispatch:
 
