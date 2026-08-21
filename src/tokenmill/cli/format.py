@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from tokenmill.core.models import ConversionResult, StageCount, TokenCount
+from tokenmill.core.models import BackendAttempt, ConversionResult, StageCount, TokenCount
 
 __all__ = ["format_result_report", "format_stage_table", "format_table", "format_tokens"]
 
@@ -150,6 +150,21 @@ def _percent_change(before: int, after: int) -> str:
     return f"{(after - before) / before * 100:+.1f}%"
 
 
+def _format_attempts(attempts: Sequence[BackendAttempt]) -> str:
+    """Render the backend chain that was walked, in order.
+
+    Args:
+        attempts: Every attempt made, in order.
+
+    Returns:
+        A one-line chain such as ``pdfplumber (failed) -> markitdown``.
+    """
+    return " -> ".join(
+        attempt.backend_id if attempt.ok else f"{attempt.backend_id} (failed)"
+        for attempt in attempts
+    )
+
+
 def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
     """Render the human-readable report for one conversion.
 
@@ -166,6 +181,12 @@ def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
         f"format:   {result.output_format.value}",
         f"duration: {result.duration_s * 1000:.0f} ms",
     ]
+    # Only worth a line when a fallback actually happened. A conversion that
+    # quietly came from the third-choice backend would otherwise look exactly
+    # like one the preferred backend handled, and the measurement would be
+    # attributed to a converter that never ran.
+    if len(result.attempts) > 1:
+        lines.append(f"attempts: {_format_attempts(result.attempts)}")
     if result.post_processors:
         lines.append(f"post:     {' -> '.join(result.post_processors)}")
 
