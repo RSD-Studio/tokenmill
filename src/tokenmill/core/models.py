@@ -25,6 +25,7 @@ from typing import Any, Final
 __all__ = [
     "Availability",
     "AvailabilityStatus",
+    "BackendAttempt",
     "BackendInfo",
     "ConversionResult",
     "ConvertOptions",
@@ -519,6 +520,9 @@ class ConvertOptions:
         link_handling: What the ``links`` post-processor does with links.
         allow_network: Whether backends may make network calls. Default-deny:
             converting a local file never reaches out.
+        fallback: Whether auto-selection may try the next candidate backend
+            when the preferred one fails. Never applies to an explicit
+            :attr:`backend`, which must run or error.
         timeout_s: Wall-clock budget for a single conversion.
         max_bytes: Refuse sources larger than this, as a denial-of-service
             guard on hostile input.
@@ -533,6 +537,7 @@ class ConvertOptions:
     image_handling: ImageHandling = ImageHandling.KEEP
     link_handling: LinkHandling = LinkHandling.KEEP
     allow_network: bool = False
+    fallback: bool = True
     timeout_s: float = 120.0
     max_bytes: int = 256 * 1024 * 1024
     extra: Mapping[str, Any] = field(default_factory=lambda: _EMPTY_METADATA)
@@ -547,6 +552,34 @@ class ConvertOptions:
             The updated copy; the original is untouched.
         """
         return replace(self, **changes)
+
+
+@dataclass(frozen=True, slots=True)
+class BackendAttempt:
+    """One backend's turn at converting a source.
+
+    A conversion may try several backends: the preference map orders the
+    candidates for the source's format, and auto-selection walks that order
+    until one succeeds. Every attempt is recorded, successful or not, so the
+    result says which backends were tried and why the earlier ones did not
+    produce the text — otherwise a fallback is invisible and the measurement
+    looks like it came from the backend the user expected.
+
+    Attributes:
+        backend_id: The backend that was tried.
+        ok: Whether it produced the text in the result.
+        error: The error it failed with, when it failed.
+    """
+
+    backend_id: str
+    ok: bool
+    error: str | None = None
+
+    def describe(self) -> str:
+        """Return a one-line summary suitable for a CLI or GUI listing."""
+        if self.ok:
+            return f"{self.backend_id}: converted"
+        return f"{self.backend_id}: {self.error or 'failed'}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -569,6 +602,9 @@ class ConversionResult:
         post_processors: The post-processor ids that ran, in order.
         warnings: Non-fatal problems worth telling the user about.
         metadata: Backend-specific structured facts — page count, tables found.
+        attempts: Every backend tried, in order, including the one that
+            succeeded. Empty for a result assembled by a backend directly
+            rather than by the pipeline.
     """
 
     text: str
@@ -582,6 +618,7 @@ class ConversionResult:
     post_processors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=lambda: _EMPTY_METADATA)
+    attempts: tuple[BackendAttempt, ...] = ()
 
     @property
     def token_delta(self) -> int | None:

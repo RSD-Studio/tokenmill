@@ -53,6 +53,7 @@ from tokenmill.core.errors import (
 from tokenmill.core.models import (
     Availability,
     AvailabilityStatus,
+    BackendAttempt,
     BackendInfo,
     ConversionResult,
     ConvertOptions,
@@ -74,6 +75,7 @@ from tokenmill.core.registry import Registry, default_registry
 __all__ = [
     "Availability",
     "AvailabilityStatus",
+    "BackendAttempt",
     "BackendFailed",
     "BackendInfo",
     "BackendUnavailable",
