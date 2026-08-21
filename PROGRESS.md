@@ -1182,7 +1182,9 @@ argument for the CI matrix.
    rather than only on CI.
 
 **Run 12 (`2e675f5`) — all 23 jobs green**, with the `docling` job skipped as
-designed (`workflow_dispatch` only).
+designed (`workflow_dispatch` only). **Run 13 (`88d1721`) green on the same 23,
+and run 15 on the phase's final commit `15eaeda` green on all 23 as well** —
+verified job by job, not from the run's summary.
 
 - `Test`: green on ubuntu, macOS and Windows × Python 3.11/3.12/3.13 — nine
   cells, now with the `documents` extra installed, so the markitdown and
@@ -1191,6 +1193,12 @@ designed (`workflow_dispatch` only).
   guard survived Phase 2 adding two dependencies to it.**
 - `Real tokenizers (network)`, `Coverage gate`, `Lint and format`,
   `Type check`, `Fixture corpus is reproducible`: green.
+
+**The `docling` job has never run.** It is `workflow_dispatch`-only by design,
+and I cannot trigger it — the API returns
+`403 Resource not accessible by integration`, because this session's token has
+no `actions: write`. That is why Docling's PDF path is recorded as unverified
+rather than done. Open question 1.
 
 ## Backend status
 
