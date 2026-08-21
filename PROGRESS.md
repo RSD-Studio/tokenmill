@@ -24,7 +24,7 @@ _Last updated: 2026-08-21 by Claude Code_
 
 **Goal:** real document conversion, CPU-only, permissive licences.
 
-**Phase 2's content ends at commit `3183e71`.** The first commit proven
+**Phase 2's content ends at commit `641e788`.** The first commit proven
 green across all 23 CI jobs was **`2e675f5`** (run 12), after three real
 failures on run 11 that none of the local checks could have caught — see the
 verification log.
@@ -1583,7 +1583,7 @@ to overstate:
   in Phase 0). Recording the commit SHA here instead, as instructed. Phase 0
   ended at `772d99b`; Phase 1's content ends at `e18b3d8`, and Phase 1 was first
   proven green at `3aa6e59`. Phase 2's first all-green commit is `2e675f5`; its
-  content ends at `3183e71`.
+  content ends at `641e788`.
 
 ### Carried over from Phase 0
 
