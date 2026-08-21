@@ -13,10 +13,12 @@ conversion either returns text or raises something inside the taxonomy.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
+from tests.conftest import FIXTURE_DIR
 from tests.doubles import EchoConverter, ExplodingConverter
 from tokenmill.core.errors import ConversionError
 from tokenmill.core.models import (
@@ -67,6 +69,30 @@ def test_both_reference_backends_are_installed() -> None:
         "the reference backends are missing; run `uv sync` so the entry points "
         "are registered, otherwise the conformance suite tests nothing"
     )
+
+
+def test_the_core_document_backends_are_installed() -> None:
+    """The two PDF backends ship in the core install, so they are never optional."""
+    ids = {c.info.id for c in BACKENDS}
+
+    assert {"pdfplumber", "pypdf"} <= ids, (
+        "the core PDF backends are missing; run `uv sync` so the entry points are registered"
+    )
+
+
+def test_every_backend_that_claims_a_binary_format_gets_a_real_sample() -> None:
+    """Guard the guard: a corpus file that goes missing must not silently skip.
+
+    ``_plausible_source`` falls back to ``None`` — reported as a skip — when it
+    has no sample for a backend's formats. That is right for a format nobody
+    has a fixture for, and wrong for ``pdf``, which is the whole point of two
+    of Phase 2's backends.
+    """
+    for fmt, fixture in _CORPUS_SAMPLES.items():
+        assert (FIXTURE_DIR / fixture).is_file(), (
+            f"the conformance suite needs {fixture} to exercise {fmt} backends; "
+            f"run scripts/make_fixtures.py"
+        )
 
 
 @pytest.mark.parametrize("converter", BACKENDS, ids=_backend_id)
@@ -223,6 +249,37 @@ def _write(directory: Path, name: str, content: str = "x") -> Path:
     return path
 
 
+#: Text samples small enough to write inline.
+_TEXT_SAMPLES = {
+    "txt": "Hello.\n",
+    "md": "# Title\n\nBody.\n",
+    "markdown": "# Title\n\nBody.\n",
+    "rst": "Title\n=====\n",
+    "log": "started\n",
+    "html": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+    "htm": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+    "xhtml": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+    "csv": "name,value\nalpha,1\n",
+    "tsv": "name\tvalue\nalpha\t1\n",
+    "json": '{"name": "alpha", "value": 1}',
+    "xml": "<doc><name>alpha</name></doc>",
+    "rtf": "{\\rtf1\\ansi Body.\\par}",
+    "eml": "From: a@example.invalid\nSubject: Hi\n\nBody.\n",
+}
+
+#: Binary formats, taken from the real fixture corpus. Phase 1 built text
+#: samples only, so a backend claiming ``pdf`` or ``docx`` skipped three of
+#: these checks for want of a sample — which meant the conformance suite was
+#: not actually exercising the document backends at all. Wiring the corpus in
+#: is what makes those three checks real for them.
+_CORPUS_SAMPLES = {
+    "pdf": "simple.pdf",
+    "docx": "report.docx",
+    "pptx": "deck.pptx",
+    "xlsx": "data.xlsx",
+}
+
+
 def _plausible_source(converter: Converter, tmp_path: Path) -> Source | None:
     """Build a small, valid input for whatever this backend claims to convert.
 
@@ -231,32 +288,24 @@ def _plausible_source(converter: Converter, tmp_path: Path) -> Source | None:
         tmp_path: A directory to write the sample into.
 
     A backend claiming only formats with no sample here is skipped rather than
-    failed. Adding a sample below is how a new format joins the suite.
+    failed. Adding a sample above is how a new format joins the suite.
 
     Returns:
         The source, or ``None`` if no sample is known for the backend's formats.
     """
-    samples = {
-        "txt": "Hello.\n",
-        "md": "# Title\n\nBody.\n",
-        "markdown": "# Title\n\nBody.\n",
-        "rst": "Title\n=====\n",
-        "log": "started\n",
-        "html": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
-        "htm": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
-        "xhtml": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
-        "csv": "name,value\nalpha,1\n",
-        "tsv": "name\tvalue\nalpha\t1\n",
-        "json": '{"name": "alpha", "value": 1}',
-        "xml": "<doc><name>alpha</name></doc>",
-    }
     for fmt in converter.info.input_formats:
-        content = samples.get(fmt)
-        if content is None:
-            continue
-        path = tmp_path / f"sample.{fmt}"
-        path.write_text(content, encoding="utf-8")
-        return Source.from_path(path)
+        fixture = _CORPUS_SAMPLES.get(fmt)
+        if fixture is not None and (FIXTURE_DIR / fixture).is_file():
+            # Copied rather than used in place so that the size-limit check can
+            # not be confused by anything else touching the corpus.
+            path = tmp_path / f"sample.{fmt}"
+            shutil.copyfile(FIXTURE_DIR / fixture, path)
+            return Source.from_path(path)
+        content = _TEXT_SAMPLES.get(fmt)
+        if content is not None:
+            path = tmp_path / f"sample.{fmt}"
+            path.write_text(content, encoding="utf-8")
+            return Source.from_path(path)
     return None
 
 
