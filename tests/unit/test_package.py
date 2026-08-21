@@ -30,8 +30,34 @@ def test_version_is_pep440_ish() -> None:
 
 
 def test_public_surface_is_explicit() -> None:
+    """`__all__` is the API. Anything not in it is not promised to anybody."""
     tokenmill = importlib.import_module("tokenmill")
-    assert tokenmill.__all__ == ["__version__"]
+
+    assert tokenmill.__all__ == sorted(tokenmill.__all__), "keep __all__ sorted"
+    for name in tokenmill.__all__:
+        assert hasattr(tokenmill, name), f"__all__ names {name}, which does not exist"
+
+
+def test_the_public_api_covers_what_a_caller_needs() -> None:
+    """A one-call conversion plus the types needed to drive and read it."""
+    tokenmill = importlib.import_module("tokenmill")
+
+    expected = {
+        "convert",
+        "Pipeline",
+        "Source",
+        "ConvertOptions",
+        "ConversionResult",
+        "TokenCount",
+        "BackendInfo",
+        "Converter",
+        "BaseConverter",
+        "Registry",
+        "ConversionError",
+        "TokenmillError",
+    }
+
+    assert expected <= set(tokenmill.__all__)
 
 
 def test_import_pulls_no_third_party_dependency() -> None:

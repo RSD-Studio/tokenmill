@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    # `main` does not exist yet and every phase so far has lived on a `claude/**`
+    # branch, so a `main`-only filter meant this workflow had never run once —
+    # it was not even registered with Actions. Phase 1 caught that. The filter
+    # now covers the branches work actually happens on.
+    branches: ["main", "claude/**"]
   pull_request:
   workflow_dispatch:
 
@@ -54,6 +58,44 @@ jobs:
       - run: uv sync --extra dev --extra fixtures
       - name: Run tests
         run: uv run pytest -q --cov=tokenmill --cov-report=term-missing
+
+  coverage:
+    name: Coverage gate (core and tokens)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --extra fixtures
+      # DEVELOPMENT_PLAN.md §4 sets a >=85% target on core and tokens
+      # specifically; adapters elsewhere are thin wrappers and are allowed to be
+      # lower. Gating the two packages the target names stops the number
+      # drifting down quietly, which a reported-but-unenforced figure does not.
+      - name: Enforce the coverage target on core and tokens
+        run: >
+          uv run pytest -q
+          --cov=tokenmill.core --cov=tokenmill.tokens
+          --cov-report=term-missing --cov-fail-under=85
+
+  tokenizers:
+    name: Real tokenizers (network)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --extra fixtures --extra tokenizers
+      # These tests download a real BPE vocabulary from
+      # openaipublic.blob.core.windows.net and a tokenizer from huggingface.co.
+      # Both hosts are blocked in the development sandbox, so this job is the
+      # ONLY place token counting is verified against a real tokenizer — which
+      # is exactly why it must be a blocking job and not an advisory one. If it
+      # is ever made non-blocking, the project has no verification of its
+      # central feature.
+      - name: Run the network-marked tests
+        run: uv run pytest -q -m network -rs
 
   fixtures:
     name: Fixture corpus is reproducible

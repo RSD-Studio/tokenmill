@@ -7,7 +7,7 @@ _Last updated: 2026-08-20 by Claude Code_
 | Phase | Name | Status | Exit gate |
 |-------|------|--------|-----------|
 | 0 | Scaffolding and toolchain | ✅ Complete | passed 2026-08-20 |
-| 1 | Core architecture | ⬜ Not started | — |
+| 1 | Core architecture | ✅ Complete | passed 2026-08-20 |
 | 2 | Document backends (light tier) | ⬜ Not started | — |
 | 3 | Web backends | ⬜ Not started | — |
 | 4 | Repository backends | ⬜ Not started | — |
@@ -20,46 +20,71 @@ _Last updated: 2026-08-20 by Claude Code_
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
-## Current phase: 0 — Scaffolding and toolchain
+## Current phase: 1 — Core architecture (complete)
 
-**Goal:** a repository that installs, lints, type-checks, tests and documents
-itself, containing zero product logic.
+**Goal:** the plugin system and token measurement working end to end, proven by
+two deliberately trivial backends.
 
-**Done so far:**
+**Phase 1's code and docs end at commit `e18b3d8`.** The exit gate was only
+genuinely proven later: CI had never run, and the first green run across all
+23 jobs — every platform, every Python version, and real tokenizers — was at
+**`3aa6e59`**, which is the commit to treat as Phase 1 complete. It has stayed
+green since. Tags cannot be pushed from these sessions — see Deferred work.
 
-- Verified the sandbox toolchain and recorded it (see Environment below).
-- Checked name availability. `tokenfold` is **taken on PyPI**; the project was
-  renamed to **`tokenmill`** with owner sign-off before the first commit. See
-  Decisions.
-- `pyproject.toml` — hatchling build, `src/` layout, `requires-python >=3.11`,
-  the full dependency tiering from plan §1.6 declared, core deliberately empty
-  at this phase.
-- `src/tokenmill/__init__.py` (version only), `src/tokenmill/py.typed`.
-- `LICENSE` — Apache-2.0, copyright line filled in.
-- Toolchain config in `pyproject.toml`: Ruff lint (20 rule families, including
-  `S` for security and `T20` to keep `print` out of the library) + Ruff format,
-  mypy in `strict` mode over `src`/`scripts`/`tests`, pytest with markers and
-  `filterwarnings = ["error"]`, coverage with branch tracking.
-- `uv` workflow; `uv.lock` committed.
-- `.pre-commit-config.yaml` — hygiene hooks, ruff check/format, mypy.
-- `.github/workflows/ci.yml` — five jobs: `lint`, `types`, `test`
-  (3.11/3.12/3.13 × ubuntu/macos/windows = 9 cells), `fixtures`
-  (regenerates the corpus and compares SHA-256 digests), and
-  `clean-core-install` (plain `pip install .`, no extras, then import the
-  package from outside the source tree — 9 cells).
-- `scripts/make_fixtures.py` — generates the entire synthetic corpus
-  byte-reproducibly and writes `ground_truth.json` beside it.
-- `tests/fixtures/` — all 13 planned fixtures generated and inspected.
-- `tests/unit/test_package.py`, `tests/unit/test_fixtures.py`,
-  `tests/conftest.py` — 27 tests.
-- Docs: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, issue templates, PR
-  template, `benchmarks/README.md`, and the two source documents committed
-  as-is at `docs/DEVELOPMENT_PLAN.md` and `docs/research/RESEARCH.md`.
+**Built:**
 
-**Remaining in this phase:** nothing. Exit gate passed.
+- `core/models.py` — `Source`, `ConvertOptions`, `ConversionResult`,
+  `BackendInfo`, `TokenCount`, `StageCount`, `Availability` and the enums, all
+  frozen dataclasses. Licence policy enforced in `BackendInfo.__post_init__`.
+- `core/errors.py` — the plan's §1.4 taxonomy, plus `TokenizerError` and
+  `ConfigError` under a common `TokenmillError` root. Every error carries an
+  optional actionable hint.
+- `core/protocol.py` — the three-method `Converter` protocol and
+  `BaseConverter` (availability caching, size guard, timing, warning
+  collection, error wrapping).
+- `core/registry.py` — cached entry-point discovery, lookup by id/domain/format,
+  availability filtering, documented deterministic selection order, and broken
+  plugins degraded to unavailable rather than propagated.
+- `core/pipeline.py` — converter, ordered post-processor chain, per-stage
+  measurement.
+- `core/config.py` — defaults → TOML file → `TOKENMILL_*` env → CLI flags.
+- `tokens/` — tiktoken adapter, HuggingFace adapter (lazy, behind the new
+  `tokenizers` extra), a download-free `bytes` unit counter, a provider registry,
+  and `TokenMeter`.
+- `post/` — `PostProcessor` protocol, registry and chain ordering, plus
+  `normalize_whitespace` (non-destructive, default) and `links` (destructive,
+  opt-in).
+- `backends/` — `plaintext` and `markdownify_html`.
+- `cli/` — `tokenmill convert`, `backends`, `tokens`.
+- 325 tests passing, 11 skipped (all `network`-marked). 95% coverage overall;
+  `core` 99.4%, `tokens` 88.5% by statement, both over the plan's 85% target.
+- `docs/ARCHITECTURE.md` and `docs/ADDING_A_BACKEND.md` written, README,
+  CHANGELOG and CONTRIBUTING updated.
 
-**Blocked on:** nothing blocking. Two items need an owner decision before or
-during Phase 1 — see Open questions 1 and 2.
+**Acceptance criteria, one by one:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | A backend can be added by dropping in a module + entry point, no core edits | ✅ **Observed.** Built a separate distribution (`tokenmill-csvtable`) outside the repo, straight from the code blocks in `ADDING_A_BACKEND.md`, installed it, and it appeared in `tokenmill backends` and converted a file. No tokenmill file was touched. |
+| 2 | Registry lists backends with correct availability when a dep is absent | ✅ **Observed.** Unit-tested against a backend whose probe reports a missing dependency, and end-to-end at the CLI with a plugin that raises on import. |
+| 3 | Token counts match a hand-verified tiktoken result on a known string | ✅ **Verified in CI** (run 3, commit `3aa6e59`, `11 passed`). `"hello world"` is **2 tokens** under `o200k_base`, as written. Still not reproducible in this sandbox — the proxy denies tiktoken's vocabulary host — so it is CI-verified rather than locally observed, and the CI job that proves it is blocking so it cannot quietly stop running. |
+| 4 | `tokenmill convert tests/fixtures/boilerplate.html` returns Markdown and a real before/after count | ✅ **Met.** Markdown: observed here, read and judged correct. Before/after in UTF-8 bytes: observed here (12,481 → 6,802, −45.5%). Before/after in **real `o200k_base` tokens**: verified in CI by `test_converting_the_boilerplate_fixture_reports_a_real_reduction`, which asserts both counts carry the `o200k_base` id and that the reduction is a genuine fraction. |
+| 5 | *(exit gate)* Protocol-conformance test passes for both reference backends | ✅ **Observed.** 16 conformance checks per backend, parametrised over the installed entry points rather than a hard-coded list. |
+| 6 | *(exit gate)* A deliberately broken backend is reported as unavailable rather than crashing the CLI | ✅ **Observed.** Installed a real `.dist-info` whose entry point raises `ImportError`; the CLI listed it as "failed to load", kept working, and exited 0. |
+| 7 | *(exit gate)* Architecture docs committed | ✅ Both written and committed. |
+
+**What Phase 1 does *not* do**, so nobody reads more into it than is there:
+
+`markdownify_html` converts HTML markup faithfully. It does **not** strip
+boilerplate — after conversion the cookie banner, the five-section nav, both
+ad slots, the trending rail and the footer are all still present, and a test
+asserts they are. The 45.5% reduction it achieves on `boilerplate.html` is
+markup, script and style characters going away. It is **not** evidence for the
+70–90% boilerplate-removal figures in `RESEARCH.md` Category 7; that is a
+different operation and it arrives with Trafilatura in Phase 3.
+
+**Blocked on:** nothing. Three items need an owner decision — Open questions 1,
+2 and 3.
 
 ## Environment
 
@@ -88,6 +113,12 @@ Nothing in Phase 0 depends on either, so the gate is unaffected. Phase 1 does:
 token counting is the product's core feature. This is Open question 1. I did not
 route around the denial (e.g. by fetching the same BPE file from a GitHub
 mirror), because that is an organisation egress policy, not a bug.
+
+**Re-probed at the start of Phase 1 (2026-08-20): both hosts are still denied**,
+with the gateway itself logging the 403s. See the verification log entry
+"Blocked-host re-probe". The Phase 1 token layer was designed around this — the
+arithmetic is testable offline, and everything needing a real vocabulary is
+behind the `network` marker.
 
 ## Verification log
 
@@ -244,18 +275,482 @@ not by reading them):
    `tests/fixtures/`. The test was confirmed to fail against the bad state
    before the fix was applied.
 
+### 2026-08-20 — Blocked-host re-probe (start of Phase 1)
+
+Re-probed the two hosts Phase 0 found denied, as instructed, before designing
+the token layer.
+
+- Command: `curl -sS -o /dev/null -w '%{http_code}\n' --max-time 25 "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"`
+- Result: `curl: (56) CONNECT tunnel failed, response 403`
+- Command: `curl -sS -o /dev/null -w '%{http_code}\n' --max-time 25 "https://huggingface.co/gpt2/resolve/main/tokenizer.json"`
+- Result: `curl: (56) CONNECT tunnel failed, response 403`
+- Command: `curl -sS "$HTTPS_PROXY/__agentproxy/status"`
+- Result: both denials logged by the gateway itself —
+  `{"kind":"connect_rejected","detail":"gateway answered 403 to CONNECT (policy denial or upstream failure)","host":"openaipublic.blob.core.windows.net:443"}`
+  and the same for `huggingface.co:443`.
+- Also confirmed reachable: `pypi.org` (200), `files.pythonhosted.org` (200),
+  `raw.githubusercontent.com` (301).
+
+**Verdict: still blocked, unchanged from Phase 0.** Proceeded on the owner's
+fallback (b): the token layer is designed so its arithmetic is testable without
+a download, and every test that needs a real BPE vocabulary is behind the
+`network` marker. I did not route around the denial.
+
+### 2026-08-20 — Phase 1 exit gate
+
+Run from a freshly recreated virtualenv (`rm -rf .venv && uv venv && uv sync
+--extra dev --extra fixtures`).
+
+- Command: `uv run ruff check .`
+- Result: `All checks passed!`
+
+- Command: `uv run ruff format --check .`
+- Result: `57 files already formatted`
+
+- Command: `uv run mypy` (strict, over `src` + `scripts` + `tests`)
+- Result: `Success: no issues found in 44 source files`
+
+- Command: `uv run python scripts/make_fixtures.py --check`
+- Result: `OK: 23 files reproduced byte-for-byte`
+
+- Command: `uv run pytest -q --cov=tokenmill`
+- Result: `325 passed, 11 skipped in 4.74s`, `TOTAL 1363 stmts, 66 miss, 95%`.
+  The 11 skips are the whole of `tests/unit/test_tokens_network.py`, reported as
+  `needs real network access (a tokenizer vocabulary download); run with -m network`.
+  Per-package statement coverage, against the plan's ≥85% target on `core` and
+  `tokens`:
+
+  | Package | Covered | Coverage |
+  |---|---|---|
+  | `core` | 621/625 | **99.4%** |
+  | `tokens` | 216/244 | **88.5%** |
+  | `post` | 196/202 | 97.0% |
+  | `cli` | 198/219 | 90.4% |
+  | `backends` | 46/53 | 86.8% |
+
+  `tokens` is the lowest of the two targets because `tiktoken_adapter.py`
+  (58%) and `hf_adapter.py` (76%) contain the vocabulary-loading paths that
+  cannot run here. Those lines are exactly what the `network`-marked tests
+  cover, so the figure should rise in CI.
+
+**Smoke scenario, exactly as the plan specifies it:**
+
+- Command: `uv run tokenmill backends --all`
+- Result:
+  ```
+  id                domains  license     tier        isolation   availability
+  ----------------  -------  ----------  ----------  ----------  ------------
+  markdownify_html  web      MIT         permissive  in-process  available
+  plaintext         text     Apache-2.0  permissive  in-process  available
+  ```
+
+- Command: `uv run tokenmill convert tests/fixtures/boilerplate.html --tokenizer o200k_base`
+- Result: **exit 0**, Markdown on stdout, and on stderr:
+  ```
+  source:   boilerplate.html
+  backend:  markdownify_html
+  format:   markdown
+  duration: 564 ms
+  post:     normalize_whitespace
+  tokens:   not measured — see warnings below
+
+  warning:  token counting unavailable (could not load the 'o200k_base'
+  vocabulary: ProxyError: HTTPSConnectionPool(host='openaipublic.blob.core.windows.net',
+  port=443): Max retries exceeded with url: /encodings/o200k_base.tiktoken
+  (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection
+  failed: 403 Forbidden'))) (tiktoken downloads its vocabulary on first use; set
+  TIKTOKEN_CACHE_DIR to a directory populated on a networked machine to use it
+  offline)); character counts are exact
+  ```
+  This is the designed behaviour, not a failure: the document is produced, the
+  count is honestly absent, and the warning says exactly why.
+
+- Command: `uv run tokenmill tokens tests/fixtures/boilerplate.html`
+- Result: **exit 1**:
+  ```
+  error: could not load the 'o200k_base' vocabulary: ProxyError: ... 403 Forbidden
+  hint:  tiktoken downloads its vocabulary on first use; set TIKTOKEN_CACHE_DIR
+         to a directory populated on a networked machine to use it offline
+  ```
+  Also designed: counting is this command's entire job, so it must fail rather
+  than print nothing useful.
+
+**The same two commands with the download-free tokenizer**, so the measurement
+path itself could be observed end to end:
+
+- Command: `uv run tokenmill convert tests/fixtures/boilerplate.html --tokenizer bytes --show-stages -o /tmp/bp.md`
+- Result:
+  ```
+  source:   boilerplate.html
+  backend:  markdownify_html
+  format:   markdown
+  duration: 90 ms
+  post:     normalize_whitespace
+  tokens:   12,481 -> 6,802  (-45.5%, bytes)
+
+  stage                 chars   tokens  change
+  --------------------  ------  ------  ------
+  source                12,472  12,481  -
+  convert               6,800   6,809   -45.4%
+  normalize_whitespace  6,793   6,802   -0.1%
+  ```
+
+- Command: `uv run tokenmill tokens tests/fixtures/boilerplate.html --tokenizer bytes`
+- Result:
+  ```
+  source            characters  UTF-8 bytes  tokenizer
+  ----------------  ----------  -----------  ---------
+  boilerplate.html  12,472      12,481       bytes
+  note:  'bytes' counts UTF-8 bytes, not model tokens; do not quote this as a token count
+  ```
+
+**These are byte counts, not token counts.** They demonstrate that the registry,
+the pipeline, the post-processor chain, `TokenMeter`, the per-stage accounting
+and the CLI's rendering all work together on real input. They say nothing about
+what a model would charge.
+
+**The emitted Markdown, read rather than assumed** (`/tmp/bp.md`, 6,793 chars):
+
+- **Headings — correct.** ATX throughout: `# Why Your Context Window Is Mostly
+  Navigation Menus`, then `## Where the tokens actually go`, `## The
+  misattributed win`, `## When extraction does not help`, `## A rule worth
+  remembering`, `## Summary table`, and the sidebar `### Trending right now` /
+  `### Subscribe to our newsletter`. All six of the manifest's
+  `expected_headings` are present at the right level.
+- **Article body — intact.** All seven paragraphs present and complete, prose
+  unbroken. Both of the manifest's `must_contain` sentences survive.
+- **Table — preserved.** The 7×5 summary table came through as a real Markdown
+  table, header row, separator row and all six data rows, `markitdown` through
+  `marker`, with the licence and pages/sec columns aligned to the right rows.
+- **Scripts and styles — gone.** No `<script`, no `gtag(`, no `function`
+  anywhere in the output. No HTML tags of any kind survive.
+- **Nav and ads — still there, and that is correct for this backend.** Grepped
+  for each of the manifest's `boilerplate_markers_must_be_absent` and found every
+  one: `847 partners`, `Accept all cookies`, `SPONSORED` (×2),
+  `Trending right now`, `Subscribe to our newsletter`,
+  `© 2026 Example Media Group`, `Crosswords` (×2 — nav and footer). The
+  five-section navigation menu is reproduced as a nested bullet list.
+
+  This is the honest answer to "did the nav and ads go?": **no.**
+  `markdownify_html` is a markup converter, not an extractor. Removing that
+  furniture is Trafilatura's job in Phase 3. An integration test now asserts the
+  markers are still present, so when Phase 3 lands, the difference is measurable
+  rather than asserted.
+
+- **Did the token count change plausibly?** Yes, and for the checkable reason.
+  12,481 → 6,802 bytes is −45.5%, and the drop happens almost entirely at the
+  `convert` stage (−45.4%), with whitespace normalisation adding −0.1%. Running
+  the clean `article.html` — which shares a byte-identical body with the noisy
+  file but carries far less markup — through the same backend gives only −18.1%.
+  Same body, same converter, less markup, less saving. That is what confirms the
+  reduction is markup removal rather than anything else, and it is the same point
+  `RESEARCH.md` Category 7 makes about misattributing the win to Markdown syntax.
+
+**Exit gate item: a deliberately broken backend.**
+
+Installed a real distribution — a `brokenmill-0.1.0.dist-info` with an
+`entry_points.txt` registering `brokenmill = brokenmill:BrokenConverter`, where
+importing `brokenmill` raises `ImportError` — onto `PYTHONPATH`, which is the
+path a user's broken `pip install` actually takes.
+
+- Command: `PYTHONPATH=<plugin> uv run tokenmill backends --all`
+- Result: **exit 0**
+  ```
+  WARNING tokenmill.core.registry: backend plugin 'brokenmill' failed to load: No module named 'definitely_not_installed'
+  id                domains  license     tier        isolation   availability
+  ----------------  -------  ----------  ----------  ----------  ---------------------------------------------------------
+  markdownify_html  web      MIT         permissive  in-process  available
+  plaintext         text     Apache-2.0  permissive  in-process  available
+  brokenmill        ?        ?           ?           ?           failed to load: ImportError: No module named 'definitely_not_installed'
+  ```
+
+- Command: `PYTHONPATH=<plugin> uv run tokenmill convert tests/fixtures/boilerplate.html --tokenizer bytes`
+- Result: **exit 0**, `tokens: 12,481 -> 6,802 (-45.5%, bytes)` — the working
+  backends are entirely unaffected.
+
+- Command: `PYTHONPATH=<plugin> uv run tokenmill convert ... --backend brokenmill`
+- Result: **exit 1**, `error: backend 'brokenmill' failed to load: ImportError:
+  No module named 'definitely_not_installed'` with the hint
+  `this backend's plugin failed to load; report it to its author`. No traceback.
+
+**Exit gate item: adding a backend with no core edits.**
+
+Built `tokenmill-csvtable` outside the repository **by extracting the code blocks
+from `docs/ADDING_A_BACKEND.md`**, so what was tested is literally what the
+tutorial says.
+
+- Command: `uv pip install --no-deps <path>/tokenmill-csvtable` then `uv run tokenmill backends`
+- Result:
+  ```
+  id                domains    license     tier        isolation   availability
+  ----------------  ---------  ----------  ----------  ----------  ------------
+  csvtable          documents  MIT         permissive  in-process  available
+  markdownify_html  web        MIT         permissive  in-process  available
+  plaintext         text       Apache-2.0  permissive  in-process  available
+  ```
+- Command: `tokenmill convert data.csv --tokenizer bytes`
+- Result: a correct Markdown table, `backend: csvtable`,
+  `tokens: 62 -> 106 (+71.0%, bytes)`.
+- Command: `pytest tests/` (the tutorial's own test file)
+- Result: `5 passed`
+- Command: `pytest tests/unit/test_protocol.py -q`
+- Result: `49 passed, 3 skipped` — the conformance suite picked the third-party
+  backend up automatically, applying 16 checks to it without anyone adding it to
+  a list. (The 3 skips were "no plausible sample for csvtable"; CSV and TSV
+  samples have since been added to the suite, and it is now `52 passed`.)
+
+**No tokenmill source file was modified at any point.** That is acceptance
+criterion 1, observed rather than argued.
+
+**Clean core install** (the standing guard):
+
+- Command: `uv pip install <repo>` into an empty throwaway venv, no extras
+- Result: **0.99 s**, 19 dependencies plus `tokenmill 0.1.0`. Import from
+  outside the source tree: `0.1.0 3.11.15`. `tokenmill backends` runs from the
+  clean install.
+- Licence audit of what it pulled in, read from the installed metadata rather
+  than from memory: Apache-2.0 (`requests`, `regex`), BSD (`Pygments`, `idna`),
+  ISC (`shellingham`), PSF (`typing_extensions`), **MPL-2.0 (`certifi`)**, MIT
+  (everything else — `tiktoken`, `typer`, `markdownify`, `beautifulsoup4`,
+  `soupsieve`, `rich`, `markdown-it-py`, `mdurl`, `urllib3`,
+  `charset-normalizer`, `six`, `annotated-doc`). **No AGPL and no GPL.** See
+  Decisions for the `certifi` note.
+- Command: `uv run python -c "import sys; before=set(sys.modules); import tokenmill; ..."`
+- Result: `import tokenmill` pulls in **zero** third-party modules, unchanged
+  from Phase 0 despite the package now having a real public API.
+
+**Verdict: PASS on the exit gate**, with acceptance criterion 3 explicitly
+**unverified in this environment** and criterion 4 met only in bytes, not in
+model tokens. Both are recorded above rather than glossed.
+
+**Bugs found and fixed during verification** (each found by running something,
+not by reading it):
+
+1. **A tokenizer that could not load aborted the entire conversion.**
+   `NetworkRequired` is a `ConversionError` — correctly, per plan §1.4 — so the
+   first working version of the pipeline propagated it and `tokenmill convert
+   --tokenizer o200k_base` exited 1 with no document. On an air-gapped machine
+   that is every conversion. Fixed by separating measurement failure from
+   conversion failure in `TokenMeter`; the document is returned, counts are
+   `None`, and one warning explains why. Covered by
+   `test_pipeline.py::TestMeasurementFailureIsNotConversionFailure`.
+2. **A conversion that made a document larger was reported as a saving.**
+   Running the `ADDING_A_BACKEND.md` example backend produced a Markdown table
+   larger than its CSV input — 62 → 106 bytes — and the CLI printed `-71.0%`,
+   which reads as a 71% reduction. Exactly the class of misleading number
+   `CONTRIBUTING.md` rule 4 exists to prevent. The percentage now follows the
+   count: growth prints as `+71.0%`. Four tests added.
+3. **`tests/fixtures/sample_repo/secrets.env` was never in the repository.** The
+   fixture repo's own `.gitignore` lists it, and git applies nested ignore files
+   to the outer repository too, so it was silently excluded from the Phase 0
+   commit. Phase 0 recorded a PASS because the file existed locally at the time;
+   on this fresh clone `test_sample_repo_hides_a_secret_that_ingestion_must_not_leak`
+   failed immediately. Same class of problem as the uncommittable `.git`
+   directory, and fixed the same way: materialised on demand. Fixed in
+   `2eced0d`, before any Phase 1 code was written.
+4. **The `network`, `heavy` and `compress` markers were registered but never
+   deselected.** A plain `pytest` run was attempting real vocabulary downloads
+   and taking 6+ seconds to fail. They are now skipped unless the run asks for
+   them with `-m`, and they report as skips rather than being deselected, so it
+   stays visible that they exist and did not run.
+5. Several test expectations of mine were wrong rather than the code: three
+   trailing spaces before a text line *is* a Markdown hard break and is correctly
+   preserved; `"one"` becomes two pieces after the normaliser appends its
+   trailing newline; and `Source.from_text(..., name="a.txt")` has format `text`,
+   not `txt`, so tests probing format handling must use real files. Corrected the
+   tests, not the behaviour.
+
+### 2026-08-20 — Post-Phase-1 follow-up: CI, and a correction
+
+The owner accepted the recommendations from the open questions. Implementing
+them meant checking that the thing several of them lean on — CI — actually
+works. It did not.
+
+**Finding: `.github/workflows/ci.yml` had never run, not once.**
+
+- Query: GitHub Actions `list_workflows` for `RSD-Studio/tokenmill`
+- Result: `total_count: 1`, and the one workflow is
+  `dynamic/dependabot/update-graph`. **Our CI workflow was not registered with
+  Actions at all.**
+- Query: `list_workflow_runs`
+- Result: `total_count: 1` — a single Dependabot dependency-graph run on
+  2026-08-20. No lint, no types, no test, no `clean-core-install` run has ever
+  happened.
+- Query: `list_branches`
+- Result: `claude/phase-1-core-architecture`,
+  `claude/tokenfold-project-setup-9m3i5o`, `claude/tokenmill-phase-1-pr3rd7`.
+  **There is no `main` branch.**
+- Cause: the workflow triggered on `push` to `main` and on `pull_request`.
+  `main` does not exist and no pull request has been opened, so neither trigger
+  could ever fire. A workflow that never fires is never registered, which is why
+  it did not even appear in the workflow list.
+
+**Correction to the Phase 1 exit-gate entry above.** That entry records
+acceptance criterion 3 (token counts match a hand-verified tiktoken result) as
+"not verified here — CI only". That was wrong in the second half: CI had never
+run, so those assertions were verified *nowhere*. Worse, the `test` job runs a
+plain `pytest`, which **skips** `network`-marked tests, so even a working CI
+would not have executed them. The criterion's status is unchanged — still
+unverified — but the reason was misstated and is corrected here rather than
+edited away.
+
+**Fixes applied:**
+
+- `on.push.branches` now includes `claude/**`, so CI runs on the branches work
+  actually happens on rather than only on a branch that does not exist.
+- New **`tokenizers` job**, running `uv run pytest -q -m network -rs` with the
+  `tokenizers` extra. This is the only place real token counting is verified, so
+  it is a blocking job, not an advisory one.
+- New **`coverage` job**, enforcing the plan's ≥85% target on `core` and
+  `tokens` specifically.
+
+- Command: `uv run python -c "import yaml; yaml.safe_load(...)"`
+- Result: valid YAML; triggers
+  `{'push': {'branches': ['main', 'claude/**']}, 'pull_request': None, 'workflow_dispatch': None}`;
+  jobs `['lint', 'types', 'test', 'coverage', 'tokenizers', 'fixtures', 'clean-core-install']`.
+
+- Command: `uv run pytest -q --cov=tokenmill.core --cov=tokenmill.tokens --cov-fail-under=85`
+- Result: `Required test coverage of 85% reached. Total coverage: 96.07%`,
+  `325 passed, 11 skipped`. The gate passes today, so it locks in the current
+  standard rather than demanding new work.
+
+### 2026-08-20 — tiktoken's offline cache, verified
+
+Checked before documenting it, rather than after.
+
+- Read `tiktoken/load.py` in the installed package: `read_file_cached` consults
+  `TIKTOKEN_CACHE_DIR`, then `DATA_GYM_CACHE_DIR`, then
+  `<tempdir>/data-gym-cache`, keyed by `sha1(url)`, **before** attempting any
+  download. Cache keys for our four encodings, computed and recorded so the
+  instructions can be checked: `o200k_base` →
+  `fb374d419588a4632f3f557e76b4b70aebbca790`, `cl100k_base` →
+  `9b5ad71b2ce5302211f9c61530b329a4922fc6a4`, `p50k_base` →
+  `ec7223a39ce59f226a68acc30dc1af2788490e15`, `r50k_base` →
+  `0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4`.
+
+- Command: `TIKTOKEN_CACHE_DIR=<empty dir> uv run tokenmill tokens --text "hello world" -t o200k_base`
+- Result: the usual 403 network error — an empty cache correctly falls through
+  to the download rather than failing in some other way.
+
+- Command: wrote a junk file to the exact `o200k_base` cache key, then re-ran
+  the same command
+- Result: **the junk was refused and deleted.** Same 403 error, and the cache
+  directory was empty afterwards (`0 file(s)`). tiktoken hash-checks cached
+  content before use, so a wrong or truncated cache **cannot silently produce
+  wrong token counts**. That is the property that makes recommending the offline
+  cache safe, and it is now verified rather than assumed.
+
+### 2026-08-20 — Repository name confirmed
+
+Phase 0 left open whether the GitHub repository had been renamed from
+`tokenfold`.
+
+- Command: `git ls-remote --heads https://github.com/RSD-Studio/tokenmill`
+- Result: succeeds, returning the three branches.
+- Query: GitHub API `list_branches` for owner `RSD-Studio`, repo `tokenmill`
+- Result: succeeds.
+
+**The repository is `RSD-Studio/tokenmill`.** The URLs in `pyproject.toml` and
+the README are correct. Phase 0's Open question 2 is closed.
+
+### 2026-08-20 — First CI runs: five failures, then all green
+
+The CI trigger fix meant the workflow finally ran. It failed, in exactly the
+three places Phases 0 and 1 had flagged as unverified, and none of the three
+could have been caught in this sandbox.
+
+**Run 1 (`0cfca94`) — 18 jobs green, 5 red.**
+
+| Job | Result |
+|---|---|
+| Lint and format, Type check, Coverage gate | ✅ |
+| Test — ubuntu ×3, macOS ×3 | ✅ |
+| Clean core install — 9 cells (3 OS × 3 Python) | ✅ |
+| **Test — windows ×3** | ❌ |
+| **Fixture corpus is reproducible** | ❌ |
+| **Real tokenizers (network)** | ❌ |
+
+1. **Windows, all three Python versions**, one test each:
+   `test_sample_repo_is_a_real_git_repo_with_a_pinned_commit`, `324 passed,
+   1 failed`. The rebuilt fixture repo landed on `7d690e6cdcae...` instead of
+   the recorded `fc5ce61ac784...`. Cause: git's `core.autocrlf` defaults to true
+   on Windows, so checkout rewrote LF to CRLF inside `tests/fixtures/`. Different
+   bytes, different tree, different commit — and the corpus was not
+   byte-reproducible on Windows either, which is the claim `--check` exists to
+   enforce. Fixed with a `.gitattributes` marking `tests/fixtures/** -text`: the
+   corpus is data, and git must not rewrite it on any platform. Rule order
+   matters — later patterns win, so `* text=auto` comes first and the exception
+   after.
+   **Note that only that one test failed.** All 324 others passed on Windows,
+   including every piece of Phase 1.
+
+2. **Fixture reproducibility**: `MISMATCH sample_repo/secrets.env:
+   committed=None regenerated=b99b52de...`. `--check` compares the regenerated
+   corpus against the committed one, and `secrets.env` is deliberately never
+   committed. So it is absent from every fresh clone by design and the
+   comparison reported a mismatch on all of them. The same root cause as the
+   test failure fixed in `2eced0d`, surfacing in a second place that only a
+   clone which has never run the generator could reveal. `--check` now excludes
+   the uncommittable files; the reported count drops from 23 to 22 for that
+   reason.
+
+3. **Real tokenizers**: `1 failed, 10 passed`.
+   `test_the_same_text_counts_differently_under_different_encodings` failed with
+   `assert 8 != 8` — I had asserted that "Tokenisation is not a universal
+   constant." counts differently under `o200k_base` and `r50k_base`, and it does
+   not. **The result was right and my test was wrong**, which is what I said
+   would happen to these numbers if any of them were wrong, and what I said I
+   would do about it. Two encodings agreeing on one short ASCII sentence is a
+   coincidence, not a contradiction. The test now samples five kinds of text
+   (English prose, Chinese, Python source, emoji, a very long word) and asserts
+   that **at least one** differs — the property that actually holds. The
+   expectation was corrected; the assertion was not loosened.
+
+   **The other ten passed**, including the two that matter most:
+   - `test_a_known_string_counts_as_expected_under_o200k_base` — `"hello world"`
+     is **2 tokens** under `o200k_base`. That is acceptance criterion 3, and the
+     number I wrote from published behaviour without being able to run it was
+     correct.
+   - `test_converting_the_boilerplate_fixture_reports_a_real_reduction` — the
+     full pipeline on `boilerplate.html` produces before and after counts that
+     both carry the `o200k_base` id, with the after strictly smaller. That is
+     acceptance criterion 4 in real model tokens rather than bytes.
+
+**Run 3 (`3aa6e59`) — all 23 jobs green.**
+
+- `Real tokenizers (network)`: `uv run pytest -q -m network -rs` →
+  **`11 passed, 325 deselected in 3.56s`**
+- `Fixture corpus is reproducible`: **`OK: 22 files reproduced byte-for-byte`**
+- `Test`: green on **ubuntu, macOS and Windows × Python 3.11, 3.12 and 3.13** —
+  nine cells
+- `Clean core install`: green on the same nine cells
+- `Coverage gate (core and tokens)`, `Lint and format`, `Type check`: green
+
+**What this closes.** Three things Phase 0 recorded as deferred-because-
+unverifiable are now verified: Windows behaviour, macOS behaviour, and Python
+3.12/3.13. So is acceptance criterion 3, which had been unverified since the
+phase began. The sandbox still cannot reach either tokenizer host, so token
+counting remains CI-verified rather than locally observed — but it is now
+verified by a blocking job that cannot silently stop running.
+
+**Verdict: PASS.** Phase 1 is green on every platform and Python version in the
+matrix, and its central claim is proven against a real tokenizer.
+
 ## Backend status
 
-No backends exist yet — Phase 0 ships zero product logic by design. The table
-below is the planned set, with licences taken from `docs/research/RESEARCH.md`
-and **not yet independently re-verified**. Licences get checked against the
-upstream repository at the moment each adapter is implemented, and any
-correction is recorded under Decisions.
+Two backends exist and are wired, tested and verified. The rest are the planned
+set, with licences taken from `docs/research/RESEARCH.md` and **not yet
+independently re-verified**. Licences get checked at the moment each adapter is
+implemented, and corrections are recorded under Decisions.
+
+The Phase 1 licences below were verified against the installed package metadata
+during the exit gate, not taken on trust: markdownify reports `MIT License`
+(v1.2.3), tiktoken `MIT License`, typer `MIT`.
 
 | Backend | Domain | License (per RESEARCH.md, unverified) | Tier | Wired | Tested | Notes |
 |---------|--------|---------------------------------------|------|-------|--------|-------|
-| plaintext | text | n/a (ours) | core | ❌ | ❌ | Phase 1 reference backend |
-| markdownify_html | web | MIT | core | ❌ | ❌ | Phase 1 reference backend |
+| plaintext | text | Apache-2.0 (ours) | core | ✅ | ✅ | Phase 1 reference backend. Passes text/Markdown through; warns on non-UTF-8 input |
+| markdownify_html | web | MIT **(verified v1.2.3)** | core | ✅ | ✅ | Phase 1 reference backend. Converts markup faithfully; **does not strip boilerplate** — that is Phase 3 |
 | markitdown | documents | MIT | documents | ❌ | ❌ | Phase 2; breadth, weak PDF layout |
 | pdfplumber | documents | MIT | core | ❌ | ❌ | Phase 2 |
 | pypdf | documents | BSD-3 | core | ❌ | ❌ | Phase 2 |
@@ -274,7 +769,128 @@ correction is recorded under Decisions.
 | libreoffice | documents | MPL-2.0 | isolated | ❌ | ❌ | Phase 7; subprocess |
 | marker / mineru / olmocr / surya / deepseek-ocr | documents | GPL-3.0 / varies / Apache-2.0 / GPL-3.0 / varies | heavy | ❌ | ❌ | Phase 9; GPU, out of process, **unverifiable in this sandbox** |
 
+### Post-processors
+
+| Id | Destructive | In default chain | Order | Wired | Tested |
+|---|---|---|---|---|---|
+| `normalize_whitespace` | no | yes | 100 | ✅ | ✅ |
+| `links` | yes | no (opt-in) | 200 | ✅ | ✅ |
+
+### Tokenizers
+
+| Id | Provider | Licence | Counts | Wired | Tested | Notes |
+|---|---|---|---|---|---|---|
+| `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base` | tiktoken | MIT (verified) | BPE tokens | ✅ | ✅ CI | Resolution, error paths and the "unavailable" path are tested locally; real counting is verified in the blocking `tokenizers` CI job. No real count has ever been produced *in this sandbox* |
+| `hf:<model>` | HuggingFace `tokenizers` | Apache-2.0 | model tokens | ✅ | ✅ CI | Behind the `tokenizers` extra. Verified in CI against `bert-base-uncased` |
+| `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
+
 ## Decisions made
+
+### Post-Phase-1 follow-up (owner accepted the recommendations)
+
+- **2026-08-20 — CI now runs on `claude/**` branches.** It had never run at all:
+  the trigger named only `main`, which does not exist. The whole "verified in
+  CI" fallback rested on a workflow that could not fire. See the verification
+  log entry for the full finding and the correction it forced.
+- **2026-08-20 — A blocking `tokenizers` CI job runs the `network` tests.**
+  Marking those tests `network` kept the local suite fast and offline, but the
+  existing `test` job runs a plain `pytest`, which skips them — so the marker
+  had quietly turned "verified in CI" into "verified nowhere". The new job
+  selects them explicitly. It is deliberately **not** `continue-on-error`: it is
+  the only verification of the product's central feature, and an advisory job
+  that goes yellow unnoticed is the same as no job.
+- **2026-08-20 — Coverage is gated, not just reported.** `--cov-fail-under=85`
+  scoped to `core` and `tokens`, the two packages the plan names. It passes at
+  96.07% today, so it locks in the current standard rather than demanding new
+  work. Closes Phase 0's Open question 4.
+- **2026-08-20 — The `bytes` tokenizer ships.** Owner accepted the
+  recommendation. It stays fenced exactly as built: never the default,
+  `is_model_tokenizer=False`, its unit printed as `UTF-8 bytes`, and an explicit
+  CLI warning against quoting it as a token count. Closes Open question 3.
+- **2026-08-20 — Branch convention: `claude/phase-<n>-<slug>` is canonical.**
+  The harness also assigns an auto-generated branch name per session; those are
+  pushed as identical mirrors so nothing is stranded if a session ends
+  unexpectedly, and can be deleted once the phase branch is merged. Recorded in
+  `CONTRIBUTING.md`. Closes Open question 4 from Phase 1.
+- **2026-08-20 — The repository name question is closed.** `RSD-Studio/tokenmill`
+  resolves over both git and the GitHub API; the URLs in `pyproject.toml` and
+  the README are correct. Closes Phase 0's Open question 2.
+- **2026-08-20 — The offline tiktoken cache is a documented, verified path.**
+  `TIKTOKEN_CACHE_DIR` is consulted before any download, and cached content is
+  hash-checked, so a wrong cache is refused rather than used. That last property
+  is what makes it safe to recommend, and it was tested rather than assumed.
+
+- **2026-08-20 (Phase 1) — The data model is stdlib dataclasses, not pydantic.**
+  The plan sanctioned either. Dataclasses win because `import tokenmill` then
+  pulls in **zero** third-party modules, which keeps the `clean-core-install`
+  guard meaningful and CLI start-up fast. Pydantic buys validation at trust
+  boundaries and tokenmill has none — this is a library API called by our own
+  CLI and GUI, not a request parser. When Phase 8 adds an HTTP surface, which
+  does have a trust boundary, pydantic models belong there rather than in the
+  core model. Reversible: the field sets are identical either way.
+- **2026-08-20 (Phase 1) — Licence policy is enforced in the constructor, not
+  documented.** `BackendInfo.__post_init__` raises if a copyleft or
+  non-commercial backend declares `IsolationMode.IN_PROCESS`, and the registry
+  re-checks at registration. `CONTRIBUTING.md` rule 2 is the thing the whole
+  project's licence story rests on, and a rule that lives only in prose is a
+  rule somebody will breach by accident. The conformance suite also asserts it
+  for every installed backend, so a copyleft adapter added in any later phase is
+  caught by a test that already exists.
+- **2026-08-20 (Phase 1) — A measurement failure is not a conversion failure.**
+  Discovered by running it: `NetworkRequired` is a `ConversionError`, so the
+  first working pipeline threw away a successfully converted document when
+  tiktoken could not reach its CDN. On an air-gapped machine that is every
+  conversion. `TokenMeter` now absorbs the failure, counts come back `None`,
+  character counts stay exact, and one warning explains it. The reverse — an
+  estimate in place of a measurement — is the one thing this project will not
+  do, and `ground_truth.json`'s `token_count: null` set that precedent in
+  Phase 0.
+- **2026-08-20 (Phase 1) — Added a `bytes` tokenizer. This one needs your
+  sign-off; see Open question 3.** Both real tokenizer families download a
+  vocabulary on first use, so on this machine the product had a converter and no
+  measurement at all — which is most of the point of it. `bytes` counts UTF-8
+  bytes: a fact about the text, exact, deterministic, needing nothing. It is
+  fenced so it cannot be mistaken for a token count — `is_model_tokenizer=False`,
+  its unit printed as `UTF-8 bytes`, an explicit CLI warning not to quote it as
+  tokens, and it is never the default. It is what made the whole measurement path
+  observable during this phase's verification.
+- **2026-08-20 (Phase 1) — The CLI reports growth as growth.** A percentage in
+  the summary line now follows the *count*, so `-45.5%` means 45.5% fewer and
+  `+71.0%` means 71% more. The first version described everything as a
+  "reduction" and printed a 71% increase as `-71.0%`. Found by running the
+  documentation's own example backend, whose Markdown table is genuinely larger
+  than its CSV input.
+- **2026-08-20 (Phase 1) — `certifi` (MPL-2.0) is in the core install, and that
+  is acceptable.** It arrives via `requests` ← `tiktoken`. MPL-2.0 is
+  file-level copyleft: it obliges us to publish modifications to *its* files,
+  and we make none. It is not viral the way AGPL/GPL are, and it does not
+  restrict distributing tokenmill under Apache-2.0. Recorded because the licence
+  audit found it and silence would have looked like nobody checked. Everything
+  else in the core install is MIT, Apache-2.0, BSD, ISC or PSF; there is no AGPL
+  and no GPL.
+- **2026-08-20 (Phase 1) — `normalize_whitespace` preserves Markdown hard line
+  breaks.** A line ending in two or more spaces before another line of text
+  keeps exactly two. Stripping them saves a handful of tokens and silently
+  changes how the document renders, and a post-processor advertised as
+  non-destructive must not do that. markdownify's default `newline_style` is
+  `spaces`, so this is a case the reference backend actually produces.
+- **2026-08-20 (Phase 1) — Selection never silently substitutes a backend.** An
+  explicit `--backend` that cannot run is an error. Falling back would produce a
+  measurement attributed to a backend that did not make it, which defeats the
+  point of measuring. The documented fallback *chain* for auto-selection is
+  Phase 2, where there will be more than one candidate for a format.
+- **2026-08-20 (Phase 1) — Three plugin groups, one mechanism, no special
+  casing.** Backends, post-processors and tokenizers are all found through entry
+  points, and the built-ins register exactly as a third party would. It costs a
+  little indirection and it is the only way "add a backend without touching
+  core" can be verified rather than asserted — which it now is, by installing a
+  backend built from the tutorial's own code blocks.
+- **2026-08-20 (Phase 1) — Opt-in test markers now skip rather than run.**
+  `network`, `heavy` and `compress` were declared in Phase 0 but nothing acted
+  on them, so `pytest` was attempting real downloads. They are skipped unless
+  selected with `-m`, and reported as skips rather than deselected: a test that
+  silently vanishes from the run is how a "verified" claim quietly stops being
+  true.
 
 - **2026-08-20 — Renamed the project from `tokenfold` to `tokenmill`.**
   `tokenfold` is taken on PyPI by a live, actively released project in the same
@@ -328,20 +944,59 @@ correction is recorded under Decisions.
 
 ## Deferred / future work
 
+- **A real BPE token count still cannot be produced in this sandbox**, and that
+  has not changed — the proxy still denies both tokenizer hosts. What has changed
+  is that `tests/unit/test_tokens_network.py` now runs in CI on every push, in a
+  blocking job, and passes: `"hello world"` really is 2 tokens under
+  `o200k_base`. Token counting is therefore **CI-verified, not locally
+  observed**, and any future work on the measurement layer inherits that
+  one-round-trip feedback loop until the hosts are allow-listed.
+- **Fallback chains between backends.** Phase 1 selects one backend and reports
+  it. Trying the next when the preferred one fails, and recording which actually
+  ran, is a Phase 2 deliverable and is not stubbed here.
+- **URL fetching.** `Source.from_url` exists and validates the scheme, but no
+  backend fetches anything. `robots.txt`, redirect limits, size caps and the
+  offline guarantee are Phase 3. `ConvertOptions.allow_network` exists and
+  defaults to `False`; the offline guarantee for *local* conversion is already
+  tested by making `socket.connect` raise.
+- **Repository ingestion.** `SourceKind.REPO` exists; no backend claims `repo`.
+  Phase 4.
+- **Output formats beyond Markdown and text.** `OutputFormat` has two members.
+  CSV, TOON and JSON encoders are Phase 5, so they are absent rather than
+  stubbed.
+- **Cost estimation.** The plan places it in the token layer with user-supplied
+  rates only. There is no rate input yet, so there is no estimate — leaving it
+  out beats a function that returns `None`.
+- **`SubprocessConverter`.** `IsolationMode.SUBPROCESS`, `LicenseTier.COPYLEFT`
+  and `BackendFailed.stderr` all exist and are enforced, but the shared
+  subprocess machinery is Phase 7. A subprocess backend written before then must
+  supply its own.
+- **Reference-style Markdown links.** The `links` post-processor handles inline
+  links and images and deliberately leaves `[text][ref]` untouched rather than
+  mangling it. Full link handling (inline / reference / strip) is a Phase 5
+  deliverable.
+- ~~**Coverage is not gated in CI.**~~ **Done.** Gated at 85% on `core` and
+  `tokens`; the job passes at 96.07%.
+- **Phase tags still cannot be pushed** (`send-pack: unexpected disconnect`, as
+  in Phase 0). Recording the commit SHA here instead, as instructed. Phase 0
+  ended at `772d99b`; Phase 1's content ends at `e18b3d8`.
+
+### Carried over from Phase 0
+
 - **Real footnotes in `report.docx`.** The plan lists footnotes among that
   fixture's features. python-docx has no footnote API, and hand-writing the
   footnote XML parts is brittle enough that it is not worth it until a backend
   actually needs testing against them. The fixture uses a `Note:` paragraph
   instead. Belongs to Phase 2 if a document backend claims footnote support.
-- **Windows and macOS verification.** Everything above was observed on Linux
-  only — this sandbox has no other platform. The CI matrix covers
-  ubuntu/macos/windows from the first commit, so the first CI run is the real
-  cross-platform check. Until it goes green, treat Windows path and encoding
-  behaviour as unverified.
-- **Python 3.12 and 3.13 verification.** Only 3.11.15 exists locally. Same
-  situation: CI is the check.
-- **GitHub name availability check.** Not performable from this session (see the
-  verification log). The owner controls the namespace.
+- ~~**Windows and macOS verification.**~~ **Done.** The first CI runs happened
+  during Phase 1's follow-up. Windows initially failed on line-ending
+  translation inside the fixture corpus; with that fixed, the suite is green on
+  ubuntu, macOS and Windows. See the verification log entry "First CI runs".
+- ~~**Python 3.12 and 3.13 verification.**~~ **Done.** Green across
+  3.11/3.12/3.13 on all three operating systems — nine test cells and nine
+  clean-core-install cells.
+- ~~**GitHub name availability check.**~~ **Done.** `RSD-Studio/tokenmill`
+  resolves over both git and the GitHub API.
 - **`docs/ARCHITECTURE.md`, `ADDING_A_BACKEND.md`, `LICENSES.md`, `BACKENDS.md`,
   `BENCHMARKS.md`, `FAQ.md`.** Deliberately not created as empty placeholders —
   each is written in the phase that produces the thing it documents (1, 1, 7, 2,
@@ -360,35 +1015,48 @@ correction is recorded under Decisions.
 
 ## Open questions for the owner
 
-1. **Token counting cannot be verified in this sandbox.** The egress proxy
-   denies `openaipublic.blob.core.windows.net` (tiktoken's BPE download) and
-   `huggingface.co` (HF tokenizers, and every model download). Token measurement
-   is the product's core value proposition, so I need one of:
-   (a) those two hosts added to the sandbox allow-list;
-   (b) acceptance that tokenizer behaviour is verified only in GitHub Actions,
-       where the hosts are reachable, and that local runs skip those tests; or
-   (c) a decision to vendor a BPE file into the repository — I would rather not,
-       since it adds a licensing question and a maintenance burden.
-   My recommendation is (a); failing that, (b). This does not block starting
-   Phase 1 — the registry, protocol, pipeline and CLI can all be built and
-   tested — but it does block *observing* a real before/after token count, which
-   is exactly what Phase 1's exit gate asks for.
+Everything that was mine to decide has been decided, implemented and verified in
+CI. One thing remains, and it needs repository-admin access I do not have.
 
-2. **The GitHub repository is still named `RSD-Studio/tokenfold`.** The package,
-   CLI, module and docs are all `tokenmill` now. Renaming the repository on
-   GitHub is a one-click operation and GitHub keeps redirects, so nothing
-   breaks. Do you want to rename it to `RSD-Studio/tokenmill`? Until you do, the
-   README and `pyproject.toml` URLs point at `RSD-Studio/tokenmill`, which will
-   404. Say the word and I will either change the URLs back or leave them
-   pointing at the new name.
+1. **Create `main` and make it the default branch.** The repository still has no
+   default branch — its only branches are the three `claude/**` ones, so "Phase 0
+   is complete and merged" is not true in git terms; there is nothing to have
+   merged into. This is why CI had never run before today, and it will keep
+   causing trouble: pull requests have no base, `CHANGELOG.md`'s `[Unreleased]`
+   link points at `/commits/main` and 404s, a CI status badge has no branch to
+   report on, and the Phase 11 release workflow will assume it exists.
 
-3. **The working branch is `claude/tokenfold-project-setup-9m3i5o`.** I was
-   instructed to push there and have done so. Confirm you want subsequent phases
-   on the same branch, or tell me the branch convention you would prefer (the
-   plan suggests one PR-sized branch per phase).
+   From a clone:
 
-4. **Should CI publish coverage anywhere** (Codecov or similar), or is the
-   terminal report enough? The plan sets a ≥85% target on `core` and `tokens`
-   from Phase 1; I can add a hard `--cov-fail-under` gate scoped to those
-   packages once they exist. Say if you want that enforced in CI rather than
-   just reported.
+   ```bash
+   git fetch origin claude/phase-1-core-architecture
+   git branch main origin/claude/phase-1-core-architecture
+   git push origin main
+   ```
+
+   Then **Settings → General → Default branch** → `main`. Phases 0 and 1 are
+   already in that history, so nothing needs merging retroactively, and the
+   branch is green on all 23 CI jobs.
+
+   I have not done this myself: creating a repository's default branch changes
+   how the project looks to everyone who visits it, and the settings change is
+   not something I can make.
+
+2. **Optional, and no longer blocking: allow-list the two tokenizer hosts** for
+   these sessions. Token counting is now verified — but in CI, one push at a
+   time. Every future phase that touches measurement gets its feedback a
+   round-trip later than it could. The alternative, if allow-listing is
+   unattractive, is a warmed tiktoken cache (four files, hash-checked by
+   tiktoken so a bad copy is refused); the exact command is in the README under
+   "Working offline". Neither is urgent. Phase 2 does not depend on it.
+
+### Closed
+
+| # | Question | Outcome |
+|---|---|---|
+| Phase 0 #1 | Token counting unverifiable in the sandbox | Closed — verified in CI by a blocking job. `"hello world"` is 2 tokens under `o200k_base` |
+| Phase 0 #2 | Is the GitHub repository still named `tokenfold`? | Closed — it is `RSD-Studio/tokenmill`; verified over git and the API |
+| Phase 0 #3 | Branch convention | Closed — `claude/phase-<n>-<slug>` canonical, harness branches mirrored. In `CONTRIBUTING.md` |
+| Phase 0 #4 | Should CI gate coverage? | Closed — gated at 85% on `core` and `tokens`; passing at 96.07% |
+| Phase 1 #3 | Should the `bytes` tokenizer ship? | Closed — yes, with the fencing it already has |
+| Phase 1 #4 | Branch naming | Closed — same as Phase 0 #3 |
