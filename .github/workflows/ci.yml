@@ -26,7 +26,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra fixtures
+      # --extra documents so the Phase 2 adapters are linted against the
+      # libraries they actually wrap rather than against nothing.
+      - run: uv sync --extra dev --extra fixtures --extra documents
       - run: uv run ruff check --output-format=github .
       - run: uv run ruff format --check .
 
@@ -38,7 +40,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra fixtures
+      # --extra documents matters here: without kreuzberg and markitdown
+      # installed, mypy sees `Any` for every adapter and checks nothing. It
+      # also keeps `warn_unused_ignores` honest — the two `type: ignore`s in
+      # the kreuzberg adapter exist because that package's shipped stubs
+      # disagree with the package, and mypy can only see that with it present.
+      - run: uv sync --extra dev --extra fixtures --extra documents
       - run: uv run mypy
 
   test:
@@ -55,9 +62,13 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
-      - run: uv sync --extra dev --extra fixtures
+      # --extra documents so the markitdown and kreuzberg integration tests
+      # run rather than skipping. Everything it pulls is CPU-only, permissively
+      # licensed and wheel-installable on all three platforms; docling stays
+      # out, which is the whole point of its separate extra.
+      - run: uv sync --extra dev --extra fixtures --extra documents
       - name: Run tests
-        run: uv run pytest -q --cov=tokenmill --cov-report=term-missing
+        run: uv run pytest -q --cov=tokenmill --cov-report=term-missing -rs
 
   coverage:
     name: Coverage gate (core and tokens)
@@ -67,7 +78,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra fixtures
+      - run: uv sync --extra dev --extra fixtures --extra documents
       # DEVELOPMENT_PLAN.md §4 sets a >=85% target on core and tokens
       # specifically; adapters elsewhere are thin wrappers and are allowed to be
       # lower. Gating the two packages the target names stops the number
@@ -110,6 +121,43 @@ jobs:
       # digests against what is committed. Catches both accidental fixture
       # edits and any non-determinism creeping into the generator.
       - run: uv run python scripts/make_fixtures.py --check
+
+  docling:
+    name: Docling (manual dispatch only)
+    # Docling resolves to 122 packages and about 5.2 GB, and its PDF path then
+    # downloads layout models from huggingface.co on first use. That is far too
+    # much to put on every push, and it cannot be covered by a `network`-marked
+    # test "without a multi-gigabyte download" either — so it runs only when
+    # someone asks for it, and PROGRESS.md records what the last run showed.
+    # The development sandbox cannot run it at all: its egress proxy denies
+    # huggingface.co.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+      # uv.lock pins the default (CUDA) torch build, which is several
+      # gigabytes of wheels a CPU-only job never touches and more than a runner
+      # comfortably holds alongside the model cache. So this one job resolves
+      # afresh against the CPU torch index instead of the lockfile. Every other
+      # job stays frozen; this is the only place a re-resolution is worth the
+      # loss of reproducibility, and it is manual-dispatch only.
+      - name: Install with the docling extra, CPU-only torch
+        env:
+          UV_FROZEN: "0"
+          UV_TORCH_BACKEND: cpu
+        run: uv sync --extra dev --extra fixtures --extra documents --extra docling
+      - name: Office formats (no model download needed)
+        run: uv run pytest -q tests/integration/test_document_backends.py -k Docling -rs
+      - name: PDF path (downloads layout models from huggingface.co)
+        run: uv run pytest -q -m heavy -rs
 
   clean-core-install:
     name: Clean core install (py${{ matrix.python }} / ${{ matrix.os }})

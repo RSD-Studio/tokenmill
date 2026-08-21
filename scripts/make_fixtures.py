@@ -1225,8 +1225,16 @@ def ensure_sample_repo_git(root: Path) -> str:
         "GIT_COMMITTER_NAME": "tokenmill fixtures",
         "GIT_COMMITTER_EMAIL": "fixtures@example.invalid",
         "GIT_COMMITTER_DATE": FIXED_GIT_DATE,
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_SYSTEM": os.devnull,
+        # Point git's config lookup at a path that does not exist, rather than
+        # at os.devnull. Git reads a missing config file as an empty one, which
+        # is exactly the isolation wanted here, and it does not depend on the
+        # platform's null device behaving like a config file. That dependency
+        # is not theoretical: this project's development sandbox turned up with
+        # /dev/null replaced by a 48-byte regular file, and git rejected it with
+        # `fatal: bad config line 1 in file /dev/null`, which broke fixture
+        # regeneration for a reason that had nothing to do with the fixtures.
+        "GIT_CONFIG_GLOBAL": str(root / "no-such-git-config"),
+        "GIT_CONFIG_SYSTEM": str(root / "no-such-git-config"),
     }
 
     def run(*args: str) -> str:
