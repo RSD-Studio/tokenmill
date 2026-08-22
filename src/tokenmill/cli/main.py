@@ -137,6 +137,7 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
         "token_delta": result.token_delta,
         "reduction_ratio": result.reduction_ratio,
         "post_processors": list(result.post_processors),
+        "web": _web_summary(result),
         "attempts": [
             {"backend": attempt.backend_id, "ok": attempt.ok, "error": attempt.error}
             for attempt in result.attempts
@@ -155,6 +156,32 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
     if include_text:
         payload["text"] = result.text
     return payload
+
+
+#: Metadata keys a web backend records, surfaced as their own object in
+#: ``--json`` so a consumer does not have to know they live in ``metadata``.
+_WEB_KEYS = (
+    "strips_boilerplate",
+    "html_characters",
+    "visible_text_characters",
+    "output_characters",
+    "boilerplate_reduction",
+)
+
+
+def _web_summary(result: ConversionResult) -> dict[str, Any] | None:
+    """Render the web-specific measurements, or ``None`` for a non-web result.
+
+    Args:
+        result: The conversion to describe.
+
+    Returns:
+        The web metrics, or ``None`` when the backend recorded none — which is
+        every document and repository conversion.
+    """
+    if "strips_boilerplate" not in result.metadata:
+        return None
+    return {key: result.metadata.get(key) for key in _WEB_KEYS}
 
 
 @app.command()
@@ -197,6 +224,37 @@ def convert(
             "Never applies to an explicit --backend.",
         ),
     ] = None,
+    offline: Annotated[
+        bool,
+        typer.Option(
+            "--offline",
+            help="Refuse to retrieve a URL. Converting a local file never reaches "
+            "the network with or without this.",
+        ),
+    ] = False,
+    ignore_robots: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-robots",
+            help="Fetch a URL even when the site's robots.txt disallows it. "
+            "Yours to decide for a site you control.",
+        ),
+    ] = False,
+    allow_network: Annotated[
+        bool,
+        typer.Option(
+            "--allow-network",
+            help="Permit backends to make network calls of their own, such as "
+            "downloading a model or driving a browser.",
+        ),
+    ] = False,
+    user_agent: Annotated[
+        str | None,
+        typer.Option("--user-agent", help="Identify as this instead of tokenmill's default."),
+    ] = None,
+    max_redirects: Annotated[
+        int | None, typer.Option("--max-redirects", help="Redirects a URL fetch may follow.")
+    ] = None,
     show_stages: Annotated[
         bool, typer.Option("--show-stages", help="Show the per-stage token breakdown.")
     ] = False,
@@ -226,6 +284,14 @@ def convert(
         image_handling=images,
         link_handling=links,
         fallback=fallback,
+        user_agent=user_agent,
+        max_redirects=max_redirects,
+        # These three are flags rather than tri-state options, so `False` means
+        # "not passed" and must not clobber a configured value — the same rule
+        # `to_options` applies to everything else it is handed.
+        fetch=False if offline else None,
+        respect_robots=False if ignore_robots else None,
+        allow_network=True if allow_network else None,
     )
     # Asking for image or link handling without naming a chain implies wanting
     # the `links` post-processor; it is destructive, so it is not in the default

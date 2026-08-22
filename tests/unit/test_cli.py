@@ -27,6 +27,21 @@ runner = CliRunner()
 #: than depending on network access.
 OFFLINE = ["--tokenizer", "bytes"]
 
+#: Pins the tests below that are about *the CLI* — where output goes, what the
+#: JSON looks like, whether a post-processor ran — to the backend they were
+#: written against.
+#:
+#: Phase 3 made trafilatura the default for HTML, which is a real and deliberate
+#: change to what `tokenmill convert page.html` produces. These tests would
+#: otherwise start failing for a reason that has nothing to do with what they
+#: check: trafilatura *extracts*, so on the four-element page below it returns
+#: prose with no `# Title` heading at all. Loosening the assertions would leave
+#: them asserting nothing; naming the backend keeps them exact.
+#:
+#: The new default is covered by `TestTheDefaultBackendForAWebPage`, and the
+#: extraction itself by `tests/integration/test_web_backends.py`.
+RAW = ["--backend", "markdownify_html"]
+
 
 @pytest.fixture(autouse=True)
 def _isolate_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -53,7 +68,7 @@ def page(tmp_path: Path) -> Path:
 class TestConvert:
     def test_markdown_goes_to_stdout_and_the_report_to_stderr(self, page: Path) -> None:
         """So `tokenmill convert page.html > page.md` writes exactly Markdown."""
-        result = runner.invoke(app, ["convert", str(page), *OFFLINE])
+        result = runner.invoke(app, ["convert", str(page), *OFFLINE, *RAW])
 
         assert result.exit_code == 0
         assert "# Title" in result.stdout
@@ -63,14 +78,14 @@ class TestConvert:
     def test_the_output_flag_writes_a_file(self, page: Path, tmp_path: Path) -> None:
         target = tmp_path / "nested" / "out.md"
 
-        result = runner.invoke(app, ["convert", str(page), "-o", str(target), *OFFLINE])
+        result = runner.invoke(app, ["convert", str(page), "-o", str(target), *OFFLINE, *RAW])
 
         assert result.exit_code == 0
         assert "# Title" in target.read_text(encoding="utf-8")
         assert f"wrote {target}" in result.stderr
 
     def test_quiet_suppresses_the_report_but_not_the_markdown(self, page: Path) -> None:
-        result = runner.invoke(app, ["convert", str(page), "--quiet", *OFFLINE])
+        result = runner.invoke(app, ["convert", str(page), "--quiet", *OFFLINE, *RAW])
 
         assert "# Title" in result.stdout
         assert result.stderr.strip() == ""
@@ -88,7 +103,7 @@ class TestConvert:
             assert stage in result.stderr
 
     def test_json_output_is_parseable_and_carries_the_counts(self, page: Path) -> None:
-        result = runner.invoke(app, ["convert", str(page), "--json", *OFFLINE])
+        result = runner.invoke(app, ["convert", str(page), "--json", *OFFLINE, *RAW])
 
         payload = json.loads(result.stdout)
 
@@ -155,16 +170,109 @@ class TestConvert:
         assert "Nav" in result.stdout
 
     def test_the_default_chain_leaves_links_alone(self, page: Path) -> None:
-        result = runner.invoke(app, ["convert", str(page), *OFFLINE])
+        """About the post-processor chain, so the backend is pinned."""
+        result = runner.invoke(app, ["convert", str(page), *OFFLINE, *RAW])
 
         assert "[Nav](/x)" in result.stdout
 
     def test_a_tokenizer_that_cannot_load_still_yields_the_document(self, page: Path) -> None:
-        result = runner.invoke(app, ["convert", str(page), "-t", "nonsense"])
+        result = runner.invoke(app, ["convert", str(page), "-t", "nonsense", *RAW])
 
         assert result.exit_code == 0
         assert "# Title" in result.stdout
         assert "not measured" in result.stderr
+
+
+class TestTheDefaultBackendForAWebPage:
+    """Phase 3 changed what `tokenmill convert page.html` produces."""
+
+    @pytest.fixture
+    def article(self, fixture_dir: Path) -> Path:
+        """The corpus's noisy page — long enough for extraction to engage."""
+        return fixture_dir / "boilerplate.html"
+
+    def test_a_web_page_now_auto_selects_the_extractor(self, article: Path) -> None:
+        result = runner.invoke(app, ["convert", str(article), *OFFLINE])
+
+        assert result.exit_code == 0
+        assert "backend:  trafilatura" in result.stderr
+
+    def test_the_report_says_how_much_of_the_page_was_boilerplate(self, article: Path) -> None:
+        """A second line, because it answers a different question from `tokens`."""
+        result = runner.invoke(app, ["convert", str(article), *OFFLINE])
+
+        assert "page:" in result.stderr
+        assert "removed as boilerplate" in result.stderr
+        assert "visible characters" in result.stderr
+
+    def test_a_markup_conversion_says_it_removed_no_boilerplate(self, article: Path) -> None:
+        """And that Markdown syntax made it bigger, which is the honest answer."""
+        result = runner.invoke(app, ["convert", str(article), *OFFLINE, *RAW])
+
+        assert "no boilerplate removed" in result.stderr
+        assert "Markdown syntax added" in result.stderr
+
+    def test_the_web_metrics_reach_the_json_output(self, article: Path) -> None:
+        result = runner.invoke(app, ["convert", str(article), *OFFLINE, "--json"])
+
+        payload = json.loads(result.stdout)
+
+        assert payload["web"]["strips_boilerplate"] is True
+        assert payload["web"]["boilerplate_reduction"] > 0
+        assert payload["web"]["visible_text_characters"] > 0
+
+    def test_a_document_conversion_carries_no_web_object(self, fixture_dir: Path) -> None:
+        """`null` rather than a fabricated zero: a PDF has no visible-text ratio."""
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "tables.pdf"), *OFFLINE, "--json"]
+        )
+
+        payload = json.loads(result.stdout)
+
+        assert payload["web"] is None
+
+
+class TestTheFetchFlags:
+    """The URL-fetching policy as a user sets it. No live URL is used."""
+
+    def test_offline_refuses_a_url_rather_than_fetching_it(self) -> None:
+        result = runner.invoke(
+            app, ["convert", "https://example.invalid/page", "--offline", *OFFLINE]
+        )
+
+        assert result.exit_code == 1
+        assert "disabled" in result.stderr
+        assert "--offline" in result.stderr
+
+    def test_offline_does_not_affect_a_local_file(self, page: Path) -> None:
+        """The guarantee is about local conversions never reaching out at all."""
+        result = runner.invoke(app, ["convert", str(page), "--offline", *OFFLINE, *RAW])
+
+        assert result.exit_code == 0
+        assert "# Title" in result.stdout
+
+    def test_the_flags_are_documented_in_help(self) -> None:
+        result = runner.invoke(app, ["convert", "--help"])
+
+        for flag in ("--offline", "--ignore-robots", "--allow-network", "--user-agent"):
+            assert flag in result.stdout
+
+    def test_a_flag_that_was_not_passed_does_not_clobber_a_configured_value(
+        self, tmp_path: Path
+    ) -> None:
+        """`--offline` is a flag, so its False must mean "not passed".
+
+        The autouse fixture chdirs into ``tmp_path``, so a ``tokenmill.toml``
+        written there is the one the CLI finds.
+        """
+        (tmp_path / "tokenmill.toml").write_text("fetch = false\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app, ["convert", "https://example.invalid/page", "--tokenizer", "bytes"]
+        )
+
+        assert result.exit_code == 1
+        assert "disabled" in result.stderr
 
 
 class TestFallbackAtTheCommandLine:
@@ -216,7 +324,13 @@ class TestFallbackAtTheCommandLine:
 
         if result.exit_code != 0:
             pytest.skip("no document backend is installed to fall back to")
-        assert "attempts: markdownify_html (failed) ->" in result.output
+        # The head of the chain is whichever backend `preferences` ranks first
+        # for HTML today, and that is allowed to change. What must not change is
+        # that a walked chain is *shown*: the backend that failed, an arrow, and
+        # the backend that produced the text.
+        assert "attempts: " in result.output
+        assert "(failed) ->" in result.output
+        assert "backend:  " in result.output
 
 
 class TestTheHeadlineForABinaryDocument:
@@ -496,7 +610,7 @@ class TestBrokenBackendDoesNotCrashTheCli:
     ) -> None:
         self._install_broken_plugin(tmp_path)
 
-        result = self._run(tmp_path, "convert", str(page), "--tokenizer", "bytes")
+        result = self._run(tmp_path, "convert", str(page), "--tokenizer", "bytes", *RAW)
 
         assert result.returncode == 0, result.stderr
         assert "# Title" in result.stdout

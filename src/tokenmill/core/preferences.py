@@ -72,15 +72,64 @@ FORMAT_PREFERENCES: Final[Mapping[str, Mapping[str, int]]] = {
     # markitdown and kreuzberg both emit one Markdown table per sheet under a
     # heading naming the sheet; docling drops the sheet names entirely.
     "xlsx": {"markitdown": 80, "kreuzberg": 60, "docling": 30},
-    # HTML belongs to Phase 3, where trafilatura brings real boilerplate
-    # extraction. The document backends handle HTML competently and are
-    # reachable by name, but they rank below the core web backend so that
-    # installing a documents extra cannot quietly change which backend
-    # converts a web page — that would make Phase 1's recorded measurements
-    # irreproducible.
-    "html": {"markdownify_html": 50, "markitdown": 20, "kreuzberg": 15, "docling": 10},
-    "htm": {"markdownify_html": 50, "markitdown": 20, "kreuzberg": 15, "docling": 10},
-    "xhtml": {"markdownify_html": 50, "kreuzberg": 15, "docling": 10},
+    # trafilatura first, and this is a deliberate change of the product's
+    # default answer for a web page. On boilerplate.html it removes all six of
+    # the corpus's `boilerplate_markers_must_be_absent` while keeping all six
+    # headings, all seven article paragraphs and the 7x5 table; markdownify_html
+    # keeps every marker, because stripping them is not a markup converter's
+    # job. Extraction is what the ~70-90% figures in RESEARCH.md Category 7
+    # describe, and markup removal is not.
+    #
+    # readability second: the same job by an independent algorithm, which is
+    # what makes it useful when trafilatura declines a page outright. On
+    # boilerplate.html the two agree byte-for-byte apart from table-separator
+    # spacing, so this ordering is about having a second implementation rather
+    # than about a measured quality difference — there is not one to measure on
+    # a single fixture.
+    #
+    # markdownify_html third rather than gone. It is the right answer when the
+    # whole page is what you want, and it is the backend that runs when both
+    # extractors decline — a page nobody can extract from still converts, with
+    # `attempts:` showing what happened.
+    #
+    # crawl4ai last, below even the document backends, so auto-selection can
+    # never start a browser. It is reachable by name, which is the same
+    # treatment docling's PDF path gets and for the same reason.
+    #
+    # The document backends stay below every web backend. Installing a
+    # documents extra must not change which backend converts a web page, or
+    # Phase 1's and Phase 3's recorded measurements stop being reproducible.
+    "html": {
+        "trafilatura": 80,
+        "readability": 60,
+        "markdownify_html": 50,
+        "markitdown": 20,
+        "kreuzberg": 15,
+        "docling": 10,
+        "crawl4ai": -10,
+    },
+    "htm": {
+        "trafilatura": 80,
+        "readability": 60,
+        "markdownify_html": 50,
+        "markitdown": 20,
+        "kreuzberg": 15,
+        "docling": 10,
+        "crawl4ai": -10,
+    },
+    "xhtml": {
+        "trafilatura": 80,
+        "readability": 60,
+        "markdownify_html": 50,
+        "kreuzberg": 15,
+        "docling": 10,
+        "crawl4ai": -10,
+    },
+    # A URL the pipeline could not pre-fetch, which in practice means the user
+    # named a backend that fetches for itself. Only crawl4ai claims `url`, and
+    # it is here rather than absent so the ranking is stated rather than
+    # implied by there being one candidate.
+    "url": {"crawl4ai": -10},
     # Tabular text: kreuzberg renders a Markdown table, markitdown emits the
     # rows as text.
     "csv": {"kreuzberg": 60, "markitdown": 40, "docling": 30},
@@ -101,17 +150,24 @@ _RATIONALE: Final[Mapping[str, str]] = {
     "pptx": "markitdown first: the only backend that keeps speaker notes.",
     "xlsx": "markitdown and kreuzberg keep sheet names as headings; docling drops them.",
     "html": (
-        "markdownify_html first: HTML is the web domain's, and an installed "
-        "documents extra must not change which backend converts a page. Real "
-        "boilerplate extraction arrives with trafilatura in Phase 3."
+        "trafilatura first: it removes every boilerplate marker in the corpus "
+        "while keeping the headings, the article and the table. readability "
+        "next as a second opinion, then markdownify_html, which converts the "
+        "whole page including its furniture. crawl4ai last: auto-selection "
+        "must never start a browser."
     ),
     "htm": (
-        "markdownify_html first: HTML is the web domain's, and an installed "
-        "documents extra must not change which backend converts a page."
+        "trafilatura first: it extracts the article; markdownify_html converts "
+        "the whole page. crawl4ai last, so no browser starts by default."
     ),
     "xhtml": (
-        "markdownify_html first: HTML is the web domain's, and an installed "
-        "documents extra must not change which backend converts a page."
+        "trafilatura first: it extracts the article; markdownify_html converts "
+        "the whole page. crawl4ai last, so no browser starts by default."
+    ),
+    "url": (
+        "only crawl4ai fetches a URL itself; every other web backend is handed "
+        "the page the pipeline already fetched, which is what gives the "
+        "conversion a real before-count."
     ),
     "csv": "kreuzberg first: it renders a Markdown table where markitdown emits rows as text.",
 }

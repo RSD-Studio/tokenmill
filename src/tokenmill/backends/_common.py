@@ -1,4 +1,4 @@
-"""Shared plumbing for the document backends.
+"""Shared plumbing for every backend adapter.
 
 Five adapters wrap five third-party libraries that agree on almost nothing: they
 want a path or a file object, they raise their own exception hierarchies, and
