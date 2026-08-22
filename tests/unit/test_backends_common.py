@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tokenmill.backends.documents._common import (
+from tokenmill.backends._common import (
     classify_failure,
     missing_binary_note,
     probe_module,
@@ -313,3 +313,24 @@ class TestRenderMarkdownTable:
         rendered = render_markdown_table([["a", "b", "c"], ["1", "2"]])
 
         assert rendered.endswith("| 1 | 2 |  |\n")
+
+
+class TestTheDocumentsCompatibilityShim:
+    """``tokenmill.backends.documents._common`` still re-exports these.
+
+    Phase 3 moved the module up a level, because web and repository adapters
+    need the same helpers and "documents" stopped being a true name for them.
+    The old path stays: `docs/ADDING_A_BACKEND.md` told third-party adapter
+    authors to import from it, and breaking those for a rename would be a poor
+    trade. If this test fails, either the shim was deleted — which needs a
+    deprecation cycle first — or a helper was added to `_common` without being
+    re-exported.
+    """
+
+    def test_every_public_helper_is_reachable_by_the_old_path(self) -> None:
+        from tokenmill.backends import _common as new
+        from tokenmill.backends.documents import _common as old
+
+        assert set(old.__all__) == set(new.__all__)
+        for name in new.__all__:
+            assert getattr(old, name) is getattr(new, name), f"{name} is not the same object"

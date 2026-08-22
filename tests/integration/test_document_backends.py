@@ -400,7 +400,7 @@ class TestMarkItDown:
         self, tmp_path: Path, pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A silent empty document is the failure mode this project must not have."""
-        monkeypatch.setattr("tokenmill.backends.documents._common.shutil.which", lambda _name: None)
+        monkeypatch.setattr("tokenmill.backends._common.shutil.which", lambda _name: None)
         path = tmp_path / "photo.png"
         path.write_bytes(_ONE_PIXEL_PNG)
 

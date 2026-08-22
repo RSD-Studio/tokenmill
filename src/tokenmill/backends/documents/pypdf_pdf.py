@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tokenmill.backends.documents._common import (
+from tokenmill.backends._common import (
     classify_failure,
     probe_module,
     source_as_file,

@@ -172,7 +172,7 @@ a complete, working example you can copy. The short version:
 8. **Do not let a dependency's noise become your failure.** A library that warns
    at import time will fail a conversion under `-W error`. Use
    `warnings_as_conversion_warnings` from
-   `tokenmill.backends.documents._common` so the warning reaches the user as a
+   `tokenmill.backends._common` so the warning reaches the user as a
    warning rather than as a broken backend. Likewise, an empty result is not a
    success: say so with `warn_on_empty_output`.
 

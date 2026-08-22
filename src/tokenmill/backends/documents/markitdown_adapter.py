@@ -50,7 +50,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from tokenmill.backends.documents._common import (
+from tokenmill.backends._common import (
     classify_failure,
     missing_binary_note,
     probe_module,
