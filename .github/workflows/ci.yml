@@ -13,6 +13,20 @@ on:
     branches: ["main", "Main", "claude/**"]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly. Primarily for the `docling` job below, which is gated to this
+    # trigger and to manual dispatch. RESEARCH.md's own
+    # closing caveat is that this ecosystem moves fast and versions and licences
+    # must be re-verified before shipping; docs/BACKENDS.md's premise is that
+    # every claim about a backend is asserted by a test. A backend nobody ever
+    # exercises is a claim quietly decaying, and docling — 122 packages deep — is
+    # the likeliest to drift.
+    #
+    # The rest of the matrix runs too, and that is wanted rather than tolerated:
+    # `clean-core-install` uses plain `pip install .` with no lockfile, so a
+    # weekly run is the one thing that catches a new release of a core
+    # dependency breaking a fresh install. Sunday 04:00 UTC.
+    - cron: "0 4 * * 0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -127,15 +141,21 @@ jobs:
       - run: uv run python scripts/make_fixtures.py --check
 
   docling:
-    name: Docling (manual dispatch only)
+    name: Docling (weekly and on demand)
     # Docling resolves to 122 packages and about 5.2 GB, and its PDF path then
     # downloads layout models from huggingface.co on first use. That is far too
     # much to put on every push, and it cannot be covered by a `network`-marked
-    # test "without a multi-gigabyte download" either — so it runs only when
-    # someone asks for it, and PROGRESS.md records what the last run showed.
-    # The development sandbox cannot run it at all: its egress proxy denies
-    # huggingface.co.
-    if: github.event_name == 'workflow_dispatch'
+    # test "without a multi-gigabyte download" either.
+    #
+    # So it runs weekly and on demand, never on a push. The schedule is the part
+    # that matters: it re-verifies a backend whose upstream moves fast, rather
+    # than only closing today's gap. Note that `schedule` fires on the default
+    # branch only, so a change on a feature branch still needs a manual dispatch
+    # against that branch to be covered by it.
+    #
+    # The development sandbox cannot run this at all: its egress proxy denies
+    # huggingface.co. PROGRESS.md records what the last run showed.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
