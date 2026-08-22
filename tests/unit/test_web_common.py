@@ -107,3 +107,26 @@ class TestNoteWebMetrics:
 
         assert context.metadata["html_characters"] == len(html)
         assert context.metadata["visible_text_characters"] == 4
+
+
+class TestHeadMetadataIsNotPageText:
+    """``<title>`` is not content, and counting it distorts the denominator."""
+
+    def test_the_document_title_is_not_visible_text(self) -> None:
+        """A browser shows it in the tab; it is not on the page.
+
+        Leaving it in put a string in the denominator that appears nowhere in
+        the page, which made every extractor look as though it had discarded
+        text it never saw.
+        """
+        html = "<html><head><title>Tab name</title></head><body><p>Body</p></body></html>"
+
+        assert visible_text(html) == "Body"
+
+    def test_head_metadata_generally_is_excluded(self) -> None:
+        html = (
+            "<html><head><meta name='description' content='x'>"
+            "<title>T</title></head><body><p>Body</p></body></html>"
+        )
+
+        assert visible_text(html) == "Body"

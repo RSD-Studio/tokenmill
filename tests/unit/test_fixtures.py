@@ -20,6 +20,7 @@ EXPECTED_FIXTURES = [
     "corrupt.pdf",
     "data.xlsx",
     "deck.pptx",
+    "jsrendered.html",
     "long_context.md",
     "report.docx",
     "sample_repo/",
@@ -178,3 +179,67 @@ def test_sample_repo_is_not_committed_as_a_gitlink() -> None:
     gitlinks = [entry[3] for entry in entries if entry[0] == "160000"]
     assert gitlinks == [], f"sample_repo committed as a gitlink: {gitlinks}"
     assert entries, "sample_repo files are not tracked at all"
+
+
+class TestTheJavascriptRenderedFixture:
+    """The fixture that makes a browser-driving backend's claim checkable.
+
+    Without a page whose content genuinely does not exist in the response body,
+    "crawl4ai renders JavaScript" is an untestable assertion about a 677 MB
+    dependency. These assertions are about the *fixture*, and they are what stop
+    the backend test that depends on it from passing vacuously.
+    """
+
+    def test_the_sentinel_does_not_appear_in_the_source(self, fixture_dir: Path) -> None:
+        """The property the whole fixture rests on.
+
+        The first version of this fixture embedded the sentinel whole inside the
+        script, so a plain read of the file contained it and the backend test
+        proved nothing. The script now joins it from two halves at run time.
+        """
+        source = (fixture_dir / "jsrendered.html").read_text(encoding="utf-8")
+
+        assert "RSD-TOKENMILL-RENDERED-9317" not in source
+
+    def test_the_placeholder_is_the_only_text_outside_the_script(
+        self, fixture_dir: Path, ground_truth: dict[str, Any]
+    ) -> None:
+        """What a parser sees, as opposed to what is merely in the bytes.
+
+        The rendered title and paragraphs *are* in the source — they are string
+        literals inside the script — so an assertion that they are absent from
+        the file would be false. What matters is that they are not *visible
+        text*: a converter that reads the response body finds only the
+        placeholder, which is why the sentinel and not the title is what the
+        backend test asserts on.
+        """
+        from tokenmill.backends.web._common import visible_text
+
+        facts = ground_truth["jsrendered.html"]
+        visible = visible_text((fixture_dir / "jsrendered.html").read_text(encoding="utf-8"))
+
+        assert visible == facts["unrendered_placeholder"]
+        assert facts["rendered_title"] not in visible
+
+    def test_the_placeholder_clears_crawl4ais_anti_bot_threshold(self, fixture_dir: Path) -> None:
+        """Fifty visible characters, or the success path is unreachable.
+
+        Crawl4AI refuses any page under 5,000 bytes whose *un-rendered* body
+        holds fewer than 50 characters of visible text, calling it
+        ``Structural: minimal_text on small page``. That is a false positive on
+        small client-rendered pages, and it made the first version of this
+        fixture impossible to render. The placeholder is a full sentence for
+        that reason, and this test is why nobody will shorten it back.
+        """
+        from tokenmill.backends.web._common import visible_text
+
+        source = (fixture_dir / "jsrendered.html").read_text(encoding="utf-8")
+
+        assert len(visible_text(source)) >= 50
+
+    def test_it_needs_no_network_to_render(self, fixture_dir: Path) -> None:
+        """Everything is inserted through the DOM; nothing is fetched."""
+        source = (fixture_dir / "jsrendered.html").read_text(encoding="utf-8")
+
+        for fetcher in ("fetch(", "XMLHttpRequest", "src=", "href="):
+            assert fetcher not in source, f"the fixture would reach the network via {fetcher!r}"

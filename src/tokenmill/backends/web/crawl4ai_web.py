@@ -272,6 +272,17 @@ def _render(crawl4ai: Any, url: str, timeout_s: float) -> tuple[str, int | None,
             verbose=False,
             markdown_generator=generator,
             page_timeout=int(timeout_s * 1000),
+            # Load the caller's Markdown-free bytes through a real browser even
+            # for a `file://` URL. Crawl4AI's default is to skip the browser
+            # entirely for local files — see `_crawl` in its
+            # `async_crawler_strategy`, which routes to the browser only when one
+            # of a handful of flags is set — and without this the adapter would
+            # silently return a parse of the response body. That is a worse
+            # trafilatura with a 677 MB dependency attached, and it would make
+            # every claim on this page about rendering untrue. Found by running
+            # it against `tests/fixtures/jsrendered.html` and getting the
+            # placeholder back.
+            process_in_browser=True,
         )
         async with crawl4ai.AsyncWebCrawler(config=browser) as crawler:
             result = await crawler.arun(url=url, config=run)

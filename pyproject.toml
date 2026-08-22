@@ -366,6 +366,7 @@ markers = [
     "heavy: needs a GPU or a multi-gigabyte model download; skipped by default",
     "compress: needs the `compress` extra and a model download",
     "network: performs real network I/O; skipped by default",
+    "browser: drives a real browser via Playwright; needs a browser download, skipped by default",
 ]
 filterwarnings = ["error"]
 

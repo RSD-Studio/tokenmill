@@ -37,6 +37,7 @@ They report as skips, not silence:
 uv run pytest -q -m network    # real tokenizer vocabulary downloads
 uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path, Phase 9)
 uv run pytest -q -m compress   # the compress extra plus a model (Phase 6)
+uv run pytest -q -m browser    # drives a real Chromium (crawl4ai, Phase 3)
 ```
 
 A test that needs an optional dependency declares it and skips cleanly without

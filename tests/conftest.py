@@ -20,6 +20,7 @@ OPT_IN_MARKERS: dict[str, str] = {
     "network": "needs real network access (a tokenizer vocabulary download)",
     "heavy": "needs a GPU or a multi-gigabyte model download",
     "compress": "needs the `compress` extra and a model download",
+    "browser": "needs a Playwright browser download (`playwright install chromium`)",
 }
 
 

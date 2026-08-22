@@ -40,10 +40,18 @@ from tokenmill.core.protocol import ConversionContext
 
 __all__ = ["note_web_metrics", "visible_text"]
 
-#: Elements whose contents are code or styling rather than anything a reader
-#: sees. Their text is not part of the page's visible text at any point, so it
-#: belongs to neither the article nor the boilerplate.
-_INVISIBLE: Final[frozenset[str]] = frozenset({"script", "style", "template", "noscript"})
+#: Elements whose contents are code, styling or document metadata rather than
+#: anything on the page. Their text belongs to neither the article nor the
+#: boilerplate, so counting it would put something in the denominator that no
+#: extractor is being judged on.
+#:
+#: ``title`` is here for that reason rather than because it is invisible — a
+#: browser shows it in the tab. It is head metadata, every extractor handles it
+#: separately from body content, and leaving it in made a page's visible text
+#: include a string that appears nowhere in the page.
+_INVISIBLE: Final[frozenset[str]] = frozenset(
+    {"script", "style", "template", "noscript", "title", "head"}
+)
 
 
 class _VisibleTextExtractor(HTMLParser):

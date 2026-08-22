@@ -947,6 +947,105 @@ def build_boilerplate_html(out: Path) -> dict[str, Any]:
     return truth
 
 
+#: The sentence that exists only after JavaScript has run in ``jsrendered.html``.
+#: Deliberately a sentinel rather than prose: a test asserting it is present has
+#: to have got it from a rendered DOM, because it appears nowhere in the bytes a
+#: server would send.
+JS_SENTINEL = "RSD-TOKENMILL-RENDERED-9317"
+
+#: The same sentinel, split so the literal string never appears in the file's
+#: bytes. The first version of this fixture embedded it whole inside the script,
+#: which made "the sentinel is in the output" true of a plain read of the source
+#: and so proved nothing at all. The script joins the halves at run time, so the
+#: only way the whole string exists is if JavaScript executed.
+JS_SENTINEL_HALVES = (JS_SENTINEL[: len(JS_SENTINEL) // 2], JS_SENTINEL[len(JS_SENTINEL) // 2 :])
+
+#: The text a parser sees instead, before any script runs. A backend that
+#: reports *this* has read the response body rather than rendered the page,
+#: which for most backends is correct and worth being able to tell apart.
+#:
+#: It is a full sentence rather than "Loading..." for a concrete reason found by
+#: running crawl4ai against the fixture. Its anti-bot detector inspects the
+#: **un-rendered** response body and refuses any page under 5,000 bytes whose
+#: body holds fewer than 50 characters of visible text, calling it
+#: ``Structural: minimal_text on small page``. That describes every small
+#: client-rendered page — the exact class this fixture exists to represent — so
+#: a terser placeholder made the success path unreachable. The false positive
+#: itself is real and is asserted separately in
+#: ``tests/integration/test_web_backends.py`` against a page written for it.
+JS_PLACEHOLDER = (
+    "Loading article. This placeholder is what a parser sees, because the "
+    "article below it is inserted by a script that only a browser will run."
+)
+
+
+def build_jsrendered_html(out: Path) -> dict[str, Any]:
+    """Write ``jsrendered.html``: a page whose content only exists once JS runs.
+
+    This is the fixture that makes crawl4ai's contribution checkable. Every
+    other web backend parses the bytes a server sent; a browser-driving backend
+    parses what the browser ended up displaying. Without a page where those two
+    genuinely differ, "it renders JavaScript" is an untestable claim about a
+    677 MB dependency.
+
+    The body ships a placeholder and a script that replaces it. A parser sees
+    :data:`JS_PLACEHOLDER` and never :data:`JS_SENTINEL`; a renderer sees the
+    reverse. No network is involved — the script only touches the DOM — so the
+    fixture stays usable offline.
+
+    Args:
+        out: Fixture output directory.
+
+    Returns:
+        Ground-truth facts for the fixture.
+    """
+    path = out / "jsrendered.html"
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Client-rendered article</title>
+</head>
+<body>
+<main id="app"><p>{JS_PLACEHOLDER}</p></main>
+<script>
+var marker = '{JS_SENTINEL_HALVES[0]}' + '{JS_SENTINEL_HALVES[1]}';
+var article = document.createElement('article');
+var heading = document.createElement('h1');
+heading.textContent = 'The Article That Only Exists After Hydration';
+article.appendChild(heading);
+var paragraphs = [
+  'This paragraph is inserted by a script and is present in no response body. A converter that parses the HTML a server sent will never see it, and a converter that drives a browser will. That difference is the whole reason a browser-driving backend is worth its weight.',
+  'The sentinel ' + marker + ' appears exactly once in the rendered document and never in the source, because this script joins it from two halves at run time. Asserting on it is therefore a check that rendering happened rather than a check that some text was found.',
+  'Everything here is inserted through the DOM rather than fetched, so the fixture needs no network and behaves identically on an air-gapped machine.'
+];
+for (var i = 0; i < paragraphs.length; i++) {{
+  var p = document.createElement('p');
+  p.textContent = paragraphs[i];
+  article.appendChild(p);
+}}
+var app = document.getElementById('app');
+app.innerHTML = '';
+app.appendChild(article);
+</script>
+</body>
+</html>
+"""
+    path.write_text(html, encoding="utf-8", newline="\n")
+    return {
+        "description": (
+            "A page whose article is inserted by a script: parsers see a "
+            "placeholder, a browser-driving backend sees the article."
+        ),
+        "needs_javascript": True,
+        "rendered_sentinel": JS_SENTINEL,
+        "rendered_sentinel_occurrences": 1,
+        "unrendered_placeholder": JS_PLACEHOLDER,
+        "rendered_title": "The Article That Only Exists After Hydration",
+        "rendered_paragraph_count": 3,
+    }
+
+
 def _html_ground_truth(description: str, *, has_boilerplate: bool) -> dict[str, Any]:
     """Build the shared ground-truth block for the two HTML fixtures.
 
@@ -1322,6 +1421,7 @@ BUILDERS: Final[list[tuple[str, Any]]] = [
     ("data.xlsx", build_data_xlsx),
     ("article.html", build_article_html),
     ("boilerplate.html", build_boilerplate_html),
+    ("jsrendered.html", build_jsrendered_html),
     ("long_context.md", build_long_context_md),
     ("sample_repo/", build_sample_repo),
 ]

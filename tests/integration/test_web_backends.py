@@ -34,6 +34,11 @@ pytestmark = pytest.mark.integration
 
 OFFLINE = ConvertOptions(tokenizer="bytes")
 
+#: The same, with the permission crawl4ai requires. A browser runs the page's
+#: scripts and loads whatever they ask for, which is a broader thing than
+#: retrieving one address, so it is asked for explicitly.
+NETWORKED = OFFLINE.with_(allow_network=True)
+
 
 @pytest.fixture(scope="module")
 def pipeline() -> Pipeline:
@@ -425,8 +430,16 @@ class TestSelection:
         }
 
 
+@pytest.mark.browser
 @pytest.mark.requires("crawl4ai")
 class TestCrawl4AI:
+    """Everything here was observed by running it; see docs/BACKENDS.md.
+
+    These need a Playwright browser as well as the package. Where one is
+    absent the render fails with an actionable message rather than a
+    traceback, which is itself asserted below.
+    """
+
     def test_it_refuses_to_render_without_network_permission(
         self, fixture_dir: Path, pipeline: Pipeline
     ) -> None:
@@ -448,3 +461,137 @@ class TestCrawl4AI:
 
         assert excinfo.value.hint is not None
         assert "trafilatura" in excinfo.value.hint
+
+    def test_it_sees_content_that_only_exists_after_javascript_runs(
+        self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
+    ) -> None:
+        """The backend's whole reason for existing, checked rather than claimed.
+
+        The sentinel is assembled from two halves by the fixture's own script,
+        so it appears nowhere in the file's bytes. Finding it in the output is
+        therefore proof that a browser executed the page, not that some text
+        was located.
+        """
+        facts = ground_truth["jsrendered.html"]
+        page = fixture_dir / "jsrendered.html"
+        sentinel = facts["rendered_sentinel"]
+
+        assert sentinel not in page.read_text(encoding="utf-8"), (
+            "the sentinel leaked into the fixture's source, which makes this test vacuous; "
+            "regenerate the corpus"
+        )
+
+        result = pipeline.run(Source.from_path(page), NETWORKED.with_(backend="crawl4ai"))
+
+        assert result.text.count(sentinel) == facts["rendered_sentinel_occurrences"]
+        assert facts["rendered_title"] in result.text
+        assert facts["unrendered_placeholder"] not in result.text
+
+    def test_a_parser_on_the_same_page_sees_only_the_placeholder(
+        self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
+    ) -> None:
+        """The control. Without it the test above proves nothing about rendering."""
+        facts = ground_truth["jsrendered.html"]
+
+        result = pipeline.run(
+            Source.from_path(fixture_dir / "jsrendered.html"),
+            OFFLINE.with_(backend="trafilatura"),
+        )
+
+        assert facts["unrendered_placeholder"] in result.text
+        assert facts["rendered_sentinel"] not in result.text
+
+    def test_its_pruning_filter_leaves_boilerplate_trafilatura_removes(
+        self, fixture_dir: Path, pipeline: Pipeline, boilerplate_markers: list[str]
+    ) -> None:
+        """The documented cost of choosing this backend, quoted from real output.
+
+        Its filter scores blocks by text and link density rather than
+        identifying an article, so a prose-heavy advertisement scores like
+        prose. Three of the corpus's six markers survive — the cookie banner,
+        the sponsored slot and the newsletter block — where trafilatura leaves
+        none.
+
+        If an upstream release improves this, the test fails and
+        ``docs/BACKENDS.md`` gets corrected rather than quietly becoming a lie
+        about a tool that has since got better.
+        """
+        result = pipeline.run(
+            Source.from_path(fixture_dir / "boilerplate.html"),
+            NETWORKED.with_(backend="crawl4ai"),
+        )
+
+        survivors = {m for m in boilerplate_markers if m in result.text}
+
+        assert survivors == {
+            "Accept all cookies",
+            "SPONSORED: Cut your cloud bill by 40%",
+            "Subscribe to our newsletter",
+        }, f"crawl4ai's pruning now leaves {survivors}; update docs/BACKENDS.md"
+
+    def test_it_keeps_the_headings_and_the_table(
+        self, fixture_dir: Path, pipeline: Pipeline, ground_truth: dict[str, Any]
+    ) -> None:
+        """Weaker extraction, but it is not destroying structure to get there."""
+        result = pipeline.run(
+            Source.from_path(fixture_dir / "boilerplate.html"),
+            NETWORKED.with_(backend="crawl4ai"),
+        )
+
+        for heading in ground_truth["boilerplate.html"]["expected_headings"]:
+            assert heading in result.text, f"lost {heading!r}"
+        # Cells are padded, so match on the row's content rather than its
+        # exact spacing — CONTRIBUTING.md asks for structure, not bytes.
+        assert "| markitdown " in result.text
+        assert "| --- |" in result.text
+
+    def test_a_small_client_rendered_page_is_refused_as_anti_bot_blocking(
+        self, tmp_path: Path, pipeline: Pipeline
+    ) -> None:
+        """A false positive on exactly the pages this backend is for.
+
+        Crawl4AI's anti-bot detector inspects the **un-rendered** response body
+        and refuses any page under 5,000 bytes whose body holds fewer than 50
+        characters of visible text, reporting
+        ``Structural: minimal_text on small page``. A small single-page
+        application shell is precisely that, so the one class of page a
+        browser-driving backend is uniquely able to handle is the class its own
+        guard rejects.
+
+        tokenmill cannot fix this from outside, so it surfaces it as a typed,
+        printable failure — and the chain then offers the page to a backend that
+        can at least return the shell. ``tests/fixtures/jsrendered.html`` carries
+        a full-sentence placeholder specifically to stay above the threshold.
+        """
+        shell = tmp_path / "spa.html"
+        shell.write_text(
+            "<html><body><div id='root'>Loading</div>"
+            "<script>document.getElementById('root').textContent = 'Hydrated';</script>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConversionError, match=r"anti-bot|minimal_text"):
+            pipeline.run(Source.from_path(shell), NETWORKED.with_(backend="crawl4ai"))
+
+    def test_a_missing_browser_is_a_message_rather_than_a_traceback(
+        self, fixture_dir: Path, pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The failure a plain ``pip install crawl4ai`` actually produces.
+
+        Installing the package does not install a browser; ``playwright
+        install chromium`` does. Pointing Playwright at an empty directory
+        reproduces that state without uninstalling anything.
+        """
+        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_browsers := Path("/nonexistent")))
+        del tmp_browsers
+
+        with pytest.raises(ConversionError) as excinfo:
+            pipeline.run(
+                Source.from_path(fixture_dir / "jsrendered.html"),
+                NETWORKED.with_(backend="crawl4ai"),
+            )
+
+        assert "Traceback" not in str(excinfo.value)
+        assert excinfo.value.hint is not None
+        assert "playwright install" in excinfo.value.hint
