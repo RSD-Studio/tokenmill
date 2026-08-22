@@ -48,11 +48,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`tokenmill convert` warns when the source is a binary format.** Converting a
-  `.docx` reports something like `68,190 -> 3,494`, where the first figure is
-  the zip archive's own bytes decoded as text. That is not text any model would
-  be given, so the percentage between the two is not a token saving, and the
-  pipeline now says so.
+- **A binary document reports what its output costs, not a fake saving.**
+  Converting a `.docx` used to report `68,190 -> 3,494`, where the first figure
+  was the zip archive's own bytes decoded as text. Nobody hands a model the
+  bytes of a `.docx`, so that number cannot be subtracted from anything. There
+  is now no before-count and no percentage for a binary source — the headline is
+  the output's cost and the input is reported as a size:
+
+  ```
+  tokens:   3,494  (o200k_base)
+  size:     37.4 KiB in, no comparable before
+  ```
+
+  `ConversionResult` gains `source_bytes`; `tokens_before` is `None` and there is
+  no `source` stage, so "before" cannot silently come to mean "after
+  conversion". The before/after pair is unchanged where both sides really are
+  text a model could be given. An interim version of this printed the old number
+  with a warning attached; that was dropped because a disclaimer on every
+  document conversion devalues the warnings a user must not ignore.
 - **Every document backend warns when it produces an empty document.** A scanned
   PDF has no text layer and all five return nothing for it; an empty conversion
   exits 0 and looks exactly like success. OCR is Phase 9.
@@ -64,8 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI now installs the `documents` extra** for the lint, type-check, test and
   coverage jobs. Without it mypy saw `Any` for every new adapter and the
   MarkItDown and Kreuzberg integration tests skipped, so Phase 2's adapters
-  would have been verified nowhere. A new `docling` job runs on manual dispatch
-  only.
+  would have been verified nowhere. A new `docling` job runs weekly and on
+  manual dispatch, never on a push — it re-verifies a backend whose upstream
+  moves fast, rather than only closing today's gap.
 - **The protocol-conformance suite now uses the real fixture corpus.** It built
   text samples only, so a backend claiming `pdf` or `docx` skipped three checks
   for want of a sample. It also treats `NetworkRequired` as a correct answer
@@ -211,4 +225,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token-compression project, so `pip install tokenfold` could never have been
   ours. See `PROGRESS.md` under Decisions.
 
-[Unreleased]: https://github.com/RSD-Studio/tokenmill/commits/main
+[Unreleased]: https://github.com/RSD-Studio/tokenmill/commits/Main

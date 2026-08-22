@@ -511,19 +511,24 @@ them fails. Reading text off page images needs OCR, which is Phase 9.
 **None of them does OCR.** Not pdfplumber, not pypdf, not MarkItDown without a
 plugin, not Kreuzberg with OCR disabled, not docling with OCR disabled.
 
-**A binary source's "before" count is not a token count.** Converting a `.docx`
-reports something like `68,190 -> 3,494`. The first number is the file's own
-bytes decoded as text — nobody would ever hand a model the bytes of a zip
-archive — so the percentage between them is not a saving. The pipeline says so:
+**A binary source has no "before" count, so none is printed.** Nobody hands a
+model the bytes of a `.docx`, so counting them produces a figure that cannot be
+subtracted from anything. A document conversion reports what the output costs
+and reports the input as the size it is:
 
 ```
-warning:  report.docx is a binary format, so the before-count is its own bytes
-decoded as text, not text any model would be given. The after-count is real; the
-percentage between them is not a token saving
+tokens:   3,494  (o200k_base)
+size:     37.4 KiB in, no comparable before
 ```
 
-The meaningful before/after comparison arrives in Phase 3, where raw HTML and
-extracted Markdown are both text a model could actually be given.
+There is deliberately no warning about this — it is the normal shape of a
+document conversion, and a disclaimer on every one of them would train users to
+skim past the block where the warnings that *do* matter live.
+
+The before/after pair keeps its meaning where both sides really are text a model
+could be given: raw HTML against extracted Markdown in Phase 3, and compression
+in Phase 6. The comparison that matters for a document is between *backends* on
+the same file — `tokenmill compare`, Phase 5.
 
 ---
 

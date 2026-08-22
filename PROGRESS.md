@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-21 by Claude Code_
+_Last updated: 2026-08-22 by Claude Code_
 
 ## Status at a glance
 
@@ -8,9 +8,9 @@ _Last updated: 2026-08-21 by Claude Code_
 |-------|------|--------|-----------|
 | 0 | Scaffolding and toolchain | ✅ Complete | passed 2026-08-20 |
 | 1 | Core architecture | ✅ Complete | passed 2026-08-20 |
-| 2 | Document backends (light tier) | ✅ Complete | passed 2026-08-21 |
-| 3 | Web backends | ⬜ Not started | — |
-| 4 | Repository backends | ⬜ Not started | — |
+| 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
+| 3 | Web backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
+| 4 | Repository backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
 | 5 | Post-processing, formats, measurement depth | ⬜ Not started | — |
 | 6 | Prompt compression (optional tier) | ⬜ Not started | — |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
@@ -1200,6 +1200,163 @@ and I cannot trigger it — the API returns
 no `actions: write`. That is why Docling's PDF path is recorded as unverified
 rather than done. Open question 1.
 
+### 2026-08-22 — Phase 2 follow-ups: the three open questions, closed
+
+Phase 2 merged into `Main` as PR #4 (`0a74c8f`), and its branches were deleted.
+This work is a fresh change cut from that merge, per `CONTRIBUTING.md`.
+
+**The binary before-count is gone, and the shape of the report changed with it.**
+
+- Command: `uv run tokenmill convert tests/fixtures/report.docx --tokenizer bytes --show-stages`
+- Result:
+  ```
+  source:   report.docx
+  backend:  markitdown
+  format:   markdown
+  duration: 760 ms
+  post:     normalize_whitespace
+  tokens:   3,494  (bytes)
+  size:     37.4 KiB in, no comparable before
+
+  stage                 chars  tokens  change
+  --------------------  -----  ------  ------
+  convert               3,493  3,493   -
+  normalize_whitespace  3,494  3,494   +0.0%
+  ```
+  No percentage, no `source` row, and no warning. Compare with what Phase 2
+  shipped: `tokens: 68,190 -> 3,494 (-94.9%, bytes)` plus a disclaimer.
+
+- Command: the same on `boilerplate.html`, to prove the text path is untouched
+- Result: `tokens:   12,481 -> 6,802  (-45.5%, bytes)`, with the `source` stage
+  row still present and the numbers **identical to Phase 1's and Phase 2's**.
+  Nothing that worked has changed.
+
+- Command: the same on `scanned.pdf`
+- Result: `tokens: 0 (bytes)`, `size: 79.2 KiB in, no comparable before`, and
+  the empty-document warning. The old output claimed `144,338 -> 0 (-100.0%)`,
+  a 100% saving on a conversion that produced nothing — which is the clearest
+  single illustration of why the before-count had to go.
+
+**Checks, from a venv synced with `--extra dev --extra fixtures --extra documents`:**
+
+- `uv run ruff check .` → `All checks passed!`
+- `uv run ruff format --check .` → all files formatted
+- `uv run mypy` → `Success: no issues found in 56 source files`
+- `uv run pytest -q` → `558 passed, 23 skipped` (up from 542; 16 new tests
+  covering the new shape, `format_bytes`, and the guard against "before"
+  silently becoming "after conversion")
+- `uv run python scripts/make_fixtures.py --check` → `OK: 22 files reproduced
+  byte-for-byte`
+
+**Two Phase 1/2 tests changed, both deliberately:**
+
+1. `test_a_binary_source_says_its_before_count_is_not_a_token_saving` asserted
+   the warning that has been removed. Replaced with three tests asserting the
+   new behaviour, including one that asserts a document conversion carries **no
+   routine warning at all** — the warning budget is the point.
+2. `test_a_source_with_no_before_text_says_so_instead_of_guessing` asserted a
+   zero-character `source` row for an unfetchable URL. That placeholder row is
+   gone: one rule now covers both ways a source can lack a comparable before.
+   The warning still fires and `tokens_before` is still `None`.
+
+### 2026-08-22 — CI cannot schedule runners, and it is not our YAML
+
+Four consecutive runs — 25, 26, 27 and 28, across both `claude/phase-2-followups`
+and `claude/tokenmill-phase-2-djouak`, on commits `38c8c52` and `e65337b` — failed
+within seconds of starting. Run 24 on `Main` had succeeded 2h20m earlier on
+`0a74c8f`.
+
+The failure signature is identical in every job of every run:
+
+```
+"runner_id": 0, "runner_name": "", "runner_group_id": 0,
+"status": "completed", "conclusion": "failure",
+"started_at": "2026-08-22T11:14:55Z", "completed_at": "2026-08-22T11:14:57Z"
+```
+
+No `steps` array at all, no logs (the logs endpoint returns 404), and empty
+check-run output. All three runner labels fail the same way — `ubuntu-latest`,
+`macos-latest` and `windows-latest` — which rules out a single image being
+broken.
+
+**This is not the workflow file, and it is worth being precise about why**, since
+`ci.yml` *was* modified on this branch and that is the obvious suspect:
+
+- All 24 job records were created with their correct expanded names
+  (`Test (py3.12 / windows-latest)`, `Clean core install (py3.11 / macos-latest)`
+  and so on), so the YAML parsed and the matrices expanded.
+- The `Docling (weekly and on demand)` job evaluated its `if:` condition and
+  concluded `skipped`, correctly, on a `push` event. Expression evaluation
+  therefore worked too.
+- A malformed workflow fails at the *run* level with a parse error, not with 23
+  individually-created jobs that each fail to acquire a runner.
+
+The most likely cause is exhausted Actions minutes or a spending limit — this
+repository has run ~28 workflows of 24 jobs each in three days, and macOS bills
+at 10x and Windows at 2x. **Only the owner can check that**; these sessions
+cannot call `run_workflow` or `rerun_failed_jobs` (both return 403 `Resource not
+accessible by integration`).
+
+**What is verified locally on `e65337b`**, from a venv synced with `--extra dev
+--extra fixtures --extra documents`:
+
+- `uv run pytest -q` → `558 passed, 23 skipped in 6.01s`
+- `uv run ruff check .` → `All checks passed!`
+- `uv run mypy` → `Success: no issues found in 56 source files`
+
+That is local green, and it is **not** the same claim as CI green. Nothing in
+this session has been proven on Windows, on macOS, on Python 3.12 or 3.13, or
+against real tokenizer vocabularies, because the jobs that prove those things
+never started. Recorded as unverified accordingly.
+
+The one change made in response was to `ci.yml` itself: the weekly cron now runs
+`docling` and `clean-core-install` only, with the other six jobs gated off the
+schedule event. That is better design on its own terms — re-running nine
+OS/Python cells weekly against a frozen lockfile proves nothing a push has not
+already proved — and it also stops the schedule from making a minutes problem
+worse. It is not a fix for this failure and is not offered as one.
+
+### 2026-08-22 — Handover prompt for Phases 3 and 4
+
+`docs/prompts/PHASE_3_AND_4.md` is the assignment for the next session: both
+phases in one go, then a full re-evaluation of the app, stopping before Phase 5.
+
+It carries the environment facts re-probed today rather than assumed, because
+they have changed between phases before:
+
+| Host / tool | Result |
+|---|---|
+| `pypi.org` | 200 |
+| `registry.npmjs.org` | 200 — repomix is genuinely runnable here |
+| `crates.io` API | 403 — code2prompt likely not installable from source |
+| `example.com` | denied — no live-URL testing in this sandbox |
+| `openaipublic.blob.core.windows.net` | denied |
+| `huggingface.co` | denied |
+| Node | v22.22.2 |
+| npx | 10.9.7 |
+| cargo | 1.94.1 |
+
+And the traps that will otherwise be rediscovered the expensive way:
+
+1. Phase 3's ~70–90% boilerplate-reduction criterion needs **real model
+   tokens**, and both tokenizer hosts are denied here. The `bytes` tokenizer
+   measures UTF-8 bytes, not tokens; a byte percentage is a different claim.
+   Only the CI `tokenizers` job can produce the publishable figure.
+2. Making trafilatura outrank `markdownify_html` for `html` breaks
+   `tests/integration/test_reference_backends.py`, which asserts the current
+   backend by id, `strips_boilerplate is False`, and that every marker in
+   `boilerplate_markers_must_be_absent` **survives**. Those assertions get
+   pinned to `--backend markdownify_html` and mirrored for trafilatura, not
+   loosened.
+3. Phase 4 needs subprocess adapters, but `SubprocessConverter` is a Phase 7
+   deliverable. Build the minimum Phase 4 needs, sited where Phase 7 can absorb
+   it, and record what Phase 7 still owes.
+4. `docs/BENCHMARKS.md` does not exist, yet Phase 3's exit gate names it while
+   `README.md` calls it Phase 10. Ruling: create it now, small and partial.
+5. `docs/LICENSES.md` is a dead link from `CONTRIBUTING.md`.
+6. CI could not schedule runners as of 11:15 UTC today — re-check before
+   relying on it.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned
@@ -1260,6 +1417,57 @@ to overstate:
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
+
+### Phase 2 follow-ups — the owner's answers (2026-08-22)
+
+Phase 2 shipped and merged into `Main` (PR #4). Its three open questions are now
+closed; these are the decisions and what changed.
+
+- **A binary document gets no before-count at all.** Open question 2, closed by
+  the owner accepting the recommendation. The interim behaviour — print
+  `68,190 -> 3,494` with a warning saying it is not a saving — was honest and
+  still wrong, for a reason worth recording: it spent the warning budget. The
+  warnings that matter here (an empty document from a scanned PDF, interleaved
+  columns, a missing `exiftool`) are ones a user must act on, and a disclaimer
+  on *every* document conversion trains people to skim the block they live in.
+  A number that needs an apology under it should not be the headline.
+
+  So the report's **shape** now depends on the source: `tokens: 3,494` plus
+  `size: 37.4 KiB in, no comparable before` for a binary document, and the
+  unchanged `tokens: 12,481 -> 6,802 (-45.5%)` where both sides really are text
+  a model could be given. Changing the shape is the point — one number instead
+  of two is visibly different, whereas keeping the two-number shape with a
+  quietly different meaning would be the real trap.
+
+  Implementation note that is load-bearing: there is **no `source` stage** for a
+  binary input rather than an unmeasured one. Had the stage merely lacked a
+  token count, `tokens_before` would have fallen through to the first *measured*
+  stage — the converter's own output — and "before" would have come to mean
+  "after conversion". `Pipeline.run` guards against that explicitly.
+
+  The comparison that is meaningful for a document is between backends on the
+  same file. That is Phase 5's `compare`.
+
+- **The `docling` CI job now runs weekly as well as on demand.** Open question 1.
+  Recommended over granting this session's token `actions: write`: that would
+  have been a standing permission increase to solve a once-per-phase need, and a
+  schedule solves the recurring version instead. `RESEARCH.md`'s own closing
+  caveat is that this ecosystem moves fast and versions and licences must be
+  re-verified; `docs/BACKENDS.md`'s premise is that every claim is asserted by a
+  test. A backend nobody exercises is a claim decaying. Sunday 04:00 UTC.
+
+  Note that `schedule` fires on the **default branch only**, so work on a
+  feature branch still needs a manual dispatch against that branch. And the rest
+  of the matrix runs weekly too, which is wanted: `clean-core-install` uses
+  plain `pip install .` with no lockfile, so the weekly run is the one thing
+  that catches a new release of a core dependency breaking a fresh install.
+
+- **The default branch stays `Main`, with the capital.** Open question 3, the
+  owner's call. The two URLs written lowercase now say `Main`:
+  `pyproject.toml`'s `Changelog` (which becomes package metadata on PyPI at
+  Phase 11) and `CHANGELOG.md`'s `[Unreleased]` link. CI's push filter keeps
+  both spellings — GitHub matches them case-sensitively and the cost of the
+  extra entry is nothing.
 
 ### Phase 2 — document backends (2026-08-21)
 
@@ -1627,107 +1835,34 @@ to overstate:
 
 ## Open questions for the owner
 
-Two things need you. Both are recorded because acting on either alone would
-change something visible without your say-so.
+Phase 2's three questions were answered on 2026-08-22 and the answers are
+implemented; see Decisions for each, and the table below. One new question has
+opened since, and it needs owner-level access rather than a decision.
 
-1. **Run the `docling` CI job so its PDF path stops being unverified.** The job
-   exists on this branch and runs only on `workflow_dispatch`, so it costs
-   nothing on a normal push. I cannot trigger it: the API returns
-   `403 Resource not accessible by integration`, because this session's GitHub
-   token has no `actions: write`.
+**1. CI cannot schedule runners — please check the Actions billing state.**
+Runs 25 through 28 all failed within seconds, every job at `runner_id: 0`, no
+steps, no logs, across all three runner labels. Run 24 on `Main` succeeded 2h20m
+earlier. The evidence that this is not our workflow file is in the verification
+log: all 24 job records were created with correct expanded names and the
+`docling` job correctly evaluated its `if:` to `skipped`, so the YAML parsed and
+expressions ran. The likeliest cause is exhausted Actions minutes or a spending
+limit — ~28 runs × 24 jobs in three days, with macOS billing at 10x and Windows
+at 2x. These sessions cannot re-run jobs (403 `Resource not accessible by
+integration`), so only you can see the billing page.
 
-   From the Actions tab: **CI → Run workflow → branch
-   `claude/phase-2-document-backends`**. It installs the `docling` extra with
-   CPU-only torch, runs the Office tests (which pass here already) and then the
-   `heavy`-marked PDF tests, which are the ones that have never run anywhere.
+Until it is resolved, nothing is proven on Windows, macOS, Python 3.12/3.13, or
+against real tokenizer vocabularies. Local green on `e65337b` is recorded and is
+not the same claim.
 
-   Whatever it shows, tell me and I will record it. If it fails, that is a real
-   finding about the adapter and I would rather have it than the current
-   "implemented, unverified". Either grant the token `actions: write` for future
-   phases, or keep dispatching it by hand — Phase 9's GPU backends will have the
-   same shape of problem.
+Two things remain *pending* rather than open, in the sense that they need an
+action rather than a decision:
 
-2. **What should the "before" count be for a binary document?** Converting a
-   `.docx` currently reports `68,190 -> 3,494`. The first number is the zip
-   archive's own bytes decoded as text. It is a true fact about the file and it
-   is not a token count of anything a model would ever be shown, so the
-   percentage between them is not a saving. Right now the pipeline prints it and
-   warns that it is not a saving, which is honest but awkward — the headline
-   number on every document conversion carries a disclaimer.
-
-   The options, as I see them:
-
-   - **(a) Keep it, keep the warning.** What ships today. Honest, slightly ugly,
-     and a user who ignores warnings gets a misleading percentage.
-   - **(b) Report no "before" for binary sources.** `tokens: n/a -> 3,494`.
-     Cannot mislead; also means document conversion — most of the product —
-     shows no saving at all.
-   - **(c) Make "before" mean the converter's raw output** and "after" the
-     post-processed text, for binary sources only. Measures something real (what
-     post-processing saved) but means the headline pair means different things
-     for different inputs, which is its own trap.
-
-   I lean towards (a) until Phase 5, when per-stage reporting and the `compare`
-   command give a better place to put this, and Phase 10's benchmark gives the
-   fidelity axis that makes any of these numbers meaningful. But this is the
-   product's headline number and the choice is yours.
-
-3. **The default branch is `Main`, with a capital M — is that deliberate?**
-   You created it and merged Phase 1 into it via PR #1, which closes the Phase 1
-   question. But it caught the second half of the bug Phase 1 found: CI's push
-   filter named `main`, GitHub matches those patterns **case-sensitively**, so a
-   push to the default branch would not have triggered a single job. I have
-   added `Main` to the filter so it works either way.
-
-   If the capital was accidental, renaming it to `main` is the tidier fix —
-   `pyproject.toml`'s `Changelog` URL and `CHANGELOG.md`'s `[Unreleased]` link
-   both point at `/blob/main/` and `/commits/main`, the ecosystem convention is
-   lowercase, and the duplicated filter entry goes away. If it was deliberate,
-   say so and I will make the URLs match instead. Either way it needs
-   repository-admin access I do not have.
-
-### Closed in Phase 2
-
-4. ~~**Create `main` and make it the default branch.**~~ **Done by the owner.**
-   Phase 1 is merged into `Main` via PR #1, and this branch is cut from that
-   merge (`5d0b9e7`). See question 3 above for the one loose end.
-
-<details>
-<summary>The original text of that question, kept for the record</summary>
-
-1. **Create `main` and make it the default branch.** The repository still has no
-   default branch — its only branches are the three `claude/**` ones, so "Phase 0
-   is complete and merged" is not true in git terms; there is nothing to have
-   merged into. This is why CI had never run before today, and it will keep
-   causing trouble: pull requests have no base, `CHANGELOG.md`'s `[Unreleased]`
-   link points at `/commits/main` and 404s, a CI status badge has no branch to
-   report on, and the Phase 11 release workflow will assume it exists.
-
-   From a clone:
-
-   ```bash
-   git fetch origin claude/phase-1-core-architecture
-   git branch main origin/claude/phase-1-core-architecture
-   git push origin main
-   ```
-
-   Then **Settings → General → Default branch** → `main`. Phases 0 and 1 are
-   already in that history, so nothing needs merging retroactively, and the
-   branch is green on all 23 CI jobs.
-
-   I have not done this myself: creating a repository's default branch changes
-   how the project looks to everyone who visits it, and the settings change is
-   not something I can make.
-
-</details>
-
-5. **Optional, and still not blocking: allow-list the tokenizer and model
-   hosts** for these sessions. Token counting is now verified — but in CI, one push at a
-   time. Every future phase that touches measurement gets its feedback a
-   round-trip later than it could. The alternative, if allow-listing is
-   unattractive, is a warmed tiktoken cache (four files, hash-checked by
-   tiktoken so a bad copy is refused); the exact command is in the README under
-   "Working offline". Neither is urgent. Phase 2 does not depend on it.
+- **Docling's PDF path is still unverified.** The weekly job will cover it from
+  the next Sunday run on `Main` — assuming runners are available by then. Until
+  one has run, the honest status is unchanged: implemented, its failure path
+  observed here, its success path never executed anywhere.
+- **A one-off dispatch would close it sooner.** Actions → CI → Run workflow.
+  Tell me what it shows and I will record it.
 
 ### Closed
 
@@ -1740,3 +1875,6 @@ change something visible without your say-so.
 | Phase 1 #3 | Should the `bytes` tokenizer ship? | Closed — yes, with the fencing it already has |
 | Phase 1 #4 | Branch naming | Closed — same as Phase 0 #3 |
 | Phase 1 #1 | Create `main` and make it the default branch | Closed — done by the owner; `Main` exists and Phase 1 is merged into it |
+| Phase 2 #1 | Docling's PDF path is unverified and I cannot dispatch the job | Closed — the job now runs weekly on `Main` as well as on demand, which needs no new token scope |
+| Phase 2 #2 | What should the "before" count be for a binary document? | Closed — there is none. The headline is the output's cost; the input is reported as a size |
+| Phase 2 #3 | Is the default branch's capital `Main` deliberate? | Closed — yes. The two lowercase URLs now match, and CI accepts both spellings |

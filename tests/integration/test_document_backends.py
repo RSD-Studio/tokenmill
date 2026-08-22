@@ -690,20 +690,45 @@ class TestAutoSelectionOnTheCorpus:
         assert "pdfplumber" in excinfo.value.hint
         assert "pypdf" in excinfo.value.hint
 
-    def test_a_binary_source_says_its_before_count_is_not_a_token_saving(
+    def test_a_binary_source_reports_its_size_and_no_before_count(
         self, fixture_dir: Path, pipeline: Pipeline
     ) -> None:
-        """The bytes of a .docx are not text any model would ever be given."""
-        result = pipeline.run(Source.from_path(fixture_dir / "report.docx"), OFFLINE)
+        """The bytes of a .docx are not text any model would ever be given.
 
-        assert any("not a token saving" in warning for warning in result.warnings)
+        So there is no before-count to compare the output against, and the
+        headline is what the output costs. The file's size is reported as a
+        size.
+        """
+        path = fixture_dir / "report.docx"
+        result = pipeline.run(Source.from_path(path), OFFLINE)
 
-    def test_a_text_source_carries_no_such_warning(
+        assert result.tokens_before is None
+        assert result.tokens_after is not None
+        assert result.source_bytes == path.stat().st_size
+        assert result.reduction_ratio is None
+
+    def test_a_text_source_keeps_its_before_and_after(
         self, fixture_dir: Path, pipeline: Pipeline
     ) -> None:
+        """Both sides are text a model could be given, so the delta still means something."""
         result = pipeline.run(Source.from_path(fixture_dir / "boilerplate.html"), OFFLINE)
 
-        assert not any("not a token saving" in warning for warning in result.warnings)
+        assert result.tokens_before is not None
+        assert result.tokens_after is not None
+        assert result.reduction_ratio is not None
+
+    def test_no_document_conversion_carries_a_routine_disclaimer(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        """The warning budget belongs to the warnings a user must not ignore.
+
+        Empty output, interleaved columns, a missing binary — those matter. A
+        disclaimer attached to every single document conversion would train
+        people to skim past the block they all share.
+        """
+        result = pipeline.run(Source.from_path(fixture_dir / "report.docx"), OFFLINE)
+
+        assert result.warnings == ()
 
 
 class TestOfflineGuarantee:

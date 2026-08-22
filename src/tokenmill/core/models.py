@@ -596,7 +596,11 @@ class ConversionResult:
         source_name: The display name of the input.
         backend_id: The backend that produced :attr:`text`.
         duration_s: Wall-clock seconds for the whole pipeline.
-        tokens_before: Tokens in the raw input, or ``None`` if unmeasured.
+        tokens_before: Tokens in the raw input, or ``None`` when there is no
+            comparable one. A binary document has none: nobody would hand a
+            model the bytes of a ``.docx``, so counting them produces a number
+            that cannot be subtracted from anything. Use :attr:`source_bytes`
+            for the input's size instead.
         tokens_after: Tokens in :attr:`text`, or ``None`` if unmeasured.
         stages: Per-stage sizes, in execution order.
         post_processors: The post-processor ids that ran, in order.
@@ -605,6 +609,9 @@ class ConversionResult:
         attempts: Every backend tried, in order, including the one that
             succeeded. Empty for a result assembled by a backend directly
             rather than by the pipeline.
+        source_bytes: The input's size in bytes, when it was knowable. Recorded
+            for every source the pipeline could size, and the only honest
+            "before" figure a binary document has — see :attr:`tokens_before`.
     """
 
     text: str
@@ -619,6 +626,7 @@ class ConversionResult:
     warnings: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=lambda: _EMPTY_METADATA)
     attempts: tuple[BackendAttempt, ...] = ()
+    source_bytes: int | None = None
 
     @property
     def token_delta(self) -> int | None:

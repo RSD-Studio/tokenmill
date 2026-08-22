@@ -13,7 +13,13 @@ from collections.abc import Sequence
 
 from tokenmill.core.models import BackendAttempt, ConversionResult, StageCount, TokenCount
 
-__all__ = ["format_result_report", "format_stage_table", "format_table", "format_tokens"]
+__all__ = [
+    "format_bytes",
+    "format_result_report",
+    "format_stage_table",
+    "format_table",
+    "format_tokens",
+]
 
 
 def format_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
@@ -64,6 +70,25 @@ def format_tokens(count: TokenCount | None) -> str:
     if count is None:
         return "n/a"
     return f"{count.value:,}"
+
+
+def format_bytes(count: int) -> str:
+    """Render a byte count in the largest unit that keeps it readable.
+
+    Args:
+        count: The number of bytes.
+
+    Returns:
+        A short string such as ``512 B``, ``37.2 KiB`` or ``2.4 MiB``. Binary
+        units, because this describes a file on disk rather than a transfer
+        rate, and every file manager the user has open agrees.
+    """
+    size = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:,.0f} {unit}" if unit == "B" else f"{size:,.1f} {unit}"
+        size /= 1024
+    raise AssertionError  # pragma: no cover - the loop always returns
 
 
 def format_stage_table(stages: Sequence[StageCount]) -> str:
@@ -192,10 +217,19 @@ def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
 
     before, after = result.tokens_before, result.tokens_after
     if before is not None and after is not None:
+        # Both sides are text a model could be given, so the delta means
+        # something. This is the web and plain-text case.
         lines.append(
             f"tokens:   {before.value:,} -> {after.value:,}  "
             f"({_percent_change(before.value, after.value)}, {before.tokenizer_id})"
         )
+    elif after is not None:
+        # A binary document. There is no comparable "before" — see
+        # tokenmill.core.pipeline — so the honest headline is what the output
+        # costs, with the input reported as the size it is.
+        lines.append(f"tokens:   {after.value:,}  ({after.tokenizer_id})")
+        if result.source_bytes is not None:
+            lines.append(f"size:     {format_bytes(result.source_bytes)} in, no comparable before")
     else:
         lines.append("tokens:   not measured — see warnings below")
 

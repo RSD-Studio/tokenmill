@@ -114,7 +114,9 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
     """Render a conversion result as JSON-serialisable data.
 
     Token counts are ``null`` rather than absent when nothing could be measured,
-    so a consumer can tell "not measured" from "measured as zero".
+    so a consumer can tell "not measured" from "measured as zero". A binary
+    document reports ``tokens_before: null`` and a ``source_bytes`` figure: it
+    has no comparable before-count, only a file size.
 
     Args:
         result: The conversion to render.
@@ -129,6 +131,7 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
         "format": result.output_format.value,
         "duration_s": round(result.duration_s, 6),
         "tokenizer": (result.tokens_after.tokenizer_id if result.tokens_after else None),
+        "source_bytes": result.source_bytes,
         "tokens_before": result.tokens_before.value if result.tokens_before else None,
         "tokens_after": result.tokens_after.value if result.tokens_after else None,
         "token_delta": result.token_delta,

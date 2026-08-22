@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from tokenmill.cli.format import _percent_change, format_table, format_tokens
+from tokenmill.cli.format import _percent_change, format_bytes, format_table, format_tokens
 from tokenmill.cli.main import app
 from tokenmill.core.models import TokenCount
 
@@ -217,6 +217,57 @@ class TestFallbackAtTheCommandLine:
         if result.exit_code != 0:
             pytest.skip("no document backend is installed to fall back to")
         assert "attempts: markdownify_html (failed) ->" in result.output
+
+
+class TestTheHeadlineForABinaryDocument:
+    """A document conversion reports what the output costs, not a fake saving."""
+
+    def test_it_reports_the_output_cost_and_the_input_size(self, fixture_dir: Path) -> None:
+        result = runner.invoke(app, ["convert", str(fixture_dir / "report.docx"), *OFFLINE])
+
+        assert result.exit_code == 0
+        assert "no comparable before" in result.output
+        assert "->" not in result.output.split("tokens:")[1].splitlines()[0]
+
+    def test_it_prints_no_percentage(self, fixture_dir: Path) -> None:
+        """A percentage here would be between a zip archive and its text. Meaningless."""
+        result = runner.invoke(app, ["convert", str(fixture_dir / "report.docx"), *OFFLINE])
+        headline = result.output.split("tokens:")[1].splitlines()[0]
+
+        assert "%" not in headline
+
+    def test_a_text_source_still_gets_its_before_and_after(self, page: Path) -> None:
+        result = runner.invoke(app, ["convert", str(page), *OFFLINE])
+        headline = result.output.split("tokens:")[1].splitlines()[0]
+
+        assert "->" in headline
+        assert "%" in headline
+
+    def test_the_json_carries_the_size_and_a_null_before(self, fixture_dir: Path) -> None:
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "report.docx"), *OFFLINE, "--json"]
+        )
+        payload = json.loads(result.output)
+
+        assert payload["tokens_before"] is None
+        assert payload["source_bytes"] == (fixture_dir / "report.docx").stat().st_size
+        assert payload["tokens_after"] is not None
+
+
+class TestFormatBytes:
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [
+            (0, "0 B"),
+            (512, "512 B"),
+            (1024, "1.0 KiB"),
+            (38_297, "37.4 KiB"),
+            (5 * 1024 * 1024, "5.0 MiB"),
+            (3 * 1024**3, "3.0 GiB"),
+        ],
+    )
+    def test_it_picks_a_readable_unit(self, count: int, expected: str) -> None:
+        assert format_bytes(count) == expected
 
 
 class TestBackends:
