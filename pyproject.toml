@@ -150,7 +150,7 @@ fixtures = [
 Homepage = "https://github.com/RSD-Studio/tokenmill"
 Repository = "https://github.com/RSD-Studio/tokenmill"
 Issues = "https://github.com/RSD-Studio/tokenmill/issues"
-Changelog = "https://github.com/RSD-Studio/tokenmill/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/RSD-Studio/tokenmill/blob/Main/CHANGELOG.md"
 
 # ---------------------------------------------------------------------------
 # Plugin registration.
