@@ -292,13 +292,96 @@ class TestErrorHandling:
     def test_a_source_with_no_before_text_says_so_instead_of_guessing(
         self, tokenizers: TokenizerRegistry
     ) -> None:
+        """No readable input means no source stage at all, and a warning.
+
+        Phase 2 dropped the zero-character placeholder row this used to emit.
+        One rule now covers both ways a source can lack a comparable before —
+        unreadable, and binary — and that rule is "there is no source stage".
+        A row reporting zero characters communicated nothing the absent
+        before-count did not already say.
+        """
         pipeline = build(EchoConverter(output="x", input_formats=("url",)), tokenizers)
 
         result = pipeline.run(Source.from_url("https://example.com"), OPTS)
 
-        assert result.stages[0].characters == 0
-        assert result.stages[0].tokens is None
+        assert result.stages[0].stage != SOURCE_STAGE
+        assert result.tokens_before is None
+        assert result.source_bytes is None
         assert any("no readable source text" in w for w in result.warnings)
+
+
+class TestABinaryDocumentHasNoComparableBefore:
+    """Counting the bytes of a .docx decoded as text is not a measurement.
+
+    Nobody hands a model the bytes of a zip archive, so that figure cannot be
+    subtracted from the output's. The pipeline reports no before-count and the
+    file's size instead. The delta keeps its meaning where both sides really
+    are text a model could be given.
+    """
+
+    def test_a_binary_source_reports_no_before_count(
+        self, tokenizers: TokenizerRegistry, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "thing.bin"
+        path.write_bytes(b"\xff\xfe\x00binary\x00payload")
+        pipeline = build(EchoConverter(output="converted", input_formats=("bin",)), tokenizers)
+
+        result = pipeline.run(Source.from_path(path), OPTS)
+
+        assert result.tokens_before is None
+        assert result.tokens_after is not None
+        assert result.token_delta is None
+        assert result.reduction_ratio is None
+
+    def test_it_records_the_size_instead(
+        self, tokenizers: TokenizerRegistry, tmp_path: Path
+    ) -> None:
+        payload = b"\xff\xfe\x00binary\x00payload"
+        path = tmp_path / "thing.bin"
+        path.write_bytes(payload)
+        pipeline = build(EchoConverter(output="converted", input_formats=("bin",)), tokenizers)
+
+        result = pipeline.run(Source.from_path(path), OPTS)
+
+        assert result.source_bytes == len(payload)
+
+    def test_there_is_no_source_stage_to_mistake_for_one(
+        self, tokenizers: TokenizerRegistry, tmp_path: Path
+    ) -> None:
+        """The trap this avoids: `before` silently becoming `after conversion`."""
+        path = tmp_path / "thing.bin"
+        path.write_bytes(b"\xff\xfe\x00binary")
+        pipeline = build(EchoConverter(output="converted", input_formats=("bin",)), tokenizers)
+
+        result = pipeline.run(Source.from_path(path), OPTS)
+
+        assert SOURCE_STAGE not in [stage.stage for stage in result.stages]
+        assert result.stages[0].stage == CONVERT_STAGE
+
+    def test_it_does_not_warn_about_it(self, tokenizers: TokenizerRegistry, tmp_path: Path) -> None:
+        """A disclaimer on every document conversion would devalue the real warnings."""
+        path = tmp_path / "thing.bin"
+        path.write_bytes(b"\xff\xfe\x00binary")
+        pipeline = build(EchoConverter(output="converted", input_formats=("bin",)), tokenizers)
+
+        result = pipeline.run(Source.from_path(path), OPTS)
+
+        assert result.warnings == ()
+
+    def test_a_text_source_keeps_its_before_and_after(
+        self, tokenizers: TokenizerRegistry, tmp_path: Path
+    ) -> None:
+        """The delta is untouched where it means something."""
+        path = tmp_path / "thing.txt"
+        path.write_text("the source text", encoding="utf-8")
+        pipeline = build(EchoConverter(output="short", input_formats=("txt",)), tokenizers)
+
+        result = pipeline.run(Source.from_path(path), OPTS)
+
+        assert result.tokens_before is not None
+        assert result.tokens_after is not None
+        assert result.stages[0].stage == SOURCE_STAGE
+        assert result.source_bytes == len("the source text")
 
 
 class TestProvenance:

@@ -36,6 +36,20 @@ succeeds. Two rules keep that from becoming a way to hide failures:
   came from the third choice would attribute a measurement to the wrong tool.
 * **An explicit ``--backend`` never falls back.** The chain is one long, and a
   failure is an error.
+
+**A binary document has no "before".** Converting a ``.docx`` used to report
+``68,190 -> 3,494``, where the first figure was the zip archive's own bytes
+decoded as text. Nobody would ever hand a model the bytes of a ``.docx``, so
+that number cannot be subtracted from anything, and a percentage between the two
+is not a saving. The pipeline now reports no ``tokens_before`` for such a source
+and records :attr:`~tokenmill.core.models.ConversionResult.source_bytes`
+instead, so the honest figure — how much the *output* costs — is the headline
+and the input's size is reported as a size.
+
+The comparison that is meaningful for a document is between *backends* on the
+same file, and that is what Phase 5's ``compare`` command is for. The
+before/after pair keeps its full meaning where both sides really are text a
+model could be given: HTML to Markdown in Phase 3, and compression in Phase 6.
 """
 
 from __future__ import annotations
@@ -127,7 +141,8 @@ class Pipeline:
         result, attempts = self._convert_with_fallback(source, opts, candidates)
         warnings = [*_fallback_warnings(attempts), *result.warnings]
 
-        stages: list[StageCount] = [self._source_stage(source, meter, warnings)]
+        source_stage, source_bytes = self._source_stage(source, meter, warnings)
+        stages: list[StageCount] = [source_stage] if source_stage is not None else []
         stages.append(_measure(CONVERT_STAGE, result.text, meter))
 
         text = result.text
@@ -145,12 +160,16 @@ class Pipeline:
                 f"token counting unavailable ({meter.failure}); character counts are exact"
             )
 
-        # before/after come from the first and last stages that were actually
-        # counted, so a partially-measured run still reports a comparable pair
-        # rather than a number measured against nothing.
+        # `after` is the last stage that was actually counted. `before` is the
+        # first — but *only* when there is a source stage to be first. A binary
+        # document has none, and falling through to the converter's own output
+        # would quietly redefine "before" as "after conversion", which is a
+        # worse lie than reporting nothing.
         measured = [stage for stage in stages if stage.tokens is not None]
-        tokens_before = measured[0].tokens if measured else None
         tokens_after = measured[-1].tokens if measured else None
+        tokens_before = None
+        if source_stage is not None and measured and measured[0] is source_stage:
+            tokens_before = source_stage.tokens
 
         return replace(
             result,
@@ -162,6 +181,7 @@ class Pipeline:
             post_processors=tuple(p.id for p in chain),
             warnings=tuple(warnings),
             attempts=attempts,
+            source_bytes=source_bytes,
         )
 
     def _convert_with_fallback(
@@ -239,20 +259,28 @@ class Pipeline:
 
     def _source_stage(
         self, source: Source, meter: TokenMeter | None, warnings: list[str]
-    ) -> StageCount:
-        """Measure the untouched input.
+    ) -> tuple[StageCount | None, int | None]:
+        """Measure the untouched input, when measuring it means anything.
 
-        A source with no local text — a repository directory, or a URL that has
-        not been fetched — has no meaningful "before" count. That is recorded as
-        zero characters and no tokens rather than being guessed at.
+        Three cases, and the difference between them is the whole point:
+
+        * **Text.** HTML, Markdown, a ``.txt``. Measured normally; its count is
+          a real "before" that the output can be compared against.
+        * **A binary document.** A PDF, or an OOXML zip. Its bytes do not decode
+          as text, and counting the mojibake they decode to is arithmetically
+          fine and semantically empty. There is **no source stage** and no
+          before-count — only the file's size, which is reported as a size.
+        * **Nothing readable.** A repository directory, or a URL that has not
+          been fetched. No stage, no size, and a warning saying so.
 
         Args:
             source: The input to measure.
             meter: The meter, or ``None`` when no tokenizer resolved.
-            warnings: Collects a warning if the source cannot be read.
+            warnings: Collects a warning if the source cannot be read at all.
 
         Returns:
-            The source stage's measurements.
+            The source stage and the input's size in bytes. Either may be
+            ``None``; a ``None`` stage means there is no comparable before.
         """
         try:
             data = source.read_bytes()
@@ -261,26 +289,19 @@ class Pipeline:
                 f"{source.name} has no readable source text, so there is no before-count "
                 f"to compare against"
             )
-            return StageCount(stage=SOURCE_STAGE, characters=0, tokens=None)
+            return None, None
 
         try:
             raw = data.decode("utf-8")
         except UnicodeDecodeError:
-            # A binary document — a PDF, or an OOXML zip. Its bytes decode to
-            # mojibake, and counting that is arithmetically fine and
-            # semantically useless: nobody would ever hand a model the bytes of
-            # a .docx. The count stays, because it is a true fact about the
-            # file, but it must not be read as "tokens this document used to
-            # cost". Phase 3 introduces the comparison that is meaningful —
-            # raw HTML against extracted Markdown, where both sides really are
-            # text a model could be given.
-            raw = data.decode("utf-8", errors="replace")
-            warnings.append(
-                f"{source.name} is a binary format, so the before-count is its own bytes "
-                f"decoded as text, not text any model would be given. The after-count is "
-                f"real; the percentage between them is not a token saving"
-            )
-        return _measure(SOURCE_STAGE, raw, meter)
+            # Deliberately no warning. This is the normal, expected shape of a
+            # document conversion, and a disclaimer printed on every single one
+            # of them would train users to skim past the warning block — which
+            # is where "this PDF has no text layer" and "these columns are
+            # interleaved" live. Reporting no before-count says it better than
+            # a sentence apologising for one.
+            return None, len(data)
+        return _measure(SOURCE_STAGE, raw, meter), len(data)
 
 
 def _measure(stage: str, text: str, meter: TokenMeter | None) -> StageCount:
