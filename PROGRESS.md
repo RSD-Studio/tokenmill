@@ -11,12 +11,12 @@ _Last updated: 2026-08-22 by Claude Code_
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
-| 5 | Post-processing, formats, measurement depth | ⬜ Not started — **recommended to start**, see `docs/REVIEW_PHASES_0_4.md` | — |
-| 6 | Prompt compression (optional tier) | ⬜ Not started | — |
+| 5 | Post-processing, formats, measurement depth | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
+| 6 | Prompt compression (optional tier) | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
 | 8 | GUI (FastAPI + NiceGUI) | ⬜ Not started | — |
 | 9 | Heavy backends (GPU tier, install-docs-only) | ⬜ Not started | — |
-| 10 | Benchmark harness | ⬜ Not started | — |
+| 10 | Benchmark harness | ⬜ Not started — **the fidelity-scoring slice is pulled forward** ahead of Phase 5, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
@@ -1497,6 +1497,48 @@ its header and separator rows. Grepped for each of the manifest's
    a follow-up commit (`d0c9355`) rather than an amend, because `6120078` was
    already pushed and rewriting history hides the mistake instead of fixing it.
    This is exactly what "stage deliberately" is for and I did not do it.
+
+### 2026-08-22 — Handover prompt for Phases 5, 6 and the fidelity slice
+
+`docs/prompts/PHASE_5_6_AND_FIDELITY.md` is the assignment for the next session:
+one branch, three pieces of work, in a deliberately non-plan order.
+
+**The reordering, and the reason.** A slice of Phase 10 — fidelity scoring —
+comes *before* Phase 5. Phase 5's post-processors strip images, links, duplicate
+blocks and front matter, and reformat tables into other serialisations; every one
+of them can be measured as a win in tokens and a loss in fidelity, and this
+project has no fidelity metric at all. Building Phase 5 first means its defaults
+get argued rather than measured, and produces exactly the number
+`benchmarks/README.md` calls meaningless. The last session hit this for real: a
+−90.7% reduction achieved by losing all the content, caught by a human reading a
+table rather than by a metric. Build the instrument, then the things it measures.
+
+The slice is deliberately narrow — score one output against ground truth,
+component scores never a single opaque number, `None` where ground truth is
+absent. Phase 10 proper still owns the corpus × backends × formats matrix, wall
+time, peak memory and the committed result files.
+
+**Environment facts measured while writing it, so they are not rediscovered:**
+
+| Thing | Result |
+|---|---|
+| `pypi.org` | 200 |
+| `huggingface.co` | **denied** — so LLMLingua-2's model cannot be fetched here |
+| `openaipublic.blob.core.windows.net` | **denied** — still no real token counts locally |
+| `download.pytorch.org` | **denied** — the CPU-only wheel index is unreachable, so even the CUDA-avoidance workaround cannot be tested |
+| `pip install llmlingua` | **63 packages, 4,731 MB**, including the full CUDA stack |
+| `pip install chonkie` | 13 packages, 72 MB; MIT / `MIT OR Apache-2.0`; pulls numpy and httpx |
+| TOON on PyPI | both `toon` and `toon-format` resolve; which is which needs checking |
+
+**The consequence, stated plainly in the prompt:** Phase 6's acceptance criterion
+"achieves a measurable ratio on a long fixture context" is **not achievable in
+this environment**. The prompt asks the next session to pick between implementing
+it fully with the offline and error paths tested and the success path recorded as
+unverified — the treatment docling's PDF path got in Phase 2 — or implementing
+less and saying so, and forbids implying it was run.
+
+Also corrected in advance: the plan calls LLMLingua-2 "CPU-feasible", which is
+true of *running* it and not of installing it.
 
 ### 2026-08-22 — Full re-evaluation of Phases 0 through 4
 
