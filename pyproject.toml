@@ -141,6 +141,21 @@ web = ["readability-lxml>=0.8"]
 # actionable failure rather than pretending the probe covers it.
 crawl4ai = ["crawl4ai>=0.7"]
 
+# Phase 4 — repository ingestion.
+#
+# gitingest is MIT, verified from installed metadata (0.3.1). The plan's §1.6
+# lists it in `core`; it is in its own extra instead, and the measurement is why.
+# It requires starlette, pydantic, httpx and loguru — a web-service stack, from
+# the FastAPI app gitingest also ships — which is 14 packages and about 10 MB
+# added to every `pip install tokenmill` for a feature most users of a document
+# converter will never touch. Nothing here pulls a compiler or a system binary,
+# so it would not have breached rule 1; it would just have been weight nobody
+# asked for. Recorded as a deliberate departure from the plan in PROGRESS.md.
+#
+# Repomix (Node) and code2prompt (Rust) are not here and never will be: they are
+# invoked as child processes, and a Python extra cannot install either.
+repo = ["gitingest>=0.3"]
+
 # Phase 6 — prompt compression (llmlingua, transformers). CPU-feasible.
 compress = []
 
@@ -204,6 +219,9 @@ markdownify_html = "tokenmill.backends.web.markdownify_html:MarkdownifyHtmlConve
 trafilatura = "tokenmill.backends.web.trafilatura_web:TrafilaturaConverter"
 readability = "tokenmill.backends.web.readability_web:ReadabilityConverter"
 crawl4ai = "tokenmill.backends.web.crawl4ai_web:Crawl4AIConverter"
+gitingest = "tokenmill.backends.repo.gitingest_repo:GitingestConverter"
+repomix = "tokenmill.backends.repo.repomix_repo:RepomixConverter"
+code2prompt = "tokenmill.backends.repo.code2prompt_repo:Code2PromptConverter"
 pdfplumber = "tokenmill.backends.documents.pdfplumber_pdf:PdfplumberConverter"
 pypdf = "tokenmill.backends.documents.pypdf_pdf:PypdfConverter"
 markitdown = "tokenmill.backends.documents.markitdown_adapter:MarkItDownConverter"
@@ -348,6 +366,8 @@ module = [
     "trafilatura.*",
     "readability.*",
     "crawl4ai.*",
+    "gitingest.*",
+    "loguru.*",
 ]
 ignore_missing_imports = true
 

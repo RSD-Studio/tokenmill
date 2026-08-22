@@ -418,11 +418,42 @@ class TestBackends:
         assert payload["markdownify_html"]["available"] is True
         assert payload["plaintext"]["input_formats"]
 
-    def test_a_domain_with_no_backends_says_so_without_failing(self) -> None:
-        result = runner.invoke(app, ["backends", "--domain", "repo"])
+    def test_the_repo_domain_now_lists_the_repository_backends(self) -> None:
+        """Phase 4 filled a domain that used to be empty.
+
+        This test previously asserted that `--domain repo` matched nothing,
+        which was true until the repository backends existed. Repointed rather
+        than deleted: what it is really about is that `--domain` filters, and
+        that is still worth asserting.
+        """
+        result = runner.invoke(app, ["backends", "--domain", "repo", "--all"])
+
+        assert result.exit_code == 0
+        assert "gitingest" in result.stdout
+        assert "pdfplumber" not in result.stdout
+
+    def test_an_empty_listing_says_so_without_failing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every domain has a backend now, so the empty case needs an empty registry.
+
+        The branch is still reachable in the wild — a domain whose backends are
+        all uninstalled lists nothing without `--all` — so it keeps its test.
+        """
+        from tokenmill.core.registry import Registry
+
+        # An entry point group nothing registers under, so discovery succeeds
+        # and finds nothing. A bare `Registry()` would scan the real group.
+        monkeypatch.setattr(
+            "tokenmill.cli.main.default_registry",
+            lambda: Registry("tokenmill.backends.deliberately-absent"),
+        )
+
+        result = runner.invoke(app, ["backends"])
 
         assert result.exit_code == 0
         assert "no backends matched" in result.stderr
+        assert "--all" in result.stderr
 
 
 class TestTokens:
