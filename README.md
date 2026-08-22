@@ -223,7 +223,9 @@ its adapter was written, not taken from a README.
 | `trafilatura` | web | Apache-2.0 | core | **boilerplate extraction** — removes all six markers on our fixture | ✅ Phase 3 |
 | `readability` | web | Apache-2.0 | `web` | an independent second extraction | ✅ Phase 3 |
 | `crawl4ai` | web | Apache-2.0 | `crawl4ai` | **pages that need JavaScript** | ✅ Phase 3 — weaker extraction; 677 MB |
-| gitingest, repomix, code2prompt | repo | MIT | core, subprocess | repository ingestion | Phase 4 |
+| `gitingest` | repo | MIT | `repo` | **packing a repository** with no external runtime | ✅ Phase 4 |
+| `repomix` | repo | MIT | Node binary | the most complete pack of the three | ✅ Phase 4 — subprocess |
+| `code2prompt` | repo | MIT | Rust binary | speed: 103 ms against 564 and 1,082 | ✅ Phase 4 — subprocess |
 | llmlingua2 | compress | MIT | `compress` | prompt compression | Phase 6 |
 | pymupdf4llm, pandoc, libreoffice | documents | **AGPL-3.0 / GPL-2.0+ / MPL-2.0** | isolated | — | Phase 7 — **subprocess only, never imported** |
 | marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | install docs only | GPU tier | Phase 9 |
@@ -333,7 +335,7 @@ tokenmill itself is Apache-2.0.
 
 ```bash
 uv venv
-uv sync --extra dev --extra fixtures --extra documents
+uv sync --extra dev --extra fixtures --extra documents --extra web --extra repo
 
 uv run ruff check . && uv run ruff format --check .
 uv run mypy

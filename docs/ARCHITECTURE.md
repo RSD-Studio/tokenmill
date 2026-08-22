@@ -391,6 +391,101 @@ syntax itself."* Keeping them apart in the data model is how the CLI, the JSON
 output and the Phase 8 GUI all stay honest about it without each having to
 remember to be.
 
+## Repository packing: three engines, one set of promises
+
+`src/tokenmill/backends/repo/`.
+
+gitingest is a Python import, Repomix is a Node program and code2prompt is a
+Rust binary. What makes them one product rather than three CLIs behind a shared
+prefix is that everything a *user* controls is tokenmill's, not the tool's: the
+same globs, the same `.gitignore` respect, the same budget, the same
+per-directory breakdown, the same clone-and-clean-up for a remote URL. Each
+adapter translates those into its own tool's flags and parses the result back
+into per-file sections.
+
+### The one place a backend may consult a tokenizer
+
+The rule elsewhere is absolute: backends convert, the pipeline measures. A token
+budget bends it, and the line is worth stating precisely.
+
+**A backend may consult a tokenizer to obey a limit the user set. It may never
+report a count.** The budget is an *input constraint*, like `max_bytes` — it
+changes what the converter emits — and the pipeline still does every piece of
+reporting measurement. The conformance suite's assertion that a result carries
+no token counts applies to repository backends exactly as it does to the others,
+and a test checks it.
+
+The budget's unit follows the run's tokenizer, so `--token-budget 5000
+--tokenizer bytes` caps at 5,000 UTF-8 bytes and `--tokenizer o200k_base` caps at
+5,000 model tokens. That is what makes the flag honest on a machine that cannot
+download a vocabulary. When no tokenizer loads at all, the budget is **not
+silently ignored**: the conversion warns that it could not be applied and emits
+everything, because a cap that quietly did nothing is worse than no cap — the
+user believes the output is bounded.
+
+### The truncation strategy, and why the note degrades before the content
+
+Three rules. The preamble — the summary and the directory tree — is always kept,
+because it is the only thing telling a reader which files are missing. Files are
+kept in the order the tool emitted them, since each tool orders deliberately and
+re-sorting would substitute tokenmill's judgement for the one the user chose an
+engine for. And **a file is never partially included**: half a module is worse
+than none, because a model cannot tell the rest was cut and will reason happily
+about a class whose methods have vanished.
+
+The fourth rule is the one that took three attempts. The truncation note is part
+of the output, so it counts against the budget — but **a file that fits is never
+evicted to make room for a longer explanation of the files that did not.** The
+full table appears when it fits and a one-line note when it does not; the
+complete list is always in the result's metadata, so shortening the prose loses
+nothing.
+
+Both wrong versions are recorded in the code, because they are instructive. The
+first appended the note after computing the budget and emitted 1,482 bytes
+against a 1,200-byte cap — a cap exceeded by the explanation of the cap. The
+second dropped files to make room, and since each drop adds a row to the note it
+emptied the pack chasing a note that grew faster than the content shrank.
+
+### Parsing a third-party tool's output, and admitting when it fails
+
+Budgeting and the breakdown both need per-file structure, and none of the three
+tools offers one. So each adapter carries a regular expression for its own tool's
+file header, anchored to the start of a line so that a matching string *inside* a
+file cannot fake one.
+
+That is brittle by nature, and the design point is what happens when it breaks:
+**an unrecognised format produces no sections, and the adapter says so.**
+
+```
+warning:  code2prompt's Markdown format was not recognised, so the token budget
+and the per-directory breakdown could not be applied. The pack itself is
+complete and unmodified; this is a tokenmill parsing problem
+```
+
+The alternative — reporting a file count of zero — would read as an empty
+repository and would let a budget silently do nothing. This is not hypothetical:
+code2prompt's format was guessed from repomix's and was wrong, and that warning
+is what surfaced it in minutes.
+
+### Subprocess isolation before Phase 7 owns it
+
+`IsolationMode.SUBPROCESS` and `BackendFailed.stderr` have existed since Phase 1;
+the hardened `SubprocessConverter` is Phase 7. `tokenmill.backends._subprocess`
+is the minimum Phase 4 needs, sited one level above the tiers so Phase 7 can
+absorb it: PATH lookup, list arguments with `shell=False`, a timeout, captured
+output, and every failure mapped into the taxonomy.
+
+What it does **not** do is as important, and is listed in its docstring and in
+`PROGRESS.md`: no sandboxing, no binary allow-list, no version probing, no
+streaming. The allow-list is the one that matters for Phase 7's real job —
+enforcing that a copyleft tool is *actually* isolated needs a checked list of
+what may be invoked, not an adapter's declaration that it behaves.
+
+Note that these two backends run out of process because they are TypeScript and
+Rust, **not** because of their licences: both are MIT and could legally be
+imported if they were Python. That makes them useful practice for Phase 7, since
+getting the isolation wrong on them carries no licence risk.
+
 ## The pipeline
 
 `src/tokenmill/core/pipeline.py`.
@@ -606,7 +701,7 @@ Note that `warnings.catch_warnings` manipulates global state and is not
 thread-safe. Nothing runs conversions concurrently today; the Phase 8 batch
 runner will have to account for it, and `PROGRESS.md` records that.
 
-## What Phases 2 and 3 deliberately do not include
+## What Phases 2, 3 and 4 deliberately do not include
 
 Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
 
@@ -617,11 +712,10 @@ Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
   goes; reordering a page is a layout engine, not an adapter.
 
 - ~~**URL fetching.**~~ **Done in Phase 3**, in the pipeline — see above.
-- **Repository ingestion.** `SourceKind.REPO` exists; no backend claims it.
-  Phase 4.
-- **A shared `SubprocessConverter`.** `IsolationMode.SUBPROCESS`,
-  `LicenseTier.COPYLEFT` and `BackendFailed.stderr` all exist and are enforced,
-  but binary discovery, version probing and the sandboxing policy are Phase 7.
+- ~~**Repository ingestion.**~~ **Done in Phase 4** — see above.
+- **A hardened `SubprocessConverter`.** `tokenmill.backends._subprocess` is the
+  minimum Phase 4 needed. Binary discovery beyond `PATH`, version probing, an
+  allow-list and the sandboxing policy are Phase 7.
 - **Conditional or authenticated fetching.** No cookies, no headers beyond the
   user agent, no ETag or caching. A page behind a login is not fetchable, and
   saying so beats a half-implemented credential story.

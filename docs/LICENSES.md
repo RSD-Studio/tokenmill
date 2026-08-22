@@ -52,6 +52,16 @@ correction is recorded in `PROGRESS.md`.
 | `trafilatura` | 2.2.0 | Apache-2.0 | permissive | in-process |
 | `readability` | readability-lxml 0.8.4.1 | Apache-2.0 | permissive | in-process |
 | `crawl4ai` | 0.9.2 | Apache-2.0 | permissive | in-process |
+| `gitingest` | 0.3.1 | MIT | permissive | in-process |
+| `repomix` | 1.18.0 | MIT | permissive | **subprocess** |
+| `code2prompt` | 4.3.0 | MIT | permissive | **subprocess** |
+
+**`repomix` and `code2prompt` run out of process even though their licences do
+not require it.** MIT would permit importing them; they are subprocess backends
+because they are TypeScript and Rust, not because of their licences. Recorded
+because the isolation column would otherwise imply a licence constraint that is
+not there — and because it means Phase 7's enforcement work has two backends to
+practise on that carry no risk if it gets something wrong.
 
 `kreuzberg` is pinned `>=4.0,<5`. `RESEARCH.md` records that the successor
 "Xberg" v1 line moved to Elastic-2.0 while the v4 line stayed MIT, and a
@@ -95,7 +105,7 @@ make none. It does not restrict distributing tokenmill under Apache-2.0.
 
 ### `pathspec` — MPL-2.0
 
-Arrives via `gitingest` (Phase 4). Same reasoning as `certifi`. `tqdm`
+Arrives via `gitingest` in the `repo` extra. Same reasoning as `certifi`. `tqdm`
 (`MPL-2.0 AND MIT`) and `hypothesis` (MPL-2.0, development only) are the same
 case again.
 
@@ -128,6 +138,7 @@ Each of these was run, not assumed. The command is
 | 2026-08-21 | Full `docling` resolution | 122 | No GPL, no AGPL. `certifi` and `tqdm` MPL-2.0. |
 | 2026-08-22 | Full `crawl4ai` resolution | 94 | No GPL, no AGPL, no PyTorch. Apache-2.0 throughout the crawl4ai/Playwright core. |
 | 2026-08-22 | Dev environment: core + `documents` + `web` + `crawl4ai` + `dev` + `fixtures` | 154 | One flagged: `tld`, explained above. Everything else MIT, Apache-2.0, BSD, ISC, PSF or MPL. |
+| 2026-08-22 | Dev environment with the `repo` extra, without `crawl4ai` | 99 | Same single flag. gitingest's tree adds `starlette`, `pydantic`, `httpx`, `loguru` and `pathspec` — BSD-3-Clause, MIT, BSD-3-Clause, MIT and MPL-2.0. |
 
 ## What Phase 7 still owes this page
 

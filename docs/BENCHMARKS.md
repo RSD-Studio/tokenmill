@@ -139,6 +139,47 @@ The fidelity column is the point. A backend that flattened the table would score
 a *better* reduction while destroying the data that made the file worth
 converting.
 
+## Repository packing — `tests/fixtures/sample_repo`
+
+Nine tracked files across `src/`, `tests/`, `docs/`, plus a binary blob and a
+`.gitignore`d `secrets.env`. Measured 2026-08-22, `--tokenizer bytes`, all three
+runtimes installed.
+
+| Backend | Files packed | Output bytes | Wall time | Secret leaked |
+|---|---|---|---|---|
+| `gitingest` | 7 | 2,862 | 564 ms | no |
+| `repomix` | 8 | 3,978 | 1,082 ms | no |
+| `code2prompt` | 7 | 2,246 | 103 ms | no |
+
+Asserted by `tests/integration/test_repo_backends.py`. The wall times are from
+this development sandbox on a warm cache and are indicative only — repomix's
+figure excludes the first-run `npx` download entirely, which dominates it.
+
+**There is no "reduction" column, deliberately.** A repository has no
+before-count: nobody hands a model the raw bytes of a directory, so there is
+nothing to subtract from, and the pipeline reports no `tokens_before` for one.
+The honest figure is what the pack *costs*, which is what the table shows. The
+comparison that means something here is between engines on the same repository,
+and that is Phase 5's `compare`.
+
+The **fidelity column is the "secret leaked" one**, and it is the only one that
+could disqualify a backend outright. All three respect `.gitignore` by default,
+and a test asserts the sentinel in `secrets.env` reaches none of their output —
+in both directions, since `--no-gitignore` is separately proven to let it
+through, which is what shows the default is doing something.
+
+### The token budget
+
+| Cap | Emitted | Files dropped |
+|---|---|---|
+| none | 2,944 bytes | 0 |
+| 5,000 bytes | 2,944 bytes | 0 (the whole pack fits) |
+| 1,200 bytes | **999 bytes** | 5, each named |
+
+Measured by reading the file, not by trusting the flag. The emitted figure
+includes the truncation note, which is the part an earlier version got wrong —
+see `docs/BACKENDS.md`.
+
 ## What is not measured yet, and why
 
 - **Model tokens for anything.** See "Units" above. CI-only until the egress
@@ -148,7 +189,6 @@ converting.
 - **Fidelity as a score.** Today fidelity is a set of pass/fail assertions —
   markers absent, headings present, cells recovered. Turning that into a number
   comparable across backends is Phase 10.
-- **Repository packing.** Phase 4's figures land here once measured.
 - **Serialisation formats.** CSV, TOON and JSON encoders are Phase 5, so there
   is nothing to compare yet. `RESEARCH.md` Category 7's warning applies in
   advance: format savings carry accuracy trade-offs, TOON's wins are narrow and

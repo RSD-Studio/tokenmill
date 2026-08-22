@@ -1,6 +1,6 @@
 # Backends
 
-**Status:** current as of Phase 3. Every backend described here exists and is
+**Status:** current as of Phase 4. Every backend described here exists and is
 installed by `pip install tokenmill` or one of its extras.
 
 This is the document that keeps the project honest about the tools it wraps.
@@ -35,6 +35,7 @@ every file is generated, so the observations are reproducible by anyone.
 | `article.html` | The clean article: the extraction baseline, no boilerplate |
 | `boilerplate.html` | The same article body wrapped in nav, ads, banners and a footer. 12,481 bytes, 4,902 characters of visible text |
 | `jsrendered.html` | A page whose article is inserted by a script. Parsers see a placeholder; a browser sees the article |
+| `sample_repo/` | A real git repository: 9 tracked files across `src/`, `tests/`, `docs/`, a binary blob, and a `.gitignore`d `secrets.env` whose sentinel string must never reach a model |
 
 ---
 
@@ -50,6 +51,9 @@ every file is generated, so the observations are reproducible by anyone.
 | [`trafilatura`](#trafilatura) | core | Apache-2.0 | permissive | extracting an article from a web page | short pages; it silently stops extracting |
 | [`readability`](#readability) | `web` | Apache-2.0 | permissive | a second, independent extraction | pages that are mostly links |
 | [`crawl4ai`](#crawl4ai) | `crawl4ai` | Apache-2.0 | permissive | pages that need JavaScript | weak extraction; refuses small SPA shells; 677 MB |
+| [`gitingest`](#gitingest) | `repo` | MIT | permissive | packing a repository with no external runtime | pulls a web-service stack; reconfigures host logging |
+| [`repomix`](#repomix) | binary | MIT | permissive | the category leader's output | needs Node; npx downloads it per run |
+| [`code2prompt`](#code2prompt) | binary | MIT | permissive | speed on a large tree | needs a Rust toolchain to install |
 
 Every licence above was read from the **installed package metadata** at the
 moment its adapter was written, not taken from `docs/research/RESEARCH.md`. All
@@ -71,6 +75,7 @@ module and the evidence is below.
 | `csv` | kreuzberg → markitdown → docling | kreuzberg renders a Markdown table. |
 | `html` | trafilatura → readability → markdownify_html → markitdown → kreuzberg → docling → crawl4ai | Extraction first; the whole-page converter next; the browser last so auto-selection never starts one. |
 | `url` | crawl4ai only | Every other web backend is handed the page the pipeline already fetched. |
+| `repo` | gitingest → repomix → code2prompt | The one that needs no external runtime first. The other two are reachable by name. |
 
 A backend the map does not name keeps its own declared priority, so a
 third-party backend can outrank all of these without anyone editing core.
@@ -757,6 +762,230 @@ if you drive crawl4ai directly.
 
 ---
 
+## `gitingest`
+
+**Install:** `pip install "tokenmill[repo]"`
+**License:** MIT (verified against installed metadata, 0.3.1)
+**Upstream:** <https://github.com/coderamp-labs/gitingest>
+**Formats:** `repo`
+
+The default for a repository, because it is importable: no Node, no Rust, no
+binary to find. `RESEARCH.md` Category 5 reaches the same conclusion — *"gitingest
+is the best Python-native fit"*.
+
+### What it is good at
+
+**Packing a repository into one document with a tree and every file's contents**,
+and doing it in half a second on our fixture. On `tests/fixtures/sample_repo` it
+packs **7 of the 9 tracked files**:
+
+```
+Directory structure:
+└── sample_repo/
+    ├── README.md
+    ├── pyproject.toml
+    ├── docs/
+    │   └── design.md
+    ├── src/
+    │   └── widgetlib/
+    │       ├── __init__.py
+    │       ├── core.py
+    │       └── utils.py
+    └── tests/
+        └── test_core.py
+
+================================================
+FILE: README.md
+================================================
+# widgetlib
+```
+
+The two it leaves out are correct: `assets/logo.bin` is binary, and `.gitignore`
+is a dot file. The `.gitignore`d `secrets.env` never appears at all — the
+property the fixture exists to check, asserted in both directions so that
+`--no-gitignore` is proven to actually let it through.
+
+### Observed failure modes
+
+All four were found by running it as a *library*, which is a different thing from
+running it as a CLI, and none of them is about repositories.
+
+**It validates `$GITHUB_TOKEN` before looking at the source.** `resolve_token`
+falls back to the environment variable and checks its *format* unconditionally,
+so a placeholder token — which CI systems and development sandboxes export
+routinely — fails a purely local pack:
+
+```
+gitingest.utils.exceptions.InvalidGitHubTokenError: Invalid GitHub token format.
+```
+
+The adapter hides the variable for the duration of the call. tokenmill clones
+through `git`, which uses the user's normal credential helper, so gitingest is
+only ever handed a local path and has no use for a token.
+
+**It reconfigures the host process's logging.** Importing it installs a loguru
+`InterceptHandler` on the standard library's **root** logger and sets that
+logger's level to `0`. Measured:
+
+```
+root handlers before: []                    level 30
+root handlers after:  ['InterceptHandler']  level 0
+```
+
+Every record tokenmill logs — and every record an application embedding
+tokenmill logs — is rerouted, and previously-suppressed INFO starts appearing.
+The adapter snapshots and restores both.
+
+**It logs its own progress at INFO**, eight lines per pack. Silenced with
+`logger.disable("gitingest")`, which is scoped to that package.
+
+**Its ignore rules go through pathspec's deprecated `gitwildmatch` factory**, and
+that DeprecationWarning is fatal under `filterwarnings = ["error"]`. Filtered by
+message, the same treatment docling's internal deprecation gets: a library's own
+deprecation churn is not something a user can act on.
+
+### Why it is in an extra rather than the core install
+
+The plan's §1.6 lists it in `core`. It requires **starlette, pydantic, httpx and
+loguru** — the stack from the FastAPI app gitingest also ships — which is 14
+packages and about 10 MB on every `pip install tokenmill` for a feature most
+users of a document converter never touch. Nothing there breaches rule 1; it
+would simply have been weight nobody asked for.
+
+---
+
+## `repomix`
+
+**Install:** `npm install -g repomix` (or let `npx` fetch it with `--allow-network`)
+**License:** MIT — runs out of process, so its licence never touches ours
+**Upstream:** <https://github.com/yamadashy/repomix>
+**Formats:** `repo` — **subprocess isolation**
+
+The category leader by adoption — ~26.8k stars against gitingest's ~15.3k — and
+TypeScript, so it is a child process.
+
+### What it is good at
+
+**The most complete pack of the three.** It includes 8 files where gitingest and
+code2prompt include 7, and its preamble explains its own format to whatever
+reads it. It sorts files by git change frequency, so the code that moves most
+ends up nearest the end of the context.
+
+Its secret scanning is left **on**: a packing tool that helps a user paste their
+AWS keys into a model is worse than one that is slightly slower.
+
+### Observed failure modes
+
+**Without a local install, every run is a download.** `npx` fetches the package
+on first use, which is a network call inside a command that looks local. So the
+adapter requires `--allow-network` when it has to go through `npx`, and does not
+when `repomix` is on `PATH`:
+
+```
+$ tokenmill repo ./project --backend repomix
+error: repomix is not installed, and running it through npx would download it
+hint:  install Node.js, then either 'npm install -g repomix' (recommended: no
+download per run) or pass --allow-network to let npx fetch it each time
+```
+
+**Its own `--token-budget` does not truncate.** It *fails* with a non-zero exit
+when the pack is too big. tokenmill's `--token-budget` truncates and reports what
+it dropped, in the run's own tokenizer, identically across all three engines —
+the two are not the same feature and this adapter does not pass ours through as
+theirs.
+
+**It is the slowest of the three** through `npx`: about 1.1 s against
+code2prompt's 0.1 s and gitingest's 0.5 s on our fixture, before the first-run
+download.
+
+---
+
+## `code2prompt`
+
+**Install:** `cargo install code2prompt` (needs a Rust toolchain)
+**License:** MIT — runs out of process
+**Upstream:** <https://github.com/mufeedvh/code2prompt>
+**Formats:** `repo` — **subprocess isolation**
+
+### What it is good at
+
+**Speed.** 103 ms on our fixture against gitingest's 564 ms and repomix's 1,082
+ms — it is Rust and it shows. It also produces the smallest pack of the three
+(2,246 characters against 2,862 and 3,978), because its per-file framing is
+lighter.
+
+### Observed failure modes
+
+**There is no wheel and no npm package.** Installing it compiles it, which needs
+a Rust toolchain and a few minutes, and that is why it ranks last — not quality.
+A user without one gets the command that fixes it, and gitingest packs their
+repository meanwhile.
+
+**Its section format is not what a reader of repomix's would guess.** It marks a
+file with a backtick-quoted path and a colon, not `## File:`:
+
+```
+`README.md`:
+
+```md
+# widgetlib
+```
+```
+
+tokenmill's first parser assumed the repomix form, and the adapter reported it
+honestly rather than silently claiming the repository had no files:
+
+```
+warning:  code2prompt's Markdown format was not recognised, so the token budget
+and the per-directory breakdown could not be applied. The pack itself is
+complete and unmodified; this is a tokenmill parsing problem
+```
+
+That warning is the reason this was found in minutes rather than shipping as a
+budget that quietly did nothing. It is still there, and it is what will catch the
+next upstream format change.
+
+---
+
+## What every repository backend shares
+
+These are tokenmill's, not any tool's, and they behave identically across all
+three — which is the point of wrapping them at all.
+
+**A budget that genuinely caps the output.** Whole files only, in the tool's own
+emission order, never partial — half a module is worse than none, because a model
+cannot tell the rest was cut. Measured on our fixture: a 1,200-byte cap produces
+a 999-byte document.
+
+**Truncation is never silent.** Every dropped file is named with what it would
+have cost, in a warning, in the metadata, and **in the document itself** — the
+document is the part that travels to a model, and that reader cannot ask why a
+file is missing.
+
+**The note degrades before the content does.** A file that fits is never evicted
+to make room for a longer explanation of the files that did not. The full table
+appears when it fits and a one-line note when it does not; the complete list is
+always in the result's metadata.
+
+**A per-directory breakdown**, on `--tree-tokens`, rolled up through every
+ancestor so it answers a question about a subtree:
+
+```
+| directory     | bytes | share | files |
+| ---           | ---   | ---   | ---   |
+| src           | 1,425 | 54.6% | 3     |
+| src/widgetlib | 1,425 | 54.6% | 3     |
+| .             | 528   | 20.2% | 2     |
+| tests         | 348   | 13.3% | 1     |
+| docs          | 310   | 11.9% | 1     |
+```
+
+**A shallow clone for a remote URL**, removed on every exit path including
+failure. `ext::` and `file://` are refused at two layers, because `ext::` makes
+git execute an arbitrary command.
+
+---
+
 ## Failure modes every backend in this tier shares
 
 **A scanned PDF produces an empty document.** `scanned.pdf` has no text layer by
@@ -829,7 +1058,6 @@ turns the chain off entirely.
 
 | Backend | Why | Phase |
 |---|---|---|
-| gitingest, repomix, code2prompt | Repository ingestion | 4 |
 | llmlingua2 | Prompt compression | 6 |
 | pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |
 | tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |

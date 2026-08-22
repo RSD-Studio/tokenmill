@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 4 — repository backends
+
+- **Three repository backends**, one set of options over three runtimes:
+  - `gitingest` (MIT, `repo`) — Python-native, so it needs no external tool and
+    is what a repository auto-selects. Packs 7 of the fixture's 9 tracked files,
+    correctly skipping the binary blob and never emitting the `.gitignore`d
+    secret.
+  - `repomix` (MIT, Node, **subprocess**) — the category leader; the most
+    complete pack of the three at 8 files.
+  - `code2prompt` (MIT, Rust, **subprocess**) — the fastest, at 103 ms against
+    564 and 1,082 on our fixture.
+- **`tokenmill repo`**, a new command. `https://github.com/owner/project` is a
+  web page to `convert` and a repository to `repo`, and only the command the
+  user typed distinguishes them. Flags: `--include`, `--exclude`,
+  `--token-budget`, `--tree-tokens`, `--max-file-size`, `--no-gitignore`,
+  `--branch`, `--allow-network`.
+- **A token budget that genuinely caps the output.** Whole files only, in the
+  tool's own emission order, never partial. Measured: a 1,200-byte cap produces
+  a 999-byte document, and **every dropped file is named** — in a warning, in the
+  metadata, and in the document itself, because the document is the part that
+  reaches a model.
+- **A per-directory token breakdown** on `--tree-tokens`, rolled up through
+  every ancestor so it answers a question about a subtree.
+- **Shallow cloning of a remote Git URL** into a temporary directory removed on
+  every exit path including failure. `ext::` and `file://` are refused at two
+  layers, since `ext::` makes git execute an arbitrary command.
+- **`tokenmill.backends._subprocess`** — the minimum runner Phase 4 needs: list
+  arguments, never `shell=True`, timeouts, captured stderr on the exception, and
+  a path beginning with `-` refused rather than passed. **Phase 7 replaces it**;
+  what it deliberately does not do is listed in its docstring and in
+  `PROGRESS.md`.
+
+### Fixed
+
+#### Phase 4 — gitingest's behaviour as a library
+
+Four things it does to the process that imports it, all found by running it:
+
+- It validated `$GITHUB_TOKEN`'s *format* before looking at the source, so a
+  placeholder token failed a purely **local** pack with
+  `InvalidGitHubTokenError`.
+- **It installed a loguru handler on the stdlib root logger and set that
+  logger's level to 0**, rerouting every record tokenmill and any embedding
+  application logs, and un-suppressing INFO. Snapshotted and restored now.
+- It logged its own progress at INFO, eight lines per pack.
+- Its ignore rules go through pathspec's deprecated `gitwildmatch` factory,
+  whose `DeprecationWarning` is fatal under `filterwarnings = ["error"]`.
+
 #### Phase 3 — web backends
 
 - **Three web backends**, licences verified against the installed package

@@ -10,7 +10,7 @@ _Last updated: 2026-08-22 by Claude Code_
 | 1 | Core architecture | ✅ Complete | passed 2026-08-20 |
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
-| 4 | Repository backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
+| 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 5 | Post-processing, formats, measurement depth | ⬜ Not started | — |
 | 6 | Prompt compression (optional tier) | ⬜ Not started | — |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
@@ -1492,6 +1492,147 @@ its header and separator rows. Grepped for each of the manifest's
    already pushed and rewriting history hides the mistake instead of fixing it.
    This is exactly what "stage deliberately" is for and I did not do it.
 
+### 2026-08-22 — Phase 4 exit gate
+
+From a venv synced with `--extra dev --extra fixtures --extra documents --extra
+web --extra repo`, with `code2prompt` built from crates.io and `repomix` reached
+through `npx`.
+
+- Command: `uv run ruff check .`
+- Result: `All checks passed!`
+
+- Command: `uv run ruff format --check .`
+- Result: `93 files already formatted`
+
+- Command: `uv run mypy`
+- Result: `Success: no issues found in 76 source files`
+
+- Command: `uv run pytest -q --cov=tokenmill`
+- Result: `820 passed, 49 skipped in 41.33s`, `TOTAL 2744 stmts, 89%`
+
+- Command: `uv run pytest -q --cov=tokenmill.core --cov=tokenmill.tokens --cov-fail-under=85`
+- Result: `Required test coverage of 85% reached. Total coverage: 95.13%`
+
+- Command: `uv run python scripts/make_fixtures.py --check`
+- Result: `OK: 23 files reproduced byte-for-byte`
+
+- Command: `uv run tokenmill backends --all`
+- Result: thirteen backends, all four domains populated:
+  ```
+  id                domains    license       tier        isolation   availability
+  ----------------  ---------  ------------  ----------  ----------  ----------------------------
+  code2prompt       repo       MIT           permissive  subprocess  available
+  crawl4ai          web        Apache-2.0    permissive  in-process  missing dependency: crawl4ai
+  docling           documents  MIT           permissive  in-process  missing dependency: docling
+  gitingest         repo       MIT           permissive  in-process  available
+  kreuzberg         documents  MIT           permissive  in-process  available
+  markdownify_html  web        MIT           permissive  in-process  available
+  markitdown        documents  MIT           permissive  in-process  available
+  pdfplumber        documents  MIT           permissive  in-process  available
+  plaintext         text       Apache-2.0    permissive  in-process  available
+  pypdf             documents  BSD-3-Clause  permissive  in-process  available
+  readability       web        Apache-2.0    permissive  in-process  available
+  repomix           repo       MIT           permissive  subprocess  available
+  trafilatura       web        Apache-2.0    permissive  in-process  available
+  ```
+
+**The plan's sandbox-verification commands for this phase**, translated from
+`tokenfold` to `tokenmill`:
+
+- Command: `uv run tokenmill repo tests/fixtures/sample_repo --backend gitingest --token-budget 5000 --tokenizer bytes`
+- Result: `tokens: 2,944 (bytes)`, nothing dropped — the whole pack fits inside
+  5,000.
+
+- Command: `uv run tokenmill repo tests/fixtures/sample_repo --backend repomix`
+- Result: **exit 1**, degrading exactly as the criterion asks:
+  ```
+  error: repomix is not installed, and running it through npx would download it
+  hint:  install Node.js, then either 'npm install -g repomix' (recommended: no
+  download per run) or pass --allow-network to let npx fetch it each time
+  ```
+
+- Command: the same with `--allow-network`
+- Result: **exit 0**, `backend: repomix`, `tokens: 3,978 (bytes)`, 8 files.
+
+- Command: `uv run tokenmill repo tests/fixtures/sample_repo --tree-tokens --tokenizer bytes`
+- Result:
+  ```
+  | directory     | bytes | share | files |
+  | ---           | ---   | ---   | ---   |
+  | src           | 1,425 | 54.6% | 3     |
+  | src/widgetlib | 1,425 | 54.6% | 3     |
+  | .             | 528   | 20.2% | 2     |
+  | tests         | 348   | 13.3% | 1     |
+  | docs          | 310   | 11.9% | 1     |
+  ```
+
+- Command: `uv run pytest -q tests/integration/test_repo_backends.py`
+- Result: `36 passed in 13.27s`
+
+**The three engines, measured on the same repository:**
+
+| Backend | Files | Output bytes | Wall time | Secret leaked |
+|---|---|---|---|---|
+| `gitingest` | 7 | 2,862 | 564 ms | no |
+| `repomix` | 8 | 3,978 | 1,082 ms | no |
+| `code2prompt` | 7 | 2,246 | 103 ms | no |
+
+**Acceptance criteria, one by one:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | The fixture repo produces a single file with a directory tree and file contents | ✅ **Observed and read.** Tree with all seven packed files, then each file's contents under its header. The `.gitignore`d `secrets.env` and the binary `assets/logo.bin` are both correctly absent. |
+| 2 | The token budget genuinely caps output, and what got dropped is reported | ✅ **Observed by measuring the file.** A 1,200-byte cap produced a **999-byte** document; the five dropped files are named in a warning, in `dropped_files` metadata, and in the document itself. |
+| 3 | Missing `npx`/`repomix` yields a clear message, not a traceback | ✅ **Observed**, quoted above. Also for `code2prompt`, with the `cargo install` command. Both are tested with `PATH` lookups stubbed, so the absent case is covered on a machine where the tools *are* installed. |
+| 4 | *(exit gate)* All three adapters behave correctly whether or not their runtime is installed | ✅ **Observed both ways**, which this sandbox could do because all three runtimes turned out to be installable here. |
+| 5 | *(exit gate)* Budget truncation verified by inspecting the output | ✅ The truncated pack was read, not inferred: five files gone, tree intact, truncation note listing each dropped file with its cost. |
+
+**Verified beyond the criteria:**
+
+- **A real remote clone.** `example.com` and `github.com` are blocked, so a
+  `git daemon` was run on `127.0.0.1:9418` serving the fixture repository.
+  `tokenmill repo git://127.0.0.1:9418/demo` cloned it, packed it, and left no
+  `tokenmill-repo-*` directory behind. The live-internet path is still
+  unverified — the loopback one exercises every line of the same code.
+- **`--no-gitignore` really does let the secret through.** Asserted deliberately.
+  A `.gitignore` toggle that silently did nothing would pass every "the secret
+  did not leak" test above while providing no protection at all.
+- **A shell metacharacter in an argument stays data.** A test passes
+  `; touch <path>; echo ` as an argument and asserts the file is not created.
+
+**Bugs found and fixed during verification**, every one by running something:
+
+1. **The budget did not include its own truncation note.** A 1,200-byte cap
+   emitted 1,482 bytes — a cap exceeded by the explanation of the cap. Fixed,
+   then fixed again: the second version dropped files to make room and, since
+   each drop adds a row to the note, emptied the pack chasing a note that grew
+   faster than the content shrank. The rule that works is **the note degrades
+   before the content does**.
+2. **The budget's file-eviction loop confused two indices.** `limit` indexed
+   into the section list while `len(kept)` counted files that fit, so dropping
+   "the last kept file" sometimes evicted a different one. Caught by a test with
+   a small file *after* a huge one.
+3. **gitingest validates `$GITHUB_TOKEN`'s format before reading the source.**
+   A placeholder token — which this sandbox exports, and which CI systems export
+   routinely — failed a purely local pack with `InvalidGitHubTokenError`.
+4. **gitingest reconfigures the host process's logging.** Importing it installs
+   a loguru `InterceptHandler` on the stdlib **root** logger and sets that
+   logger's level to `0`. Measured: `[] level 30` before, `['InterceptHandler']
+   level 0` after. Every record tokenmill logs — and every record an application
+   embedding tokenmill logs — was being rerouted, and previously-suppressed INFO
+   started appearing. Snapshotted and restored now.
+5. **gitingest logs its own progress at INFO**, eight lines per pack.
+6. **pathspec's deprecated `gitwildmatch` factory is fatal under `-W error`.**
+   The same shape as Phase 2's onnxruntime failure, and it passed at the CLI
+   while failing in the suite, because the CLI does not set `-W error`.
+7. **code2prompt's section format was guessed wrong.** I assumed repomix's
+   `## File:`; it uses a backtick-quoted path and a colon. The adapter's "format
+   not recognised" warning surfaced it rather than a silent file count of zero,
+   which is the behaviour that warning exists for.
+8. **A Phase 1 CLI test asserted the `repo` domain was empty.** True until this
+   phase. Repointed to assert that `--domain` filters, plus a new test covering
+   the empty-listing message against a registry with no entry points.
+
 ### 2026-08-22 — CI cannot schedule runners, and it is not our YAML
 
 Four consecutive runs — 25, 26, 27 and 28, across both `claude/phase-2-followups`
@@ -1621,6 +1762,15 @@ to overstate:
 | `crawl4ai` | ✅ **rendered `jsrendered.html` in a real Chromium**; 8 browser tests pass | ❌ never in the matrix | ⚠️ live URLs; any browser but this sandbox's Chromium 1194 |
 | URL fetcher | ✅ 29 tests against a real loopback HTTP server | ❌ | ⚠️ **the live-internet path has never run** — `example.com` is blocked |
 
+**Where each Phase 4 backend was verified:**
+
+| Backend | Verified locally | Verified in CI | Unverified |
+|---|---|---|---|
+| `gitingest` | ✅ fixture repo, output read; four library defects found and fixed | ❌ CI cannot schedule runners | ⚠️ a real GitHub clone |
+| `repomix` | ✅ via `npx`, output read; the missing-runtime path too | ❌ never in the matrix | ⚠️ a locally-installed `repomix` on `PATH` |
+| `code2prompt` | ✅ built from crates.io (4.3.0), output read | ❌ never in the matrix | ⚠️ any platform but Linux |
+| clone + cleanup | ✅ against a `git daemon` on loopback | ❌ | ⚠️ **the live-internet path has never run** |
+
 | Backend | Domain | License | Tier | Wired | Tested | Notes |
 |---------|--------|---------|------|-------|--------|-------|
 | plaintext | text | Apache-2.0 (ours) | core | ✅ | ✅ | Phase 1 reference backend. Passes text/Markdown through; warns on non-UTF-8 input |
@@ -1633,9 +1783,9 @@ to overstate:
 | trafilatura | web | Apache-2.0 **(verified 2.2.0)** | core | ✅ | ✅ | **Removes all 6 boilerplate markers, keeps all 6 headings and the table.** −77.1% bytes on `boilerplate.html`. Below 250 chars of content it silently stops extracting |
 | readability | web | Apache-2.0 **(verified 0.8.4.1)** | web | ✅ | ✅ | An independent second extraction. **Byte-identical to trafilatura on our fixture** apart from table-separator spacing |
 | crawl4ai | web | Apache-2.0 **(verified 0.9.2)** | crawl4ai | ✅ | ✅ | **The only backend that renders JavaScript.** Leaves 3 of 6 markers; refuses small SPA shells as anti-bot; 94 packages, 677 MB |
-| gitingest | repo | MIT | core | ❌ | ❌ | Phase 4; Python-native, primary |
-| repomix | repo | MIT | subprocess | ❌ | ❌ | Phase 4; Node — subprocess only |
-| code2prompt | repo | MIT | subprocess | ❌ | ❌ | Phase 4; Rust — subprocess only |
+| gitingest | repo | MIT **(verified 0.3.1)** | repo | ✅ | ✅ | The default for a repository: needs no external runtime. **Reconfigures the host's stdlib logging on import**; the adapter undoes it |
+| repomix | repo | MIT **(verified 1.18.0)** | subprocess | ✅ | ✅ | The most complete pack (8 files vs 7). Needs Node; `npx` downloads it per run, so it requires `--allow-network` without a local install |
+| code2prompt | repo | MIT **(verified 4.3.0)** | subprocess | ✅ | ✅ | **Fastest: 103 ms vs 564 and 1,082.** No wheel — `cargo install` compiles it |
 | llmlingua2 | compress | MIT | compress | ❌ | ❌ | Phase 6; off by default |
 | pymupdf4llm | documents | **AGPL-3.0** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | pandoc | documents | **GPL-2.0+** | isolated | ❌ | ❌ | Phase 7; **never imported** |
@@ -1966,6 +2116,87 @@ closed; these are the decisions and what changed.
   for us.
 
 ## Deferred / future work
+
+### From Phase 4
+
+- **`SubprocessConverter` is still Phase 7's, and this is what it owes.**
+  `tokenmill.backends._subprocess` is the minimum Phase 4 needed, sited one
+  level above the tiers so Phase 7 can absorb it without a third rewrite of the
+  call sites. It does PATH lookup, list arguments with `shell=False`, a
+  timeout, captured output, and the taxonomy mapping. It does **not** do:
+  - **sandboxing** — no resource limits, no filesystem confinement, no network
+    namespace. A tool run through it has the same access the user does;
+  - **binary discovery beyond `PATH`** — no bundled binaries, no version
+    managers, no configured search paths;
+  - **version probing or pinning** — tokenmill cannot say which Repomix
+    produced a given pack, so a subprocess backend's provenance is weaker than
+    a Python backend's, where the package version is knowable. This is the gap
+    that matters most for reproducing a measurement;
+  - **an allow-list** — any adapter can name any executable. Phase 7's licence
+    enforcement needs the opposite: a checked list of what may be invoked, so a
+    copyleft tool's isolation is enforced rather than declared;
+  - **streaming** — output is buffered whole.
+
+  Note that `repomix` and `code2prompt` are out of process because they are
+  TypeScript and Rust, **not** because of their licences: both are MIT and could
+  legally be imported if they were Python. That makes them safe practice for
+  Phase 7, since getting the isolation wrong on them carries no licence risk.
+
+- **Parsing three tools' output formats is brittle by nature.** Budgeting and
+  the per-directory breakdown both need per-file structure and none of the three
+  tools offers one, so each adapter carries a regex for its own tool's file
+  header. code2prompt's was guessed wrong on the first attempt. The mitigation
+  is that an unrecognised format produces *no sections and a warning*, never a
+  silent file count of zero — but a format change still costs a release.
+  A better fix would be asking each tool for machine-readable output where it
+  offers one (repomix has `--style json`), which is a Phase 5 or Phase 10 job.
+
+- **A repository has no before-count, so `tokenmill repo` prints one number.**
+  Nobody hands a model the raw bytes of a directory. The pipeline reports
+  `tokens_before: None` and warns "no readable source text", which is the same
+  path a binary document takes. The comparison that means something is between
+  *engines on the same repository*, and that is Phase 5's `compare`.
+
+- **Three more uses of process-global state, none thread-safe.** The gitingest
+  adapter manipulates `os.environ` (the GitHub token), the stdlib root logger's
+  handlers and level, loguru's activation registry, and `warnings.catch_warnings`
+  — all for the duration of one call, all restored afterwards. Nothing runs
+  conversions concurrently today. The Phase 8 batch runner and any process-pool
+  parallelism must account for all of them; this is the same note Phase 2 filed
+  about `warnings.catch_warnings`, and Phase 4 has made it four times larger.
+
+- **Include and exclude globs are passed to each tool rather than applied by
+  tokenmill.** So their exact semantics differ slightly between engines —
+  gitingest, repomix and code2prompt each have their own glob dialect. tokenmill
+  documents the intent and the tools decide the edge cases. Applying them
+  ourselves would mean re-walking the tree and second-guessing three tools;
+  worth revisiting only if the differences bite someone.
+
+- **No `--dry-run` for the budget.** A user who wants to know what *would* be
+  dropped has to run the pack. Cheap to add later; left out rather than stubbed.
+
+### From Phase 3
+
+- **The live-internet fetch path has never run.** `example.com` is denied at the
+  egress proxy. The fetcher is verified against a real HTTP server on loopback
+  — 29 tests covering redirects, the redirect cap, scheme-change refusal, the
+  byte cap, `robots.txt` in both directions, charsets, statuses, timeouts and a
+  refused connection — and the live path is `network`-marked and unverified.
+- **The boilerplate reduction in real model tokens is unverified.** Asserted by
+  `tests/unit/test_web_tokens_network.py`, which runs in the blocking
+  `tokenizers` CI job and prints the figure for the log. No token percentage is
+  published anywhere until a green run prints one, and CI cannot schedule
+  runners as of today.
+- **crawl4ai is verified against exactly one browser.** The sandbox's Chromium
+  1194, reached by pinning playwright to 1.56.0 *locally* — a fact about this
+  container, not a project decision, and deliberately not in `pyproject.toml`.
+- **No conditional or authenticated fetching.** No cookies, no headers beyond
+  the user agent, no ETag, no caching. A page behind a login is not fetchable,
+  and saying so beats a half-implemented credential story.
+- **`--tree-tokens` has no equivalent for web or document conversions.** The
+  question "which part of this is eating my context" is just as good for a long
+  document; it needs a different decomposition (sections rather than files) and
+  belongs with Phase 5's measurement depth.
 
 ### From Phase 2
 
