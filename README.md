@@ -360,6 +360,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
 | [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, and the audits actually run |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results *(partial; the full harness is Phase 10)* |
+| [`docs/REVIEW_PHASES_0_4.md`](docs/REVIEW_PHASES_0_4.md) | A full re-evaluation after Phase 4: every acceptance criterion with its evidence, the whole corpus end to end, and an honest defects list |
 
 ## Non-goals
 

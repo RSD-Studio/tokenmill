@@ -43,6 +43,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+#### Found by the Phase 0–4 review
+
+- **A conversion could report a large saving for losing the content.**
+  `convert jsrendered.html` reported `1,512 -> 140 (-90.7%)`, a number that would
+  look excellent in a benchmark and represented near-total content loss — the
+  case `benchmarks/README.md` names as disqualifying. Web backends now warn when
+  a page carries scripts and under 15% of its bytes are visible text, calibrated
+  against the corpus and explicitly labelled a heuristic.
+- **A clean install gave a Node error for a Python tool.** With no extras,
+  `tokenmill repo ./project` fell through to repomix and failed with npx
+  instructions, never mentioning `pip install "tokenmill[repo]"`.
+
 #### Phase 4 — gitingest's behaviour as a library
 
 Four things it does to the process that imports it, all found by running it:

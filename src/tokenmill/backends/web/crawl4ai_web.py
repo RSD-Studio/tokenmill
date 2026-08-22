@@ -63,7 +63,7 @@ import importlib.util
 from typing import Any, Final
 
 from tokenmill.backends._common import classify_failure, warnings_as_conversion_warnings
-from tokenmill.backends.web._common import note_web_metrics
+from tokenmill.backends.web._common import note_web_metrics, warn_if_client_rendered
 from tokenmill.core.errors import BackendFailed, ConversionError, CorruptSource, NetworkRequired
 from tokenmill.core.models import (
     Availability,
@@ -201,6 +201,12 @@ class Crawl4AIConverter(BaseConverter):
         # which is the only comparison that means anything here: the whole
         # point of this backend is that the two differ.
         note_web_metrics(context, html=rendered_html, output=markdown, strips_boilerplate=True)
+        # Against the *rendered* DOM. If a page still looks client-rendered after
+        # a browser has run it, the scripts did not finish or the content needs
+        # an interaction, and either way the reduction is not what it appears.
+        warn_if_client_rendered(
+            context, html=rendered_html, source_name=source.name, backend_id=self.info.id
+        )
 
         if not markdown.strip():
             raise BackendFailed(

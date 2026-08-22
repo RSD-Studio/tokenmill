@@ -76,6 +76,19 @@ _INSTALL_HINT = (
     "download per run) or pass --allow-network to let npx fetch it each time"
 )
 
+#: What to say when this backend was *auto-selected* and cannot run without a
+#: download.
+#:
+#: A clean `pip install tokenmill` has no `repo` extra, so gitingest is absent
+#: and the chain falls to this backend — which reports itself available because
+#: `npx` exists. A user who typed `tokenmill repo ./project` then gets a Node
+#: error about a tool they never chose, with no mention of the Python one that
+#: would just work. Found by doing the clean-install check by hand.
+_AUTOSELECTED_HINT = (
+    'pip install "tokenmill[repo]" for the Python backend, which needs no '
+    "external tool; or " + _INSTALL_HINT
+)
+
 
 class RepomixConverter(BaseConverter):
     """Packs a repository into one document with Repomix, out of process.
@@ -212,10 +225,15 @@ class RepomixConverter(BaseConverter):
         if installed is not None:
             return [installed]
         if not options.allow_network:
+            # The hint depends on whether the user chose this backend. Someone
+            # who typed `--backend repomix` wants repomix; someone who typed
+            # `tokenmill repo ./project` on a core-only install has landed here
+            # by elimination and mostly wants a working answer.
+            chosen = options.backend == self.info.id
             raise NetworkRequired(
                 "repomix is not installed, and running it through npx would download it",
                 backend_id=self.info.id,
-                hint=_INSTALL_HINT,
+                hint=_INSTALL_HINT if chosen else _AUTOSELECTED_HINT,
             )
         # `--yes` so npx never stops to ask; stdin is closed, so a prompt would
         # hang forever holding a terminal nobody is watching.

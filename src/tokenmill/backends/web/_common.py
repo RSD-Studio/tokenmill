@@ -38,7 +38,7 @@ from typing import Final
 
 from tokenmill.core.protocol import ConversionContext
 
-__all__ = ["note_web_metrics", "visible_text"]
+__all__ = ["note_web_metrics", "visible_text", "warn_if_client_rendered"]
 
 #: Elements whose contents are code, styling or document metadata rather than
 #: anything on the page. Their text belongs to neither the article nor the
@@ -52,6 +52,14 @@ __all__ = ["note_web_metrics", "visible_text"]
 _INVISIBLE: Final[frozenset[str]] = frozenset(
     {"script", "style", "template", "noscript", "title", "head"}
 )
+
+#: Below this share of a page's bytes being visible text, a page carrying
+#: scripts is probably assembled in the browser. Calibrated against the corpus
+#: rather than guessed: `article.html` is 76.3% visible text and carries no
+#: script, `boilerplate.html` is 39.3% with two inline scripts, and
+#: `jsrendered.html` — whose article genuinely does not exist until JavaScript
+#: runs — is 9.2%. The threshold sits in the gap, well clear of both.
+_CLIENT_RENDERED_SHARE: Final = 0.15
 
 
 class _VisibleTextExtractor(HTMLParser):
@@ -135,6 +143,63 @@ def visible_text(html: str) -> str:
     parser.feed(html)
     parser.close()
     return parser.text()
+
+
+def warn_if_client_rendered(
+    context: ConversionContext, *, html: str, source_name: str, backend_id: str
+) -> None:
+    """Warn when a page's content probably was not in the response at all.
+
+    This exists because of a number tokenmill printed and should not have been
+    comfortable with. Converting ``tests/fixtures/jsrendered.html`` — a page
+    whose article is inserted by a script — reported::
+
+        tokens:   1,512 -> 140  (-90.7%, bytes)
+
+    a **90.7% reduction** achieved by losing essentially all of the content. It
+    is the exact failure ``benchmarks/README.md`` names as disqualifying: *a
+    converter that emits an empty string scores a 100% reduction*. Nothing in
+    the output said so, because from a parser's point of view nothing went
+    wrong — the placeholder really is all the response contained.
+
+    The signal is that a page carries scripts while almost none of its bytes are
+    text a reader would see. Calibrated against the corpus, not guessed:
+    ``article.html`` is 76.3% visible text with no script, ``boilerplate.html``
+    39.3% with two inline scripts, and ``jsrendered.html`` 9.2%. The threshold
+    sits in the gap.
+
+    It is a heuristic and it says so, which is as far as this should go —
+    the same standard as pdfplumber's multi-column warning, where detecting is
+    an adapter's job and correcting is a different program's. The correction
+    here is ``--backend crawl4ai``, and the warning names it.
+
+    Args:
+        context: Collects the warning.
+        html: The page as it was handed to the backend.
+        source_name: The input's name, for the message.
+        backend_id: The backend that converted it, so the message can avoid
+            telling crawl4ai to use crawl4ai.
+    """
+    if "<script" not in html.lower():
+        return
+    visible = visible_text(html)
+    if not html or len(visible) / len(html) >= _CLIENT_RENDERED_SHARE:
+        return
+
+    context.note("looks_client_rendered", True)
+    remedy = (
+        ""
+        if backend_id == "crawl4ai"
+        else " Try --backend crawl4ai --allow-network, which runs the page's scripts in a "
+        "real browser."
+    )
+    context.warn(
+        f"{source_name} carries scripts and only {len(visible) / len(html):.0%} of it is "
+        f"text a reader would see, so its content is probably assembled in the browser "
+        f"and is not in the response at all. Any reduction reported for this conversion "
+        f"is mostly content that was never there — a converter that emits nothing scores "
+        f"a perfect saving. This is a heuristic, not a certainty: check the output.{remedy}"
+    )
 
 
 def note_web_metrics(

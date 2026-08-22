@@ -595,3 +595,65 @@ class TestCrawl4AI:
         assert "Traceback" not in str(excinfo.value)
         assert excinfo.value.hint is not None
         assert "playwright install" in excinfo.value.hint
+
+
+class TestTheClientRenderedWarning:
+    """A great reduction achieved by losing the content is not a great result.
+
+    Converting `jsrendered.html` reported `1,512 -> 140 (-90.7%)`, a number that
+    would look excellent in a benchmark and represents near-total content loss.
+    `benchmarks/README.md` names this as the disqualifying case — *a converter
+    that emits an empty string scores a 100% reduction* — and nothing in the
+    output said so, because from a parser's point of view nothing went wrong.
+    """
+
+    def test_a_client_rendered_page_is_flagged(self, fixture_dir: Path, pipeline: Pipeline) -> None:
+        result = convert(pipeline, fixture_dir / "jsrendered.html", "trafilatura")
+
+        assert result.metadata["looks_client_rendered"] is True
+        assert any("assembled in the browser" in w for w in result.warnings)
+
+    def test_the_warning_names_the_backend_that_would_fix_it(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        result = convert(pipeline, fixture_dir / "jsrendered.html", "trafilatura")
+
+        assert any("--backend crawl4ai" in w for w in result.warnings)
+
+    def test_the_warning_says_it_is_a_heuristic(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        """The same standard as pdfplumber's multi-column warning."""
+        result = convert(pipeline, fixture_dir / "jsrendered.html", "trafilatura")
+
+        assert any("heuristic, not a certainty" in w for w in result.warnings)
+
+    def test_an_ordinary_page_with_scripts_is_not_flagged(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        """`boilerplate.html` has two inline scripts and 39% visible text.
+
+        Calibrated against the corpus rather than guessed: 76.3% for
+        `article.html` with no script, 39.3% here, 9.2% for the genuinely
+        client-rendered page. The threshold sits in the gap, and this is the
+        false-positive side of it.
+        """
+        result = convert(pipeline, fixture_dir / "boilerplate.html", "trafilatura")
+
+        assert "looks_client_rendered" not in result.metadata
+        assert not any("assembled in the browser" in w for w in result.warnings)
+
+    def test_a_page_with_no_scripts_is_never_flagged(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        result = convert(pipeline, fixture_dir / "article.html", "trafilatura")
+
+        assert "looks_client_rendered" not in result.metadata
+
+    def test_the_whole_page_converter_flags_it_too(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        """The problem is the page, not the extractor, so every backend says so."""
+        result = convert(pipeline, fixture_dir / "jsrendered.html", "markdownify_html")
+
+        assert result.metadata["looks_client_rendered"] is True

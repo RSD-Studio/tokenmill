@@ -34,7 +34,7 @@ from __future__ import annotations
 import importlib.util
 from typing import Any, Final
 
-from tokenmill.backends.web._common import note_web_metrics
+from tokenmill.backends.web._common import note_web_metrics, warn_if_client_rendered
 from tokenmill.core.errors import BackendFailed, CorruptSource
 from tokenmill.core.models import (
     Availability,
@@ -156,5 +156,8 @@ class MarkdownifyHtmlConverter(BaseConverter):
         # page, which is the honest number for a faithful markup converter and
         # the contrast that makes trafilatura's figure mean something.
         note_web_metrics(context, html=html, output=text, strips_boilerplate=False)
+        warn_if_client_rendered(
+            context, html=html, source_name=source.name, backend_id=self.info.id
+        )
         context.note("markdown_characters", len(text))
         return text

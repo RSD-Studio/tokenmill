@@ -46,7 +46,7 @@ from tokenmill.backends._common import (
     probe_module,
     warnings_as_conversion_warnings,
 )
-from tokenmill.backends.web._common import note_web_metrics
+from tokenmill.backends.web._common import note_web_metrics, warn_if_client_rendered
 from tokenmill.core.errors import BackendFailed, ConversionError, CorruptSource
 from tokenmill.core.models import (
     Availability,
@@ -179,6 +179,9 @@ class ReadabilityConverter(BaseConverter):
             text += "\n"
 
         note_web_metrics(context, html=html, output=text, strips_boilerplate=True)
+        warn_if_client_rendered(
+            context, html=html, source_name=source.name, backend_id=self.info.id
+        )
 
         if not text.strip():
             raise BackendFailed(

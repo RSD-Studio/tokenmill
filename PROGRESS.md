@@ -11,7 +11,7 @@ _Last updated: 2026-08-22 by Claude Code_
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
-| 5 | Post-processing, formats, measurement depth | ⬜ Not started | — |
+| 5 | Post-processing, formats, measurement depth | ⬜ Not started — **recommended to start**, see `docs/REVIEW_PHASES_0_4.md` | — |
 | 6 | Prompt compression (optional tier) | ⬜ Not started | — |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
 | 8 | GUI (FastAPI + NiceGUI) | ⬜ Not started | — |
@@ -20,7 +20,13 @@ _Last updated: 2026-08-22 by Claude Code_
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
-## Current phase: 2 — Document backends (complete)
+## Current phase: 4 — Repository backends (complete)
+
+Phases 3 and 4 are both complete and verified locally; CI has not run since
+2026-08-22 08:50 UTC. `docs/REVIEW_PHASES_0_4.md` re-evaluates everything built
+so far and recommends starting Phase 5.
+
+## Previous phase: 2 — Document backends (complete)
 
 **Goal:** real document conversion, CPU-only, permissive licences.
 
@@ -1491,6 +1497,86 @@ its header and separator rows. Grepped for each of the manifest's
    a follow-up commit (`d0c9355`) rather than an amend, because `6120078` was
    already pushed and rewriting history hides the mistake instead of fixing it.
    This is exactly what "stage deliberately" is for and I did not do it.
+
+### 2026-08-22 — Full re-evaluation of Phases 0 through 4
+
+`docs/REVIEW_PHASES_0_4.md`. Every acceptance criterion from Phase 0 onwards
+marked verified / unverified / failed with the command that proves it, the whole
+corpus run end to end with the output read, a by-hand clean-install check, the
+cross-cutting seams, a licence audit, and a defects list.
+
+**Score: 17 verified, 4 unverified, 0 failed.** All four unverified items have
+the same cause — CI cannot schedule runners — and they are: real token counts
+(Phase 1 #3), the 9-cell clean-install guard (Phase 2 #4), docling's PDF path
+(Phase 2 #5), and Phase 3's reduction figure in model tokens rather than bytes.
+
+**Two defects were found and fixed during the review rather than only listed.**
+
+1. **A great reduction achieved by losing the content.** Converting
+   `jsrendered.html` reported `1,512 -> 140 (-90.7%)` — a number that would look
+   excellent in a benchmark and represents near-total content loss, which is
+   exactly what `benchmarks/README.md` names as disqualifying. Nothing in the
+   output said so, because from a parser's point of view nothing went wrong.
+   Web backends now warn when a page carries scripts and under 15% of its bytes
+   are visible text. Calibrated against the corpus rather than guessed — 76.3%
+   for `article.html`, 39.3% for `boilerplate.html`, 9.2% for the genuinely
+   client-rendered page — with six tests including the false-positive side.
+2. **A clean install gave a Node error for a Python tool.** On core-only,
+   `tokenmill repo ./project` fell through to repomix (which reports itself
+   available because `npx` exists) and failed with npx instructions, never
+   mentioning `pip install "tokenmill[repo]"`. Found by doing the clean-install
+   check by hand instead of trusting the CI job that has not run.
+
+**The clean install, measured by hand:** `pip install .` takes **11.7 s**, brings
+41 packages and 164 MB, and `import tokenmill` still pulls in **zero**
+third-party modules. Each extra installs cleanly and enables its backends.
+
+**Seams checked, all sound.** The fallback chain ranks every web backend above
+every document backend; an installed `documents` extra cannot change which
+backend converts a page (asserted, not assumed); the error taxonomy **did not
+grow** under two phases of pressure; the per-stage report still balances across
+two new source shapes; `--json` is byte-identically shaped between `convert` and
+`repo`.
+
+**One seam has moved, and it is the trajectory rather than the state.**
+Phase 2 recorded one use of `warnings.catch_warnings` as a Phase 8 concern.
+There are now **five** distinct pieces of process-global state manipulated during
+a conversion — three warning filters, `os.environ`, the stdlib root logger's
+handlers *and level*, and loguru's activation registry. All correctly restored,
+all scoped to one call, none thread-safe. Still a Phase 8 problem; five times
+larger than when it was filed, and the Phase 8 batch runner cannot simply put
+`Pipeline.run` on a thread pool.
+
+**Recommendation: start Phase 5.** Nothing must be repaired first — the one
+defect too close to the project's core promise to leave open was fixed during the
+review. One thing must be *decided*: whether CI can be restored, because Phase 5
+adds format encoders whose correctness is exactly what a 9-cell matrix catches
+and a single Linux box does not.
+
+The advice recorded with it: Phase 5's real risk is that every post-processor in
+it can be measured as a win in tokens and a loss in fidelity, and this project
+has **no fidelity metric** — only pass/fail assertions. Bringing a small piece of
+Phase 10 forward would make "this saved 20% and lost the table" expressible as a
+number, and without it Phase 5's defaults will be argued rather than measured.
+
+### 2026-08-22 — CI still cannot schedule runners, nine hours on
+
+Re-checked at the end of this session, as instructed. **Unchanged and worse than
+when the handover recorded it.** Six runs on `claude/phase-3-4-web-and-repo`
+(runs 37, 39, 41, 43, 45, 47) all failed, and run 47 on `145c2c9` at 20:26 UTC
+has the identical signature: 24 job records created with correct expanded matrix
+names, all 23 real jobs failing 2–6 seconds after starting, across
+`ubuntu-latest`, `macos-latest` and `windows-latest` alike, and the
+`Docling (weekly and on demand)` job correctly evaluating its `if:` to `skipped`.
+
+That last detail is the proof it is not the workflow file: expressions evaluated,
+matrices expanded, jobs were created. Runs 25 through 47 — **23 consecutive runs
+over more than nine hours** — have failed this way. Run 24 on `Main` at 08:50 UTC
+was the last green one.
+
+Everything in Phases 3 and 4 is therefore **local green only**. Nothing is proven
+on Windows, on macOS, on Python 3.12 or 3.13, or against a real tokenizer
+vocabulary. Recorded as such throughout; see the review's §2.
 
 ### 2026-08-22 — Phase 4 exit gate
 

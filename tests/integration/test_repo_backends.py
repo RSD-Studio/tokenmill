@@ -483,3 +483,34 @@ class TestRemoteRepositories:
             pipeline.run(source, NETWORKED.with_(backend="gitingest", timeout_s=30))
 
         assert "Traceback" not in str(excinfo.value)
+
+
+class TestTheCleanInstallStory:
+    """What a user with `pip install tokenmill` and no extras actually sees.
+
+    Found by doing the clean-install check by hand rather than trusting the CI
+    job: on a core-only install gitingest is absent, so the chain falls to
+    repomix — which reports itself available because `npx` exists — and the user
+    who typed `tokenmill repo ./project` got a Node error about a tool they
+    never chose, with no mention of the Python one that would just work.
+    """
+
+    def test_an_auto_selected_repomix_points_at_the_python_backend_first(self) -> None:
+        options = NETWORKED.with_(allow_network=False, backend=None)
+
+        with pytest.raises(NetworkRequired) as excinfo:
+            RepomixConverter()._launcher(options)
+
+        assert excinfo.value.hint is not None
+        assert 'pip install "tokenmill[repo]"' in excinfo.value.hint
+
+    def test_an_explicitly_chosen_repomix_gets_repomix_instructions(self) -> None:
+        """Someone who typed `--backend repomix` wants repomix, not a substitute."""
+        options = NETWORKED.with_(allow_network=False, backend="repomix")
+
+        with pytest.raises(NetworkRequired) as excinfo:
+            RepomixConverter()._launcher(options)
+
+        assert excinfo.value.hint is not None
+        assert "npm install -g repomix" in excinfo.value.hint
+        assert "tokenmill[repo]" not in excinfo.value.hint
