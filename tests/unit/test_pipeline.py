@@ -290,7 +290,7 @@ class TestErrorHandling:
         assert "the source looked odd" in result.warnings
 
     def test_a_source_with_no_before_text_says_so_instead_of_guessing(
-        self, tokenizers: TokenizerRegistry
+        self, tokenizers: TokenizerRegistry, tmp_path: Path
     ) -> None:
         """No readable input means no source stage at all, and a warning.
 
@@ -299,10 +299,17 @@ class TestErrorHandling:
         unreadable, and binary — and that rule is "there is no source stage".
         A row reporting zero characters communicated nothing the absent
         before-count did not already say.
-        """
-        pipeline = build(EchoConverter(output="x", input_formats=("url",)), tokenizers)
 
-        result = pipeline.run(Source.from_url("https://example.com"), OPTS)
+        Phase 3 changed which sources this is *about*. It used to use a URL,
+        because a URL had no readable bytes; the pipeline now fetches one, so a
+        URL has a real before-count and is covered by
+        ``TestUrlFetching`` instead. A repository directory is the case that
+        remains genuinely unreadable, and it is the one Phase 4 cares about.
+        """
+        (tmp_path / "file.txt").write_text("content", encoding="utf-8")
+        pipeline = build(EchoConverter(output="x", input_formats=("repo",)), tokenizers)
+
+        result = pipeline.run(Source.from_path(tmp_path), OPTS)
 
         assert result.stages[0].stage != SOURCE_STAGE
         assert result.tokens_before is None

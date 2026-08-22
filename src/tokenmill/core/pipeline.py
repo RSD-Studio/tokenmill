@@ -65,7 +65,9 @@ from tokenmill.core.models import (
     ConversionResult,
     ConvertOptions,
     Source,
+    SourceKind,
     StageCount,
+    freeze_metadata,
 )
 from tokenmill.core.protocol import Converter
 from tokenmill.core.registry import Registry, default_registry
@@ -134,12 +136,14 @@ class Pipeline:
         opts = options if options is not None else ConvertOptions()
         started = time.perf_counter()
 
+        source, fetch_warnings, fetch_metadata = self._fetch_if_needed(source, opts)
+
         candidates = self.backends.candidates(source, backend_id=opts.backend)
         chain = self.post_processors.resolve(opts.post_processors)
         meter = self._meter(opts)
 
         result, attempts = self._convert_with_fallback(source, opts, candidates)
-        warnings = [*_fallback_warnings(attempts), *result.warnings]
+        warnings = [*fetch_warnings, *_fallback_warnings(attempts), *result.warnings]
 
         source_stage, source_bytes = self._source_stage(source, meter, warnings)
         stages: list[StageCount] = [source_stage] if source_stage is not None else []
@@ -171,9 +175,14 @@ class Pipeline:
         if source_stage is not None and measured and measured[0] is source_stage:
             tokens_before = source_stage.tokens
 
+        metadata = result.metadata
+        if fetch_metadata:
+            metadata = freeze_metadata({**fetch_metadata, **dict(metadata)})
+
         return replace(
             result,
             text=text,
+            metadata=metadata,
             duration_s=time.perf_counter() - started,
             tokens_before=tokens_before,
             tokens_after=tokens_after,
@@ -183,6 +192,84 @@ class Pipeline:
             attempts=attempts,
             source_bytes=source_bytes,
         )
+
+    def _fetch_if_needed(
+        self, source: Source, options: ConvertOptions
+    ) -> tuple[Source, list[str], dict[str, object]]:
+        """Retrieve a URL source, so that what reaches the backends is bytes.
+
+        Fetching once, here, is what gives a web conversion a real before-count:
+        the downloaded HTML becomes an ordinary readable source and the
+        ``source`` stage measures it. A backend that fetched privately would
+        leave the pipeline with nothing to compare its output against, and
+        "this page got 77% cheaper" would be an assertion rather than a
+        measurement.
+
+        One backend is exempt, and only one kind of backend can be. A converter
+        that declares
+        :attr:`~tokenmill.core.models.BackendInfo.fetches_urls` drives a real
+        browser so that the page's JavaScript runs, which cannot be done to a
+        response that has already been saved. Such a backend is never
+        auto-selected for a URL — launching a browser inside a command the user
+        thought was a download is the same mistake as starting a
+        several-hundred-megabyte model download, which
+        :mod:`tokenmill.core.preferences` settled for docling — so it has to be
+        asked for by name, and asking for it by name is what skips the fetch.
+
+        Args:
+            source: The input, which may or may not be a URL.
+            options: Supplies the fetch policy.
+
+        Returns:
+            The source to convert, any warnings the fetch produced, and the
+            structured facts about it. For anything that is not a URL, the
+            source is returned untouched and both collections are empty — which
+            is the offline guarantee: no other code path here can open a
+            socket.
+
+        Raises:
+            ConversionError: If the fetch is refused or fails.
+        """
+        if source.kind is not SourceKind.URL:
+            return source, [], {}
+
+        if options.backend is not None and self._backend_fetches_urls(options.backend):
+            return source, [], {}
+
+        # Imported here rather than at module scope so that the core pipeline
+        # does not pull in urllib's machinery for the many conversions that
+        # never touch the network.
+        from tokenmill.backends.web.fetch import fetch_url
+
+        fetched = fetch_url(source.url or source.name, options)
+        metadata: dict[str, object] = {
+            "fetched_url": source.url or source.name,
+            "final_url": fetched.final_url,
+            "http_status": fetched.status,
+            "content_type": fetched.media_type,
+            "fetched_bytes": fetched.byte_count,
+            "redirects": fetched.redirects,
+        }
+        return fetched.source, list(fetched.warnings), metadata
+
+    def _backend_fetches_urls(self, backend_id: str) -> bool:
+        """Report whether a named backend retrieves URLs for itself.
+
+        Args:
+            backend_id: The backend the user asked for by name.
+
+        Returns:
+            True when it declares
+            :attr:`~tokenmill.core.models.BackendInfo.fetches_urls`. An unknown
+            id answers False and is left for
+            :meth:`~tokenmill.core.registry.Registry.candidates` to reject with
+            a proper message, so the error a user sees is about the backend
+            rather than about fetching.
+        """
+        try:
+            return self.backends.get(backend_id).info.fetches_urls
+        except ConversionError:
+            return False
 
     def _convert_with_fallback(
         self,

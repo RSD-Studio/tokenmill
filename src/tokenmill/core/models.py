@@ -261,6 +261,13 @@ class BackendInfo:
         requires_gpu: Whether usable performance needs a GPU.
         requires_network: Whether it must reach the network to work.
         requires_binary: An executable that must be on ``PATH``, if any.
+        fetches_urls: Whether this backend retrieves a URL itself rather than
+            being handed the already-downloaded bytes. Almost every web backend
+            wants the bytes: the pipeline fetches once, applies one robots and
+            size policy, and the raw HTML becomes a measurable before-count.
+            A backend sets this only when fetching *is* what it adds — driving
+            a real browser so that JavaScript runs, which cannot be done after
+            the fact on a saved response.
         upstream_url: Where the wrapped tool lives.
         priority: Auto-selection rank; higher wins. See
             :meth:`~tokenmill.core.registry.Registry.select`.
@@ -280,6 +287,7 @@ class BackendInfo:
     requires_gpu: bool = False
     requires_network: bool = False
     requires_binary: str | None = None
+    fetches_urls: bool = False
     priority: int = 0
 
     def __post_init__(self) -> None:
@@ -329,6 +337,10 @@ class Source:
         url: The address, for ``URL`` sources.
         text: The literal text, for ``TEXT`` sources.
         media_type: An IANA media type when one is known.
+        format_hint: Overrides the format that would be derived from
+            :attr:`name`. Set when the format is known from something better
+            than a filename — a fetched page's ``Content-Type`` header, say,
+            where the URL may carry no extension at all.
     """
 
     kind: SourceKind
@@ -338,6 +350,7 @@ class Source:
     url: str | None = None
     text: str | None = None
     media_type: str | None = None
+    format_hint: str | None = None
 
     @classmethod
     def from_path(cls, path: str | Path, *, media_type: str | None = None) -> Source:
@@ -402,6 +415,76 @@ class Source:
         return cls(kind=SourceKind.URL, name=url, url=url, media_type="text/html")
 
     @classmethod
+    def from_fetched(
+        cls,
+        url: str,
+        data: bytes,
+        *,
+        media_type: str | None = None,
+        format_hint: str | None = None,
+    ) -> Source:
+        """Build a source from content already downloaded from a URL.
+
+        This is what a ``URL`` source becomes once the fetcher has run. The
+        distinction matters for measurement: an unfetched ``URL`` source has no
+        readable bytes, so the pipeline reports no before-count, whereas a
+        fetched one carries the real page and its raw HTML is a genuine
+        "before" that the extracted Markdown can be compared against.
+
+        Args:
+            url: Where the content came from. Kept as the display name, because
+                that is what the user typed and what they should see in the
+                report.
+            data: The fetched bytes, already transcoded to UTF-8 if the server
+                declared some other charset.
+            media_type: The response's media type, without parameters.
+            format_hint: The format token backends should match on, e.g.
+                ``html`` or ``pdf``. Passed explicitly because a URL frequently
+                carries no usable extension — ``https://example.com/blog/post``
+                is an HTML page whose name ends in ``post``.
+
+        Returns:
+            The source.
+        """
+        return cls(
+            kind=SourceKind.BYTES,
+            name=url,
+            data=data,
+            url=url,
+            media_type=media_type,
+            format_hint=format_hint,
+        )
+
+    @classmethod
+    def from_git(cls, url: str) -> Source:
+        """Build a repository source from a remote Git URL.
+
+        The repository is not cloned here. A ``REPO`` source with a
+        :attr:`url` and no :attr:`path` means "this repository lives over
+        there"; the repo backends clone it into a temporary directory for the
+        duration of one conversion and remove it again.
+
+        Args:
+            url: An ``https``, ``http``, ``git`` or ``ssh`` Git URL.
+
+        Returns:
+            The source.
+
+        Raises:
+            ValueError: If the scheme is not one of those four. ``file://`` and
+                ``ext::`` are refused deliberately: ``ext::`` makes git run an
+                arbitrary command, and a local repository should be given as a
+                path.
+        """
+        if not url.startswith(("https://", "http://", "git://", "ssh://")):
+            msg = (
+                f"unsupported Git URL scheme: {url!r} "
+                f"(expected https://, http://, git:// or ssh://)"
+            )
+            raise ValueError(msg)
+        return cls(kind=SourceKind.REPO, name=url, url=url, format_hint="repo")
+
+    @classmethod
     def from_text(cls, text: str, *, name: str = "<text>") -> Source:
         """Build a source from a literal string.
 
@@ -419,9 +502,12 @@ class Source:
         """Return the format token used to match backends.
 
         Returns:
-            A lowercase extension without the dot for file and bytes sources,
-            or the pseudo formats ``url``, ``repo`` and ``text``.
+            :attr:`format_hint` when one was set, otherwise a lowercase
+            extension without the dot for file and bytes sources, or the pseudo
+            formats ``url``, ``repo`` and ``text``.
         """
+        if self.format_hint is not None:
+            return self.format_hint
         if self.kind is SourceKind.URL:
             return "url"
         if self.kind is SourceKind.REPO:
@@ -518,12 +604,31 @@ class ConvertOptions:
             registry's default chain.
         image_handling: What the ``links`` post-processor does with images.
         link_handling: What the ``links`` post-processor does with links.
-        allow_network: Whether backends may make network calls. Default-deny:
-            converting a local file never reaches out.
+        allow_network: Whether a backend may make network calls *of its own* —
+            fetching a model or a tokenizer vocabulary on first use.
+            Default-deny: converting a local file never reaches out.
         fallback: Whether auto-selection may try the next candidate backend
             when the preferred one fails. Never applies to an explicit
             :attr:`backend`, which must run or error.
-        timeout_s: Wall-clock budget for a single conversion.
+        fetch: Whether tokenmill may retrieve a source the user gave it as a
+            remote address — an ``http(s)`` page, or a Git URL to clone.
+
+            This is deliberately separate from :attr:`allow_network`, and the
+            distinction is the whole offline story. Naming a URL *is* the
+            request to fetch that URL, so this defaults to true; what it
+            authorises is one retrieval of the thing the user pointed at, and
+            nothing else. :attr:`allow_network` stays false by default and
+            still governs everything a backend might reach for on its own.
+            Setting this to false makes tokenmill refuse the retrieval rather
+            than perform it, which is what ``--offline`` does.
+        respect_robots: Whether a URL fetch obeys the origin's ``robots.txt``.
+            On by default; overriding it is an explicit, deliberate act.
+        max_redirects: How many HTTP redirects a fetch will follow before
+            giving up.
+        user_agent: Overrides the ``User-Agent`` a fetch identifies itself
+            with. The default names tokenmill and its version.
+        timeout_s: Wall-clock budget for a single conversion, and for a single
+            HTTP request within one.
         max_bytes: Refuse sources larger than this, as a denial-of-service
             guard on hostile input.
         extra: Backend-specific options, ignored by backends that do not know
@@ -538,6 +643,10 @@ class ConvertOptions:
     link_handling: LinkHandling = LinkHandling.KEEP
     allow_network: bool = False
     fallback: bool = True
+    fetch: bool = True
+    respect_robots: bool = True
+    max_redirects: int = 5
+    user_agent: str | None = None
     timeout_s: float = 120.0
     max_bytes: int = 256 * 1024 * 1024
     extra: Mapping[str, Any] = field(default_factory=lambda: _EMPTY_METADATA)
