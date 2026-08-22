@@ -9,7 +9,7 @@ _Last updated: 2026-08-22 by Claude Code_
 | 0 | Scaffolding and toolchain | ✅ Complete | passed 2026-08-20 |
 | 1 | Core architecture | ✅ Complete | passed 2026-08-20 |
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
-| 3 | Web backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
+| 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
 | 5 | Post-processing, formats, measurement depth | ⬜ Not started | — |
 | 6 | Prompt compression (optional tier) | ⬜ Not started | — |
@@ -1259,6 +1259,239 @@ This work is a fresh change cut from that merge, per `CONTRIBUTING.md`.
    gone: one rule now covers both ways a source can lack a comparable before.
    The warning still fires and `tokens_before` is still `None`.
 
+### 2026-08-22 — Blocked-host re-probe (start of Phase 3)
+
+Re-probed before designing anything, as instructed, and one result had changed.
+
+| Host | Result |
+|---|---|
+| `pypi.org/simple/` | **200** |
+| `registry.npmjs.org/repomix` | **200** |
+| `raw.githubusercontent.com` | **301** |
+| `index.crates.io/config.json` | **200** — *changed, see below* |
+| `static.crates.io/crates/code2prompt/...` | **200** — *changed* |
+| `crates.io/api/v1/crates/code2prompt` | **403** |
+| `example.com` | **403 CONNECT** |
+| `openaipublic.blob.core.windows.net` | **403 CONNECT** |
+| `huggingface.co` | **403 CONNECT** |
+
+Both tokenizer hosts and `example.com` are unchanged, and the gateway logs the
+denials itself. Every local figure below is `--tokenizer bytes`, i.e. UTF-8
+bytes, and is labelled as such.
+
+**Correction to the handover's environment table.** It records `crates.io` as
+403 and concludes "code2prompt likely not installable from source". The *API*
+is 403; the **registry index and the crate download host are both 200**, and
+they are what `cargo install` uses. `cargo install code2prompt` succeeded here
+and produced `code2prompt 4.3.0`. All three Phase 4 runtimes are therefore
+runnable in this sandbox, which is better than the handover expected.
+
+### 2026-08-22 — Phase 3 dependency probes, before any adapter was written
+
+Measured rather than assumed, because the plan's §1.6 tiering is a claim about
+install weight and the only way to check it is to install things.
+
+| Install | Packages | Size | Notes |
+|---|---|---|---|
+| core (before Phase 3) | 28 | 72 MB | baseline |
+| core + `trafilatura` | 40 | 126 MB | +12 packages, +54 MB — mostly lxml |
+| core + `gitingest` | 42 | 82 MB | +14 packages, +10 MB |
+| `crawl4ai` alone | **94** | **677 MB** | before Playwright downloads a browser |
+| (`docling`, Phase 2, for scale) | 122 | 5.2 GB | |
+
+**A licence finding, and it is the reason this probe matters.**
+`trafilatura` → `courlan` → **`tld`**, which is a *required* dependency and is
+licensed `MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`. Read from the installed
+package metadata; `RESEARCH.md` records only "Trafilatura — Apache-2.0", which is
+true of trafilatura and incomplete about its tree.
+
+It is a **disjunction**: the recipient chooses one, and tokenmill takes MPL-1.1
+— file-level copyleft, the same shape as the `certifi` MPL-2.0 accepted in
+Phase 1, obliging us only to publish changes to `tld`'s own files, of which we
+make none. **No GPL obligation is incurred and none is accepted.** Recorded in
+`docs/LICENSES.md` so the next person to grep the tree for "GPL" finds the
+answer rather than raising a defect. Flagged to the owner as a judgement call
+that is mine to make but not mine to make silently.
+
+A full audit of the 94-package `crawl4ai` resolution found **no GPL, no AGPL and
+no PyTorch**; Crawl4AI and Playwright are both Apache-2.0.
+
+### 2026-08-22 — Phase 3 exit gate
+
+From a venv synced with `--extra dev --extra fixtures --extra documents --extra
+web`, plus `crawl4ai` and `playwright==1.56.0` installed by hand for the browser
+tests (see "Verification notes" below).
+
+- Command: `uv run ruff check .`
+- Result: `All checks passed!`
+
+- Command: `uv run ruff format --check .`
+- Result: `84 files already formatted`
+
+- Command: `uv run mypy`
+- Result: `Success: no issues found in 67 source files`
+
+- Command: `uv run pytest -q --cov=tokenmill`
+- Result: `687 passed, 38 skipped in 27.10s`, `TOTAL 2223 stmts, 90%`. The skips,
+  all reported by name:
+  ```
+  SKIPPED [6]  needs the optional dependency 'docling'
+  SKIPPED [2]  needs a GPU or a multi-gigabyte model download; run with -m heavy
+  SKIPPED [8]  needs a Playwright browser download; run with -m browser
+  SKIPPED [2]  crawl4ai needs network access for 'html' and allow_network is False
+  SKIPPED [4]  docling is not available here
+  SKIPPED [11] needs real network access (a tokenizer vocabulary download)
+  SKIPPED [5]  needs real network access (a tokenizer vocabulary download)
+  ```
+
+- Command: `uv run pytest -q --cov=tokenmill.core --cov=tokenmill.tokens --cov-fail-under=85`
+- Result: `Required test coverage of 85% reached. Total coverage: 94.45%`
+
+- Command: `uv run python scripts/make_fixtures.py --check`
+- Result: `OK: 23 files reproduced byte-for-byte` (22 before Phase 3; the new
+  file is `jsrendered.html`)
+
+- Command: `uv run pytest -q -m browser`
+- Result: `8 passed, 717 deselected in 14.20s`
+
+- Command: `uv run tokenmill backends --all`
+- Result:
+  ```
+  id                domains    license       tier        isolation   availability
+  ----------------  ---------  ------------  ----------  ----------  ---------------------------
+  crawl4ai          web        Apache-2.0    permissive  in-process  available
+  docling           documents  MIT           permissive  in-process  missing dependency: docling
+  kreuzberg         documents  MIT           permissive  in-process  available
+  markdownify_html  web        MIT           permissive  in-process  available
+  markitdown        documents  MIT           permissive  in-process  available
+  pdfplumber        documents  MIT           permissive  in-process  available
+  plaintext         text       Apache-2.0    permissive  in-process  available
+  pypdf             documents  BSD-3-Clause  permissive  in-process  available
+  readability       web        Apache-2.0    permissive  in-process  available
+  trafilatura       web        Apache-2.0    permissive  in-process  available
+  ```
+
+**The plan's sandbox-verification commands for this phase**, translated from
+`tokenfold` to `tokenmill`:
+
+- Command: `uv run tokenmill convert tests/fixtures/boilerplate.html --backend trafilatura --tokenizer bytes`
+- Result:
+  ```
+  source:   boilerplate.html
+  backend:  trafilatura
+  format:   markdown
+  duration: 576 ms
+  post:     normalize_whitespace
+  tokens:   12,481 -> 2,854  (-77.1%, bytes)
+  page:     41.7% of 4,902 visible characters removed as boilerplate
+  ```
+
+- Command: the same with `--backend markdownify_html`
+- Result:
+  ```
+  tokens:   12,481 -> 6,802  (-45.5%, bytes)
+  page:     no boilerplate removed; Markdown syntax added 38.7% to 4,902 visible characters
+  ```
+
+- Command: `uv run tokenmill convert https://example.com --backend trafilatura`
+- Result: **not run.** `example.com` is denied at the egress proxy with a 403
+  CONNECT, as it was in the handover. The live-URL path is covered by
+  `network`-marked tests and is **unverified here**. The fetcher itself is
+  verified against a real HTTP server on loopback — see below.
+
+- Command: `uv run pytest -q tests/integration/test_web_backends.py`
+- Result: `23 passed, 8 skipped` (the 8 are the browser tests, opt-in)
+
+**The measured table, all four read rather than inferred:**
+
+| Backend | Output bytes | Byte reduction | Page text removed | Markers left | Headings | Table |
+|---|---|---|---|---|---|---|
+| `trafilatura` | 2,854 | **−77.1%** | 41.7% | **0 of 6** | 6 of 6 | ✅ |
+| `readability` | 2,864 | −77.1% | 41.6% | 0 of 6 | 6 of 6 | ✅ |
+| `crawl4ai` | 3,394 | −72.8% | 30.8% | **3 of 6** | 6 of 6 | ✅ |
+| `markdownify_html` | 6,802 | −45.5% | **−38.7% (added)** | 6 of 6 | 6 of 6 | ✅ |
+
+**The emitted Markdown, read rather than assumed** (`/tmp/tf.md`, 2,854 bytes):
+the ATX title, all five `##` section headings, all seven article paragraphs
+complete and unbroken, and the 7×5 summary table as a real Markdown table with
+its header and separator rows. Grepped for each of the manifest's
+`boilerplate_markers_must_be_absent` and found **none of the six**.
+
+**Acceptance criteria, one by one:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Reduction on the heavy-boilerplate fixture in the same order of magnitude as RESEARCH.md's ~70–90% | ⚠️ **Met in bytes: −77.1%, inside the band.** In *model tokens* — the unit the published figures use — **unverified**: both tokenizer hosts are denied here. Asserted by `tests/unit/test_web_tokens_network.py`, which prints the figure for the CI log. No token percentage is published anywhere until a green run prints one. |
+| 2 | No network access when converting a local HTML file, asserted by making the socket layer raise | ✅ **Observed.** `TestOfflineGuarantee` monkeypatches `socket.socket.connect` and `socket.create_connection` to raise, and converts `boilerplate.html` through auto-selection. A second test asserts `--offline` refuses a URL *before* opening a socket rather than fetching and discarding. |
+| 3 | *(exit gate)* Measured reduction recorded in PROGRESS.md and docs/BENCHMARKS.md | ✅ Both, with the units stated and the token figure marked unverified. |
+| 4 | *(exit gate)* Offline guarantee test passes | ✅ |
+
+**Verification notes, so nothing here is overstated:**
+
+- **The live-URL path has never run.** `example.com` is blocked. The fetcher is
+  verified against a real `http.server` on `127.0.0.1` — 29 tests covering
+  redirect chains, the redirect cap, scheme-change refusal, the byte cap at and
+  over the limit, `robots.txt` allow and disallow, a disallow never requesting
+  the page itself, charset transcoding, HTTP error statuses, timeouts and a
+  refused connection. Real sockets, real headers, real urllib. A mock would have
+  replaced the code under test, since all of that behaviour lives inside urllib.
+- **crawl4ai's browser needs a version match this sandbox got by luck.**
+  Playwright 1.62 wants Chromium revision 1234; the sandbox has 1194, which is
+  what Playwright **1.56.0** expects. Pinning playwright to 1.56.0 locally made
+  the eight browser tests runnable. That pin is *not* in `pyproject.toml` — it
+  is a fact about this container, not about the project — so on a normal machine
+  `playwright install chromium` is the step, and the adapter reports a missing
+  browser as an actionable failure. Recorded so nobody mistakes the local pin
+  for a project decision.
+
+**Bugs found and fixed during verification**, every one by running something:
+
+1. **crawl4ai was not using a browser at all.** Its `_crawl` routes a `file://`
+   URL around the browser unless `process_in_browser` (or one of a handful of
+   other flags) is set, so the adapter returned a parse of the response body
+   while its docstring claimed it rendered JavaScript. Found by building
+   `jsrendered.html` and getting the placeholder back. Fixed; verified by the
+   fixture returning the hydrated article.
+2. **The JS fixture's sentinel was in its own source.** The first version
+   embedded `RSD-TOKENMILL-RENDERED-9317` whole inside the script, so "the
+   sentinel is in the output" was true of a plain read of the file. The script
+   now joins it from two halves at run time, and a test asserts the whole string
+   appears nowhere in the bytes — otherwise the backend test passes vacuously.
+3. **crawl4ai refuses small client-rendered pages.** Its anti-bot detector
+   inspects the **un-rendered** body and rejects anything under 5,000 bytes with
+   fewer than 50 characters of visible text as
+   `Structural: minimal_text on small page`. That is a false positive on exactly
+   the class of page a browser-driving backend exists for, and it made the first
+   fixture unrenderable. Documented, asserted, and the fixture's placeholder is
+   a full sentence so the success path stays reachable.
+4. **I documented readability as trading precision for recall.** That is the
+   algorithm's general reputation and it is not what happens here: its output is
+   **byte-identical to trafilatura's** apart from the spacing inside the table's
+   separator row. Corrected in the adapter docstring, `preferences.py`,
+   `BACKENDS.md` and the test, and no general claim about their relative quality
+   now appears anywhere.
+5. **I wrote a test asserting trafilatura declines a page of nothing but
+   links.** It does not — it extracts the link text. The claim came from
+   reasoning about extractors rather than running one. The real failure modes,
+   found by running it: below `MIN_EXTRACTED_SIZE` (250 characters) a baseline
+   extractor runs instead, so a short page loses its Markdown structure *and*
+   keeps its navigation; and a heading outside the detected content region is
+   dropped rather than demoted. Both now asserted, with the contrast case.
+6. **`visible_text` counted `<title>`.** A page's tab name is not text on the
+   page, and including it put a string in the boilerplate denominator that
+   appears nowhere in the document. `<head>` is excluded now;
+   `boilerplate.html`'s visible text went 4,975 → 4,902 characters.
+7. **`visible_text` fused words across element boundaries.**
+   `<nav>Home</nav><p>Article</p>` counted as `HomeArticle` — one character
+   short, and a word that is not on the page.
+8. **A commit whose message did not match its contents.** `6120078` described
+   moving the shared helpers *and* repointing the five call sites; only the move
+   was staged. The result worked, because the compatibility shim re-exports
+   everything, but the message claimed changes that were not in it. Corrected by
+   a follow-up commit (`d0c9355`) rather than an amend, because `6120078` was
+   already pushed and rewriting history hides the mistake instead of fixing it.
+   This is exactly what "stage deliberately" is for and I did not do it.
+
 ### 2026-08-22 — CI cannot schedule runners, and it is not our YAML
 
 Four consecutive runs — 25, 26, 27 and 28, across both `claude/phase-2-followups`
@@ -1379,6 +1612,15 @@ to overstate:
 | `kreuzberg` | ✅ pdf, docx, pptx, xlsx, unicode, output read | ✅ 9 cells | — |
 | `docling` | ✅ **Office formats only** — docx, pptx, xlsx, unicode | ❌ not in the default matrix | ⚠️ **its PDF path has never been run anywhere** |
 
+**Where each Phase 3 backend was verified:**
+
+| Backend | Verified locally | Verified in CI | Unverified |
+|---|---|---|---|
+| `trafilatura` | ✅ both HTML fixtures, output read; failure modes reproduced | ❌ CI cannot schedule runners | ⚠️ **its figure in model tokens**; live URLs |
+| `readability` | ✅ both HTML fixtures, output read | ❌ | ⚠️ live URLs |
+| `crawl4ai` | ✅ **rendered `jsrendered.html` in a real Chromium**; 8 browser tests pass | ❌ never in the matrix | ⚠️ live URLs; any browser but this sandbox's Chromium 1194 |
+| URL fetcher | ✅ 29 tests against a real loopback HTTP server | ❌ | ⚠️ **the live-internet path has never run** — `example.com` is blocked |
+
 | Backend | Domain | License | Tier | Wired | Tested | Notes |
 |---------|--------|---------|------|-------|--------|-------|
 | plaintext | text | Apache-2.0 (ours) | core | ✅ | ✅ | Phase 1 reference backend. Passes text/Markdown through; warns on non-UTF-8 input |
@@ -1388,10 +1630,9 @@ to overstate:
 | markitdown | documents | MIT **(verified 0.1.7)** | documents | ✅ | ✅ | **Only backend that keeps PPTX speaker notes.** Mis-splits PDF table headers; demotes the DOCX title |
 | kreuzberg | documents | MIT **(verified 4.10.2)** | documents | ✅ | ✅ | Fast, correct reading order, infers PDF headings. **Flattens PDF tables into prose**; drops DOCX lists |
 | docling | documents | MIT **(verified 2.121.0)** | docling | ✅ | ⚠️ | **Best structure fidelity.** Office paths verified; **PDF path unverified** — needs `huggingface.co`. 122 packages, 5.2 GB |
-| trafilatura | web | Apache-2.0 | core | ❌ | ❌ | Phase 3; primary web extractor |
-| markdownify | web | MIT | core | ❌ | ❌ | Phase 3 |
-| readability | web | Apache-2.0 | web | ❌ | ❌ | Phase 3 fallback |
-| crawl4ai | web | Apache-2.0 | web | ❌ | ❌ | Phase 3; needs a browser download |
+| trafilatura | web | Apache-2.0 **(verified 2.2.0)** | core | ✅ | ✅ | **Removes all 6 boilerplate markers, keeps all 6 headings and the table.** −77.1% bytes on `boilerplate.html`. Below 250 chars of content it silently stops extracting |
+| readability | web | Apache-2.0 **(verified 0.8.4.1)** | web | ✅ | ✅ | An independent second extraction. **Byte-identical to trafilatura on our fixture** apart from table-separator spacing |
+| crawl4ai | web | Apache-2.0 **(verified 0.9.2)** | crawl4ai | ✅ | ✅ | **The only backend that renders JavaScript.** Leaves 3 of 6 markers; refuses small SPA shells as anti-bot; 94 packages, 677 MB |
 | gitingest | repo | MIT | core | ❌ | ❌ | Phase 4; Python-native, primary |
 | repomix | repo | MIT | subprocess | ❌ | ❌ | Phase 4; Node — subprocess only |
 | code2prompt | repo | MIT | subprocess | ❌ | ❌ | Phase 4; Rust — subprocess only |

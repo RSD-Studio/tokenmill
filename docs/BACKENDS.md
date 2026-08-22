@@ -1,6 +1,6 @@
 # Backends
 
-**Status:** current as of Phase 2. Every backend described here exists and is
+**Status:** current as of Phase 3. Every backend described here exists and is
 installed by `pip install tokenmill` or one of its extras.
 
 This is the document that keeps the project honest about the tools it wraps.
@@ -32,6 +32,9 @@ every file is generated, so the observations are reproducible by anyone.
 | `unicode.docx` | Ten scripts including RTL, CJK, a ZWJ emoji family and a flag |
 | `deck.pptx` | Five slides, speaker notes on four of them |
 | `data.xlsx` | Three named sheets, one `AVERAGE` formula |
+| `article.html` | The clean article: the extraction baseline, no boilerplate |
+| `boilerplate.html` | The same article body wrapped in nav, ads, banners and a footer. 12,481 bytes, 4,902 characters of visible text |
+| `jsrendered.html` | A page whose article is inserted by a script. Parsers see a placeholder; a browser sees the article |
 
 ---
 
@@ -44,6 +47,9 @@ every file is generated, so the observations are reproducible by anyone.
 | [`markitdown`](#markitdown) | `documents` | MIT | permissive | breadth; PPTX speaker notes | PDF layout, DOCX title |
 | [`kreuzberg`](#kreuzberg) | `documents` | MIT | permissive | speed, reading order, heading inference | destroys PDF tables, drops lists |
 | [`docling`](#docling) | `docling` | MIT | permissive | document structure | 5.2 GB; PDF needs a model download |
+| [`trafilatura`](#trafilatura) | core | Apache-2.0 | permissive | extracting an article from a web page | short pages; it silently stops extracting |
+| [`readability`](#readability) | `web` | Apache-2.0 | permissive | a second, independent extraction | pages that are mostly links |
+| [`crawl4ai`](#crawl4ai) | `crawl4ai` | Apache-2.0 | permissive | pages that need JavaScript | weak extraction; refuses small SPA shells; 677 MB |
 
 Every licence above was read from the **installed package metadata** at the
 moment its adapter was written, not taken from `docs/research/RESEARCH.md`. All
@@ -63,7 +69,8 @@ module and the evidence is below.
 | `pptx` | markitdown → docling → kreuzberg | Only markitdown keeps speaker notes. |
 | `xlsx` | markitdown → kreuzberg → docling | docling drops the sheet names. |
 | `csv` | kreuzberg → markitdown → docling | kreuzberg renders a Markdown table. |
-| `html` | markdownify_html → markitdown → kreuzberg → docling | HTML is the web domain's; Phase 3 revisits it. |
+| `html` | trafilatura → readability → markdownify_html → markitdown → kreuzberg → docling → crawl4ai | Extraction first; the whole-page converter next; the browser last so auto-selection never starts one. |
+| `url` | crawl4ai only | Every other web backend is handed the page the pipeline already fetched. |
 
 A backend the map does not name keeps its own declared priority, so a
 third-party backend can outrank all of these without anyone editing core.
@@ -502,6 +509,254 @@ behind the `heavy` marker, and the manual-dispatch `docling` CI job runs it.
 
 ---
 
+## `trafilatura`
+
+**Install:** core — `pip install tokenmill`
+**License:** Apache-2.0 (verified against installed metadata, 2.2.0)
+**Upstream:** <https://github.com/adbar/trafilatura>
+**Formats:** `html`, `htm`, `xhtml`
+
+The default for a web page since Phase 3, and the backend the project's central
+claim is measured with.
+
+### What it is good at
+
+**Removing the website and keeping the article.** On `boilerplate.html` it
+removes **all six** of the corpus manifest's
+`boilerplate_markers_must_be_absent` — the cookie banner, both advertisement
+slots, the trending rail, the newsletter block and the footer copyright — while
+keeping all six headings at the right level, all seven article paragraphs, and
+the 7×5 summary table as a real Markdown table:
+
+```
+# Why Your Context Window Is Mostly Navigation Menus
+
+A short look at where context windows actually go.
+
+## Where the tokens actually go
+...
+## Summary table
+
+| Backend | License | Runtime | Tables | Pages/sec |
+|---|---|---|---|---|
+| markitdown | MIT | CPU | weak | 12.0 |
+```
+
+12,481 bytes in, 2,854 out: **−77.1%**, in UTF-8 bytes. See
+[`BENCHMARKS.md`](BENCHMARKS.md) for what that figure does and does not claim.
+
+**It keeps structure while stripping furniture**, which is the combination
+`RESEARCH.md` Category 7's rule for this repository asks for — "keep structure,
+strip boilerplate", citing arXiv:2407.05750 measuring +8–33% F1 when layout
+survives. An extractor that took the headings with the navigation would be
+buying a better percentage with worse answers.
+
+### Observed failure modes
+
+**A short page gets no extraction at all, and does not say so.** Trafilatura's
+`MIN_EXTRACTED_SIZE` is 250 characters. Below it, the main algorithm yields
+nothing and a baseline extractor returns the page's raw text instead — with no
+Markdown structure and with the navigation still in it. On a four-element page:
+
+```
+$ tokenmill convert small.html --backend trafilatura --tokenizer bytes
+Nav
+Title
+Body text here.
+```
+
+No `# Title`, and `Nav` survives. So a short page gets neither of the two things
+this backend is for, silently. This is why the CLI's own tests pin
+`--backend markdownify_html`: their sample page is far under the threshold.
+Asserted by
+`test_a_short_page_loses_its_structure_and_keeps_its_navigation`, with
+`test_a_long_enough_page_does_get_structure_and_does_lose_the_navigation` as
+the contrast so the claim stays bounded.
+
+**A heading outside the detected content region is dropped, not demoted.** An
+`<h1>` that sits next to the navigation rather than inside the article is
+treated as page furniture and removed with it.
+
+**A page with no text at all is a failure, not an empty document.** Deliberate,
+and the opposite of how the document tier treats a scanned PDF. A scanned PDF has
+nothing for *anyone* to extract, so the backends warn and return empty. A page
+trafilatura declined is a page another backend can convert in full, so failing
+hands it to the chain:
+
+```
+$ tokenmill convert scriptonly.html --tokenizer bytes
+attempts: trafilatura (failed) -> markdownify_html
+warning:  backend 'trafilatura' failed and tokenmill fell back to the next one:
+trafilatura found no main content in scriptonly.html; the page may be a link
+directory, a search results page, or otherwise not an article
+```
+
+**A correction, recorded because it was written down wrongly first.** The first
+version of this page said trafilatura declines a page of nothing but links. It
+does not — it extracts the link text. That claim came from reasoning about what
+an extractor probably does rather than from running one. The failure modes above
+are what running it actually produced.
+
+### Configuration worth knowing about
+
+**Its own fallbacks are switched off.** Trafilatura calls out to readability and
+justext when its primary algorithm is unsure, which would make this backend's
+output depend on which *other* extractors happen to be installed — the same
+objection that made MarkItDown run with plugins disabled. A backend whose output
+depends on the environment cannot be described truthfully on this page.
+tokenmill's own chain does that job visibly instead, through
+`ConversionResult.attempts`.
+
+**Links are kept.** A documentation page whose references have been deleted has
+lost information. Stripping them is available deliberately, through
+`--links strip`.
+
+### A licence note in its dependency tree
+
+trafilatura itself is Apache-2.0. `courlan`, which it requires, requires `tld`,
+which is tri-licensed `MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`. That is a
+disjunction — the recipient chooses — and tokenmill takes MPL-1.1. See
+[`LICENSES.md`](LICENSES.md); it is not a GPL dependency, and the explanation is
+there so that grepping the tree for "GPL" finds an answer rather than an alarm.
+
+---
+
+## `readability`
+
+**Install:** `pip install "tokenmill[web]"`
+**License:** Apache-2.0 (verified against installed metadata, readability-lxml 0.8.4.1)
+**Upstream:** <https://github.com/buriy/python-readability>
+**Formats:** `html`, `htm`, `xhtml`
+
+The Python port of the arc90/Mozilla algorithm behind Firefox's Reader View. It
+returns cleaned HTML, which this adapter converts to Markdown with markdownify.
+
+### What it is good at
+
+**The same job as trafilatura, by an unrelated algorithm.** On
+`boilerplate.html` it also removes all six boilerplate markers and keeps the
+article, the headings and the table. It exists in the chain so that a page
+trafilatura declines outright gets a second opinion rather than falling straight
+through to the whole-page converter.
+
+**It restores the title the algorithm discards.** readability drops the page
+header, title included. The adapter puts back the title readability itself
+identified — not one invented here — because a document with no title is harder
+to use.
+
+### The claim this page does not make
+
+The obvious thing to write is that readability trades precision for recall,
+which is the algorithm's general reputation. **On our fixture it does no such
+thing.** Its output is byte-identical to trafilatura's apart from the spacing
+inside the table's separator row (`| --- |` against `|---|`) — 2,864 characters
+against 2,854.
+
+That was written the other way round first, from reputation rather than
+measurement, and corrected after running both. One fixture is not a benchmark,
+so no general claim about their relative quality appears anywhere in this
+repository; Phase 10's harness over a real corpus is what could support one.
+`test_it_agrees_with_trafilatura_almost_exactly_on_this_page` fails if an
+upstream release makes them diverge, so this section gets corrected rather than
+quietly becoming false.
+
+### Observed failure modes
+
+**Pages that are mostly links.** The scoring is about text density and link
+density, so a link directory is the shape it handles worst. It returns an empty
+result rather than raising, which this adapter turns into a failure so the chain
+continues.
+
+---
+
+## `crawl4ai`
+
+**Install:** `pip install "tokenmill[crawl4ai]"`, **then** `playwright install chromium`
+**License:** Apache-2.0 (verified against installed metadata, 0.9.2; Playwright 1.62.0 Apache-2.0)
+**Upstream:** <https://github.com/unclecode/crawl4ai>
+**Formats:** `html`, `htm`, `xhtml`, `url`
+
+### Read this before installing it
+
+`pip install crawl4ai` resolves to **94 packages and 677 MB**, measured, before
+Playwright downloads a browser on top. A licence audit of all 94 found no GPL, no
+AGPL and no PyTorch. It is far short of docling's 5.2 GB and far past what
+belongs in a core install, so it gets its own extra — the same treatment and the
+same reason.
+
+Three constraints follow from a browser being more than a fetch:
+
+- **It is never auto-selected.** Ranked last for every format it claims. Ask for
+  it by name.
+- **It requires `--allow-network`, even on a local file.** A browser executes
+  whatever scripts the page carries and loads whatever they ask for, from
+  anywhere. Rendering a saved HTML file can therefore reach the network, and the
+  guarantee that converting a local file does not is worth more than the
+  convenience.
+- **Installing the package is not enough.** A missing browser is reported as an
+  actionable failure with the command that fixes it.
+
+### What it is good at
+
+**Pages that do not exist until JavaScript runs**, which is the whole of its
+contribution. On `tests/fixtures/jsrendered.html` — whose article is inserted by
+a script, and whose sentinel is assembled from two halves at run time so it
+appears nowhere in the file's bytes:
+
+```
+$ tokenmill convert tests/fixtures/jsrendered.html --backend crawl4ai --allow-network
+# The Article That Only Exists After Hydration
+This paragraph is inserted by a script and is present in no response body...
+The sentinel RSD-TOKENMILL-RENDERED-9317 appears exactly once in the rendered
+document and never in the source...
+```
+
+trafilatura on the same file returns the placeholder and nothing else. Both are
+asserted, so the pair is the proof rather than the claim.
+
+### Observed failure modes
+
+**Its extraction is measurably weaker than trafilatura's.** The pruning filter
+scores blocks by text and link density rather than identifying an article, so a
+prose-heavy advertisement scores like prose. On `boilerplate.html` it leaves
+**three of the six** markers where trafilatura leaves none:
+
+```
+Accept all cookies
+SPONSORED: Cut your cloud bill by 40%
+Subscribe to our newsletter
+```
+
+12,481 → 3,394 bytes, −72.8%, against trafilatura's −77.1%. Headings and the
+table survive, so it is not destroying structure to get there — it simply keeps
+furniture. Asserted by name, so an upstream improvement fails the test and this
+paragraph gets corrected.
+
+**It refuses small client-rendered pages as anti-bot blocking.** Its detector
+inspects the **un-rendered** response body and rejects any page under 5,000
+bytes whose body holds fewer than 50 characters of visible text:
+
+```
+error: crawl4ai could not render file:///.../spa.html: Blocked by anti-bot
+protection: Structural: minimal_text on small page (1297 bytes, 18 chars visible)
+```
+
+A small single-page-application shell is exactly that. **So the one class of
+page a browser-driving backend is uniquely able to handle is the class its own
+guard rejects.** tokenmill cannot fix this from outside and surfaces it as a
+typed, printable failure; the chain then offers the page to a backend that can
+at least return the shell. `tests/fixtures/jsrendered.html` carries a
+full-sentence placeholder specifically to stay above the threshold, with a test
+on the fixture so nobody shortens it back.
+
+**It skips the browser for `file://` URLs unless told not to.** Found by running
+it: crawl4ai routes local files around the browser entirely unless
+`process_in_browser` is set, so the adapter was returning a parse of the
+response body while claiming to render. The adapter now sets it. Worth knowing
+if you drive crawl4ai directly.
+
+---
+
 ## Failure modes every backend in this tier shares
 
 **A scanned PDF produces an empty document.** `scanned.pdf` has no text layer by
@@ -574,7 +829,6 @@ turns the chain off entirely.
 
 | Backend | Why | Phase |
 |---|---|---|
-| trafilatura, readability, crawl4ai | Web extraction | 3 |
 | gitingest, repomix, code2prompt | Repository ingestion | 4 |
 | llmlingua2 | Prompt compression | 6 |
 | pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |

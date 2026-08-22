@@ -9,6 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 3 — web backends
+
+- **Three web backends**, licences verified against the installed package
+  metadata:
+  - `trafilatura` (Apache-2.0, **core**) — extracts a page's article and
+    discards the website around it. On `boilerplate.html` it removes **all six**
+    of the corpus manifest's boilerplate markers while keeping all six headings,
+    all seven article paragraphs and the 7×5 table: 12,481 → 2,854 bytes,
+    **−77.1%**, inside `RESEARCH.md`'s published 70–90% band.
+  - `readability` (Apache-2.0, `web`) — the Firefox Reader View algorithm, as a
+    second independent opinion when trafilatura declines a page.
+  - `crawl4ai` (Apache-2.0, `crawl4ai`) — drives a real Chromium so a page's
+    JavaScript runs. The only backend that can convert a client-rendered page,
+    and measurably the weakest extractor of the three.
+- **URL fetching**, in the pipeline rather than in each backend, with a user
+  agent naming tokenmill and its repository, a timeout, a bounded redirect chain
+  that refuses to leave `http(s)`, a byte cap, and `robots.txt` respect that is
+  on by default. Standard-library `urllib`, so the core install gains no
+  dependency for it.
+- **A boilerplate metric that cannot be confused with the token saving.** A web
+  backend records what share of the page's *visible text* it discarded, next to
+  the byte or token reduction, which counts markup removal too. `markdownify_html`
+  scores **−38.7%** on it — it discards no text and adds Markdown syntax — while
+  removing 45.5% of the file's bytes. Reporting one as the other is the
+  misattribution `RESEARCH.md` Category 7 describes.
+- **`tests/fixtures/jsrendered.html`** — a page whose article is inserted by a
+  script, with a sentinel the script assembles from two halves so it appears
+  nowhere in the file's bytes. It is what makes "crawl4ai renders JavaScript"
+  checkable rather than asserted.
+- **New CLI flags** on `convert`: `--offline`, `--ignore-robots`,
+  `--allow-network`, `--user-agent`, `--max-redirects`. A `page:` line in the
+  report and a `web` object in `--json`.
+- **New `browser` test marker**, opt-in like `network` and `heavy`, so the
+  default suite stays offline and CI never downloads a browser.
+- **[`docs/LICENSES.md`](docs/LICENSES.md)** — created. `CONTRIBUTING.md` rule 2
+  had linked to it for three phases and it did not exist.
+- **[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)** — created, partial, and explicit
+  that its figures are in UTF-8 bytes rather than model tokens.
+
+### Changed
+
+#### Phase 3
+
+- **`trafilatura` is now the default backend for HTML**, ahead of
+  `markdownify_html`. This changes what `tokenmill convert page.html` produces:
+  an extracted article instead of the whole page converted faithfully. Ask for
+  the old behaviour with `--backend markdownify_html`, which remains the right
+  choice when you want the entire page.
+- **The shared adapter helpers moved** from
+  `tokenmill.backends.documents._common` to `tokenmill.backends._common`, since
+  web and repository adapters need them too. The old path re-exports everything
+  and is tested, so no existing import breaks.
+- **Additive model changes**: `Source.format_hint`, `Source.from_fetched`,
+  `Source.from_git`; `ConvertOptions.fetch`, `respect_robots`, `max_redirects`,
+  `user_agent`; `BackendInfo.fetches_urls`. `fetch` is deliberately separate
+  from `allow_network` — naming a URL is the request to fetch *that URL*, while
+  `allow_network` stays default-deny and governs what a backend reaches for on
+  its own.
+
 #### Phase 2 — document backends (light tier)
 
 - **Five document backends**, each with its licence verified against the

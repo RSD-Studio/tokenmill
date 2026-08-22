@@ -310,6 +310,87 @@ against extracted Markdown in Phase 3, and compression in Phase 6.
 
 ---
 
+## Fetching happens in the pipeline, not in the backends
+
+`src/tokenmill/backends/web/fetch.py`, called from `Pipeline.run`.
+
+A URL source is retrieved once, before any converter sees it, and what the
+converters receive is bytes. Three things follow, and the third is the reason.
+
+**One policy point.** The user agent, the timeout, the redirect limit, the byte
+cap and `robots.txt` are decided in one function. Four web backends cannot end
+up obeying four different sets of rules, and there is exactly one place that can
+open a socket — which is what makes "converting a local file makes no network
+call" provable rather than asserted.
+
+**One fetch.** Walking a fallback chain would otherwise re-download the page for
+each candidate.
+
+**A real before-count.** This is the load-bearing one. The downloaded HTML
+becomes an ordinary readable source, so the `source` stage measures it, and
+"12,481 bytes of HTML became 2,854 bytes of Markdown" is a measurement. A
+backend that fetched privately would leave the pipeline with nothing to compare
+against, and the headline number would be an assertion about a quantity nobody
+counted.
+
+It also means the *response* decides the format rather than the URL.
+`https://example.com/blog/post` is an HTML page whose path ends in `post`, and a
+URL serving `application/pdf` routes to the PDF backends — `Source.format_hint`
+carries that decision.
+
+### The one backend that is exempt, and why only one kind can be
+
+A converter declaring `BackendInfo.fetches_urls` is handed the raw URL. Exactly
+one does: `crawl4ai`, which drives a browser so the page's JavaScript runs.
+That cannot be done to a response somebody already saved, so for that backend
+the fetch *is* the contribution.
+
+Such a backend is never auto-selected. It has to be named, and naming it is what
+skips the pre-fetch. Launching a browser inside a command a user thought was a
+download is the same mistake as starting a several-hundred-megabyte model
+download, which the preference map already settled for docling's PDF path.
+
+### `fetch` and `allow_network` are two permissions, not one
+
+`ConvertOptions.fetch` defaults to **true**; `allow_network` defaults to
+**false**. That looks inconsistent until you see what each authorises.
+
+Naming a URL *is* the request to fetch that URL. Refusing to do the thing the
+user typed, pending a second flag, is not a security posture — it is an
+obstacle. So `fetch` permits **one retrieval of the address the user supplied**,
+and nothing else.
+
+`allow_network` governs everything a backend might reach for on its own
+initiative: a layout model, a tokenizer vocabulary, a browser loading whatever
+subresources a page asks for. That stays default-deny, and the guarantee it
+protects — a local conversion never reaches out — is unchanged, because a local
+file never enters the fetch path at all.
+
+`--offline` sets `fetch` to false, which makes tokenmill refuse the retrieval
+rather than perform it. A test asserts it refuses *before* opening a socket,
+because fetching and then discarding would satisfy the letter of it and none of
+the point.
+
+### Two numbers for a web page, deliberately not one
+
+`tokens_before → tokens_after` counts everything that went away: tags, scripts,
+styles **and** page furniture. A web backend additionally records
+`boilerplate_reduction`: the share of the page's *visible text* it discarded,
+measured against a tag-stripped, script-free rendering of the same page.
+
+They answer different questions, and on our fixture they disagree usefully.
+`markdownify_html` removes 45.5% of the file's bytes and discards **no** text at
+all — its boilerplate figure is *negative*, because Markdown bullets, link
+targets and table pipes cost characters. `trafilatura` removes 77.1% of the
+bytes and 41.7% of the text.
+
+A converter cannot score well on both by accident, and reporting either as the
+other is precisely the misattribution `RESEARCH.md` Category 7 is about: *"the
+savings come overwhelmingly from stripping nav/ads/scripts, not from markdown
+syntax itself."* Keeping them apart in the data model is how the CLI, the JSON
+output and the Phase 8 GUI all stay honest about it without each having to
+remember to be.
+
 ## The pipeline
 
 `src/tokenmill/core/pipeline.py`.
@@ -525,7 +606,7 @@ Note that `warnings.catch_warnings` manipulates global state and is not
 thread-safe. Nothing runs conversions concurrently today; the Phase 8 batch
 runner will have to account for it, and `PROGRESS.md` records that.
 
-## What Phase 2 deliberately does not include
+## What Phases 2 and 3 deliberately do not include
 
 Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
 
@@ -535,11 +616,15 @@ Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
   the adapter warns when it detects a gutter, but detecting is as far as it
   goes; reordering a page is a layout engine, not an adapter.
 
-- **URL fetching.** `Source.from_url` exists and validates the scheme, but no
-  backend fetches. Fetching, `robots.txt`, redirect limits and offline mode are
-  Phase 3.
+- ~~**URL fetching.**~~ **Done in Phase 3**, in the pipeline — see above.
 - **Repository ingestion.** `SourceKind.REPO` exists; no backend claims it.
   Phase 4.
+- **A shared `SubprocessConverter`.** `IsolationMode.SUBPROCESS`,
+  `LicenseTier.COPYLEFT` and `BackendFailed.stderr` all exist and are enforced,
+  but binary discovery, version probing and the sandboxing policy are Phase 7.
+- **Conditional or authenticated fetching.** No cookies, no headers beyond the
+  user agent, no ETag or caching. A page behind a login is not fetchable, and
+  saying so beats a half-implemented credential story.
 - **Formats beyond Markdown and text.** `OutputFormat` has two members. CSV,
   TOON and JSON encoders are Phase 5.
 - **Cost estimation.** The plan puts it in the token layer with user-supplied
