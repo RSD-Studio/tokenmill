@@ -46,13 +46,25 @@ classifiers = [
 # GPU and no system binary, in under a minute. Nothing heavy, nothing copyleft,
 # nothing that pulls PyTorch may ever appear in this list.
 #
-# Each phase adds only what that phase's code actually imports. Phase 1 adds
-# three, all permissive, all pure Python or shipping wheels for every platform
-# in the CI matrix:
+# Each phase adds only what that phase's code actually imports.
+#
+# Phase 1 added three:
 #
 #   typer        MIT     the CLI (pulls click, rich, shellingham)
 #   tiktoken     MIT     token counting; fetches its vocabulary on first use
 #   markdownify  MIT     the markdownify_html reference backend (pulls bs4)
+#
+# Phase 2 adds the two light PDF readers the plan (§1.6) names as core members.
+# Both licences were read from the installed package metadata, not from
+# RESEARCH.md:
+#
+#   pdfplumber   MIT           tables recovered as tables (pulls pdfminer.six,
+#                              Pillow, pypdfium2, cryptography)
+#   pypdf        BSD-3-Clause  plain text, correct multi-column reading order,
+#                              no required dependencies of its own
+#
+# Everything markitdown, kreuzberg and docling need stays in an extra. Nothing
+# here pulls PyTorch, needs a compiler, or requires a system binary.
 #
 # The data model uses stdlib dataclasses rather than pydantic, deliberately:
 # `import tokenmill` then pulls in nothing at all. See docs/ARCHITECTURE.md.
@@ -61,6 +73,8 @@ dependencies = [
     "typer>=0.12",
     "tiktoken>=0.8",
     "markdownify>=0.13",
+    "pdfplumber>=0.11",
+    "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -69,12 +83,25 @@ dependencies = [
 # written in the development plan; the real core deps live in `dependencies`.
 core = []
 
-# Phase 2 — light CPU document backends (markitdown, kreuzberg).
-documents = []
+# Phase 2 — light CPU document backends.
+#
+# markitdown's Office and PDF converters live in its own extras, so they are
+# named explicitly; without them it would install but fail on every format we
+# claim for it. Both packages are MIT, verified from installed metadata.
+#
+# kreuzberg is pinned below 5: RESEARCH.md records that the successor "Xberg"
+# v1 line moved to Elastic-2.0 while the v4 line stayed MIT. A resolver is not
+# allowed to change our licence position by picking up a new major.
+documents = [
+    "markitdown[docx,pptx,xlsx,xls,pdf,outlook]>=0.1.2",
+    "kreuzberg>=4.0,<5",
+]
 
-# Phase 2 — Docling. Kept in its own group because it pulls PyTorch; it must
-# never be reachable from `core`.
-docling = []
+# Phase 2 — Docling. Kept in its own group because it pulls PyTorch: a plain
+# `pip install docling` resolves to 122 packages and about 5.2 GB. It must
+# never be reachable from `core`, and the clean-core-install CI job is the
+# standing guard on that. Imported lazily, inside _convert.
+docling = ["docling>=2.0"]
 
 # Phase 3 — JS-rendering web backends (crawl4ai + playwright; browser download).
 web = []
@@ -139,6 +166,11 @@ tokenmill = "tokenmill.cli.main:main"
 [project.entry-points."tokenmill.backends"]
 plaintext = "tokenmill.backends.plaintext:PlaintextConverter"
 markdownify_html = "tokenmill.backends.web.markdownify_html:MarkdownifyHtmlConverter"
+pdfplumber = "tokenmill.backends.documents.pdfplumber_pdf:PdfplumberConverter"
+pypdf = "tokenmill.backends.documents.pypdf_pdf:PypdfConverter"
+markitdown = "tokenmill.backends.documents.markitdown_adapter:MarkItDownConverter"
+kreuzberg = "tokenmill.backends.documents.kreuzberg_adapter:KreuzbergConverter"
+docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 
 [project.entry-points."tokenmill.postprocessors"]
 normalize_whitespace = "tokenmill.post.whitespace:WhitespaceNormalizer"
@@ -247,10 +279,30 @@ module = ["docx.*", "pptx.*", "reportlab.*", "pypdfium2.*", "openpyxl.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# numpy arrives transitively with the `documents` extra (markitdown -> magika,
+# and pandas), and its bundled stubs use `type` statements, which are 3.12+
+# syntax. We target 3.11, so mypy refuses to parse them and stops before it
+# checks any of our code. Nothing here imports numpy; it is only reachable
+# through a dependency's own annotations, so skipping it costs no coverage of
+# ours and restores coverage of everything else. Without this the Type check
+# job fails on any runner whose interpreter is 3.12 or newer.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # Backend dependencies that ship no type stubs. Adapters wrapping these are
 # responsible for narrowing whatever they return back to a typed value at the
 # boundary, so the untyped surface stops at the adapter.
-module = ["markdownify.*", "tokenizers.*"]
+module = [
+    "markdownify.*",
+    "tokenizers.*",
+    "pdfplumber.*",
+    "markitdown.*",
+    "kreuzberg.*",
+    "docling.*",
+]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
@@ -264,6 +316,7 @@ testpaths = ["tests"]
 addopts = "--strict-markers --strict-config -ra --ignore=tests/fixtures"
 markers = [
     "integration: exercises a real backend against a real fixture",
+    "requires(*modules): needs those optional dependencies; skipped when absent",
     "heavy: needs a GPU or a multi-gigabyte model download; skipped by default",
     "compress: needs the `compress` extra and a model download",
     "network: performs real network I/O; skipped by default",

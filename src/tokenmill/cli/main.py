@@ -134,6 +134,10 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
         "token_delta": result.token_delta,
         "reduction_ratio": result.reduction_ratio,
         "post_processors": list(result.post_processors),
+        "attempts": [
+            {"backend": attempt.backend_id, "ok": attempt.ok, "error": attempt.error}
+            for attempt in result.attempts
+        ],
         "warnings": list(result.warnings),
         "metadata": dict(result.metadata),
         "stages": [
@@ -182,6 +186,14 @@ def convert(
     links: Annotated[
         LinkHandling | None, typer.Option("--links", help="Keep or strip Markdown links.")
     ] = None,
+    fallback: Annotated[
+        bool | None,
+        typer.Option(
+            "--fallback/--no-fallback",
+            help="On auto-selection, try the next backend when the preferred one fails. "
+            "Never applies to an explicit --backend.",
+        ),
+    ] = None,
     show_stages: Annotated[
         bool, typer.Option("--show-stages", help="Show the per-stage token breakdown.")
     ] = False,
@@ -210,6 +222,7 @@ def convert(
         post_processors=chain,
         image_handling=images,
         link_handling=links,
+        fallback=fallback,
     )
     # Asking for image or link handling without naming a chain implies wanting
     # the `links` post-processor; it is destructive, so it is not in the default

@@ -1,0 +1,577 @@
+# Backends
+
+**Status:** current as of Phase 2. Every backend described here exists and is
+installed by `pip install tokenmill` or one of its extras.
+
+This is the document that keeps the project honest about the tools it wraps.
+Every failure mode below was **observed on our own fixture corpus** and is
+quoted from real output — none of it is inferred from a README or a benchmark
+someone else ran. Where a backend is bad at something, this page says so, and
+`tests/integration/test_document_backends.py` asserts it, so that when an
+upstream release fixes it the test fails and this page gets corrected rather
+than quietly becoming a lie about a tool that has since improved.
+
+`CONTRIBUTING.md` rule 5 is what this page implements: *a wrapper that hides a
+bad converter is worse than no wrapper*.
+
+---
+
+## The corpus these observations come from
+
+`tests/fixtures/`, built by `scripts/make_fixtures.py`. Nothing is downloaded;
+every file is generated, so the observations are reproducible by anyone.
+
+| Fixture | What it is for |
+|---|---|
+| `simple.pdf` | Baseline digital PDF, 2 pages, four section headings |
+| `tables.pdf` | One 7×5 grid — header plus six rows, **35 cells** |
+| `twocolumn.pdf` | Two columns, with `ORDERMARK 01`…`12` encoding correct reading order |
+| `scanned.pdf` | `simple.pdf` rasterised: **no text layer at all**, by design |
+| `corrupt.pdf` | Truncated: keeps `%PDF-`, has no `%%EOF` |
+| `report.docx` | Title + five H1 + four H2, bullet list, numbered list with one nested item, 4×3 table |
+| `unicode.docx` | Ten scripts including RTL, CJK, a ZWJ emoji family and a flag |
+| `deck.pptx` | Five slides, speaker notes on four of them |
+| `data.xlsx` | Three named sheets, one `AVERAGE` formula |
+
+---
+
+## At a glance
+
+| Backend | Install | License | Tier | Best at | Worst at |
+|---|---|---|---|---|---|
+| [`pdfplumber`](#pdfplumber) | core | MIT | permissive | PDF tables | multi-column reading order |
+| [`pypdf`](#pypdf) | core | BSD-3-Clause | permissive | reading order, tiny footprint | no tables, no headings |
+| [`markitdown`](#markitdown) | `documents` | MIT | permissive | breadth; PPTX speaker notes | PDF layout, DOCX title |
+| [`kreuzberg`](#kreuzberg) | `documents` | MIT | permissive | speed, reading order, heading inference | destroys PDF tables, drops lists |
+| [`docling`](#docling) | `docling` | MIT | permissive | document structure | 5.2 GB; PDF needs a model download |
+
+Every licence above was read from the **installed package metadata** at the
+moment its adapter was written, not taken from `docs/research/RESEARCH.md`. All
+five are permissive, so all five may be imported into the tokenmill process.
+A licence audit of docling's full 122-package resolution found **no GPL or AGPL
+anywhere in the tree**.
+
+### Which one runs by default
+
+`tokenmill.core.preferences` ranks backends per format. The reasoning is in that
+module and the evidence is below.
+
+| Format | Order (best first) | Why |
+|---|---|---|
+| `pdf` | pdfplumber → kreuzberg → markitdown → pypdf → docling | Tables first, then reading order. docling last: its PDF path downloads models. |
+| `docx` | docling → markitdown → kreuzberg | Only docling nests the whole hierarchy correctly. |
+| `pptx` | markitdown → docling → kreuzberg | Only markitdown keeps speaker notes. |
+| `xlsx` | markitdown → kreuzberg → docling | docling drops the sheet names. |
+| `csv` | kreuzberg → markitdown → docling | kreuzberg renders a Markdown table. |
+| `html` | markdownify_html → markitdown → kreuzberg → docling | HTML is the web domain's; Phase 3 revisits it. |
+
+A backend the map does not name keeps its own declared priority, so a
+third-party backend can outrank all of these without anyone editing core.
+
+---
+
+## `pdfplumber`
+
+**Install:** core — `pip install tokenmill`
+**License:** MIT (verified against installed metadata, 0.11.10)
+**Upstream:** <https://github.com/jsvine/pdfplumber>
+**Formats:** `pdf`
+
+### What it is good at
+
+**Tables, and this is the only backend in the tier that gets them right.** On
+`tables.pdf` it recovers all 35 cells, in the right rows, with the right header:
+
+```
+| Backend | License | Runtime | Tables | Pages/sec |
+| --- | --- | --- | --- | --- |
+| markitdown | MIT | CPU | weak | 12.0 |
+| docling | MIT | CPU | strong | 0.8 |
+| pdfplumber | MIT | CPU | good | 3.4 |
+| pypdf | BSD-3 | CPU | none | 18.5 |
+| pymupdf4llm | AGPL-3.0 | CPU | good | 11.1 |
+| marker | GPL-3.0 | GPU | strong | 1.9 |
+```
+
+The adapter does more than call `extract_tables`. `extract_text` alone renders a
+table as loose words on lines, so the adapter walks each page's detected tables
+top to bottom and splices a rendered Markdown table into the position the grid
+occupies, keeping the surrounding prose in document order. The introduction
+above the table and the footnote below it both stay where they belong.
+
+It is also fast and light: pure Python over `pdfminer.six` and `pypdfium2`,
+wheels on every platform in the CI matrix, no system binary.
+
+### Observed failure modes
+
+**Multi-column reading order is wrong.** pdfplumber has no layout model and
+reads a page in scan-line order. On `twocolumn.pdf` the `ORDERMARK` sentinels
+come out interleaved:
+
+```
+ORDERMARK 01  08  02  09  03  10  04  11  05  12  06  07
+```
+
+and the text itself reads as nonsense that is nevertheless fluent, which is what
+makes it dangerous:
+
+```
+Two Column Reading boilerplate, because it is pure cost. Keep the
+structure, because it is load-bearing. And measure
+Order both the token count and whether the answer is still
+```
+
+Because nothing about that output announces itself as broken, **the adapter
+looks for a column gutter and warns**:
+
+```
+warning:  twocolumn.pdf looks multi-column on page(s) 1. pdfplumber has no layout
+model and reads a page in scan-line order, so the columns are very likely
+interleaved in this output. This is a heuristic, not a certainty — check the
+text, and try --backend pypdf or --backend kreuzberg, which read columns in order
+```
+
+The detector measures the widest gap between adjacent word centres. It is
+calibrated against the corpus and the thresholds sit in a real gap in the data:
+
+| Page | Largest gutter | Verdict |
+|---|---|---|
+| `simple.pdf` p1 | 10.8 pt (1.8% of width) | single column |
+| `simple.pdf` p2 | 9.4 pt (1.5%) | single column |
+| `tables.pdf` p1 | 23.9 pt (3.9%) | single column, despite a 5-column table |
+| `twocolumn.pdf` p1 | 37.8 pt (6.2%) | **two columns** |
+
+It is a heuristic, it says so, and it changes nothing about the extraction — it
+only tells the user the one thing they could not otherwise have known.
+
+**No heading detection.** A PDF has no heading structure, and pdfplumber does
+not try to infer any. `simple.pdf`'s section titles come out as plain lines.
+Kreuzberg does infer headings; pdfplumber does not.
+
+**A scanned PDF yields nothing.** `scanned.pdf` returns an empty document. The
+adapter warns rather than exiting 0 in silence:
+
+```
+warning:  scanned.pdf converted to an empty document: pdfplumber found no text
+layer across 2 page(s), which is what a scanned or image-only PDF looks like.
+Extracting text from page images needs OCR, which tokenmill does not ship yet.
+The conversion succeeded; there was simply nothing to extract.
+```
+
+OCR is Phase 9.
+
+**A truncated PDF fails, cleanly.** `corrupt.pdf` raises
+`PdfminerException: Unexpected EOF`, which the adapter maps to `CorruptSource`.
+
+---
+
+## `pypdf`
+
+**Install:** core — `pip install tokenmill`
+**License:** BSD-3-Clause (verified against installed metadata, 6.16.1)
+**Upstream:** <https://github.com/py-pdf/pypdf>
+**Formats:** `pdf`
+
+### What it is good at
+
+**Reading order.** On `twocolumn.pdf` it emits `ORDERMARK 01` through
+`ORDERMARK 12` in ascending order, where pdfplumber interleaves them and
+MarkItDown starts at 08.
+
+Be precise about why, because it is not a promise pypdf makes: it walks the
+page's text objects in the order the PDF's content stream lists them. That
+matches visual order for documents produced by a layout engine that fills frames
+in sequence — which covers most real PDFs, and our fixture — and will not match
+for a generator that emits its content stream out of order.
+
+It is also the smallest thing here: zero required dependencies on Python 3.11+,
+which makes it the backend that still works when everything heavier has failed.
+It is the last member of the PDF fallback chain for exactly that reason.
+
+### Observed failure modes
+
+**No tables.** On `tables.pdf` the grid comes back one cell per line:
+
+```
+Backend
+License
+Runtime
+Tables
+Pages/sec
+markitdown
+MIT
+```
+
+Every value survives as text; the shape does not. Use `pdfplumber` when the
+shape carries the meaning.
+
+**No headings.** Same as pdfplumber — a PDF has no heading structure and pypdf
+does not infer one.
+
+**A scanned PDF yields nothing**, with the same warning as pdfplumber.
+
+**A truncated PDF** raises `PdfStreamError: Stream has ended unexpectedly`,
+mapped to `CorruptSource`. pypdf also logs `WARNING pypdf._reader: EOF marker
+not found` on the way.
+
+**Password-protected PDFs.** Files "encrypted" only to set permission flags open
+with an empty password; the adapter does that and warns that the flags were
+ignored. A file needing a real password raises `CorruptSource` saying so, rather
+than returning a blank document.
+
+---
+
+## `markitdown`
+
+**Install:** `pip install "tokenmill[documents]"`
+**License:** MIT (verified against installed metadata, 0.1.7)
+**Upstream:** <https://github.com/microsoft/markitdown>
+**Formats:** `pdf`, `docx`, `pptx`, `xlsx`, `xls`, `csv`, `json`, `jsonl`,
+`ipynb`, `epub`, `msg`, `zip`, `html`, `htm`, `jpg`, `jpeg`, `png`, `wav`,
+`mp3`, `m4a`
+
+Plugins are disabled (`enable_plugins=False`). A backend whose output depends on
+which third-party MarkItDown plugins happen to be installed could not be
+described truthfully on this page.
+
+### What it is good at
+
+**Breadth.** It converts more formats than anything else in the tier. Reach for
+it when the question is "can tokenmill open this at all".
+
+**PPTX speaker notes — it is the only backend that keeps them.** All four notes
+in `deck.pptx` come through:
+
+```
+<!-- Slide number: 2 -->
+# Where Your Tokens Go
+Navigation
+Advertising
+Cookie banners
+The article you wanted
+
+### Notes:
+Open by asking the room to guess the split. It is always worse than they think.
+```
+
+**XLSX sheets, named.** One Markdown table per sheet under a heading naming it —
+`## backends`, `## corpus`, `## totals` — with the numbers unaltered (`12.0`
+stays `12.0`, where kreuzberg coerces it to `12`).
+
+**Unicode.** All ten scripts in `unicode.docx` round-trip, ZWJ family sequence
+and regional-indicator flag included.
+
+**DOCX lists.** Both list types keep their markers: `* Strip navigation` and
+`1. Keep headings`.
+
+### Observed failure modes
+
+**The PDF table header is mis-split.** On `tables.pdf` it does emit a Markdown
+table, but the header row merges two columns and invents an empty one:
+
+```
+| Backend     | License  | Runtime | Tables Pages/sec |      |
+| ----------- | -------- | ------- | ---------------- | ---- |
+| markitdown  | MIT      | CPU     | weak             | 12.0 |
+```
+
+The six data rows are correct. So 30 of the 35 cells land in the right shape and
+five do not — which is worse than useless if a consumer trusts the header.
+
+**Multi-column reading order is wrong, and differently wrong from pdfplumber.**
+On `twocolumn.pdf` it emits the second column first:
+
+```
+ORDERMARK 08  09  10  11  12  01  02  03  04  05  06  07
+```
+
+**The DOCX title is demoted to body text.** `report.docx`'s Title paragraph
+becomes an ordinary line; the H1s become `#` and the H2s `##`. The hierarchy is
+internally consistent but one level shallower than the document, and the title
+is no longer a heading at all. docling keeps it.
+
+**The DOCX table gets a spurious empty header row:**
+
+```
+|  |  |  |
+| --- | --- | --- |
+| Stage | Tokens | Delta |
+| source | 16180 | - |
+```
+
+mammoth does not mark the first row as a header, so MarkItDown emits an empty
+one above the real one. The real header is now a data row.
+
+**A nested list item is flattened.** `report.docx`'s sub-item becomes `4.` in
+the parent numbering, where the source has it one level down. docling restarts
+it as a nested `1.`.
+
+**Images and audio need external binaries.** MarkItDown shells out to
+`exiftool` (images) and `exiftool` + `ffmpeg` (audio). Without them it returns
+an **empty string and no error at all** — a silent success producing nothing.
+The adapter checks `PATH` and says which binary is missing:
+
+```
+warning:  MarkItDown uses exiftool for png files and it is not on PATH; expect
+little or no content. Install exiftool, or use a backend that does not need it
+```
+
+**It warns at import on some platforms.** MarkItDown pulls in `magika`, which
+pulls in `onnxruntime`, which warns `Unsupported Windows version (2025server)`
+the moment it loads. Under `-W error` that would fail the conversion outright,
+so the adapter captures warnings raised during the import and passes them to the
+user as conversion warnings instead — non-fatal, still visible.
+
+**A scanned PDF yields nothing**, with a warning. **A truncated PDF** raises
+`FileConversionException`, mapped into the taxonomy.
+
+---
+
+## `kreuzberg`
+
+**Install:** `pip install "tokenmill[documents]"`
+**License:** MIT (verified against installed metadata, 4.10.2)
+**Upstream:** <https://github.com/Goldziher/kreuzberg>
+**Formats:** `pdf`, `docx`, `pptx`, `xlsx`, `csv`, `tsv`, `rtf`, `eml`, `json`,
+`xml`, `html`, `htm`, `xhtml`
+
+Pinned `>=4.0,<5`: `RESEARCH.md` records that the successor "Xberg" v1 line moved
+to Elastic-2.0 while the v4 line stayed MIT, and a resolver must not be able to
+change our licence position by picking up a new major.
+
+OCR and caching are both switched off explicitly. OCR is Phase 9, and a
+converter whose behaviour depends on whether a Tesseract binary happens to be
+installed could not be described on this page; caching is off because a
+converter that writes to a cache directory behind the user's back makes a second
+run of the same command unreproducible.
+
+### What it is good at
+
+**Speed and weight.** A Rust core with — as of 4.10.2 — **no required Python
+dependencies at all**. It converts `report.docx` in about 30 ms where MarkItDown
+takes about 790 ms.
+
+**Reading order.** `twocolumn.pdf` comes out `ORDERMARK 01`…`12` in order.
+
+**Heading inference on PDFs.** It emits `# Why Your Context Window Is Mostly
+Navigation Menus` for `simple.pdf`, a document that has no heading structure at
+all. No other backend in the tier tries.
+
+**Tabular text.** `.csv`, `.tsv` and `.xlsx` all render as Markdown tables, with
+XLSX sheets under headings naming them.
+
+### Observed failure modes
+
+**It destroys PDF tables.** This is the disqualifying one, and it is why
+pdfplumber leads the PDF ranking. `tables.pdf` comes back as a heading followed
+by one run-on paragraph:
+
+```
+## Backend License Runtime Tables Pages/sec
+
+markitdown MIT CPU weak 12.0 docling MIT CPU strong 0.8 pdfplumber MIT CPU good
+3.4 pypdf BSD-3 CPU none 18.5 pymupdf4llm AGPL-3.0 CPU good 11.1 marker GPL-3.0
+GPU strong 1.9
+```
+
+Nothing is lost as *text*. Everything that made it a table is gone.
+
+**It drops PPTX speaker notes.** All four notes in `deck.pptx` are absent. Only
+MarkItDown keeps them.
+
+**It loses both DOCX list types.** `report.docx`'s bullet and numbered items
+survive as prose with no markers at all.
+
+**It collides the DOCX title with the H1s.** Both come out as `#`, so the
+document's top level and its sections are indistinguishable:
+
+```
+# Context Efficiency Report
+# Where the tokens actually go
+## Where the tokens actually go: detail
+```
+
+**It coerces numbers.** `data.xlsx`'s `12.0` comes back as `12`.
+
+**A scanned PDF yields nothing**, with a warning. **A truncated PDF** raises
+`ParsingError: Invalid PDF: PdfiumLibraryInternalError`, mapped to
+`CorruptSource`.
+
+**Its shipped type information is wrong.** `OutputFormat` is defined inside an
+`if not TYPE_CHECKING:` block, so a type checker cannot see it, and
+`disable_ocr` is missing from the `ExtractionConfig` stub although the real
+initialiser accepts it. The adapter carries two narrow `type: ignore`s for this,
+and `warn_unused_ignores` is on, so mypy will say when upstream fixes it.
+
+---
+
+## `docling`
+
+**Install:** `pip install "tokenmill[docling]"`
+**License:** MIT (verified against installed metadata, 2.121.0; `docling-core`,
+`docling-parse`, `docling-ibm-models` and `docling-slim` likewise)
+**Upstream:** <https://github.com/docling-project/docling>
+**Formats:** `pdf`, `docx`, `pptx`, `xlsx`, `html`, `htm`, `xhtml`, `csv`,
+`adoc`, `asciidoc`, `odt`, `ods`, `odp`
+
+### Read this before installing it
+
+`pip install docling` resolves to **122 packages and about 5.2 GB**, PyTorch and
+the CUDA runtime among them. That is why it has its own extra, why it is
+imported lazily, and why the `clean-core-install` CI job exists.
+
+**Its PDF path downloads models; its Office paths do not.** This distinction
+decides everything about how the backend behaves:
+
+* DOCX, PPTX, XLSX, HTML, CSV and the OpenDocument formats go through direct
+  parsers. They work fully offline, immediately, with no model.
+* PDF needs the DocLayNet layout model and TableFormer, fetched from
+  `huggingface.co` on first use and cached afterwards.
+
+Because of that, docling is ranked **first for DOCX and last for PDF**.
+Auto-selecting it for a PDF would start a several-hundred-megabyte download
+inside a command the user thought was local. Ask for it by name instead:
+
+```console
+$ tokenmill convert report.pdf --backend docling
+```
+
+OCR is disabled. Docling's default PDF pipeline enables RapidOCR, which fetches
+its own weights from `modelscope.cn` — a third host, and a second surprise
+download.
+
+### What it is good at
+
+**Document structure, and it is the only backend here that gets the whole thing
+right at once.** On `report.docx`:
+
+```
+# Context Efficiency Report
+## Where the tokens actually go
+### Where the tokens actually go: detail
+- Strip navigation
+1. Keep headings
+1. Nested detail under the last item
+| Stage          |   Tokens | Delta   |
+|----------------|----------|---------|
+| source         |    16180 | -       |
+```
+
+Three correct heading levels with the title at the top, both list types with
+their markers, the sub-list restarted as a nested list rather than flattened,
+and a real table header row. MarkItDown loses the title and the header row;
+Kreuzberg loses the lists and collides the title with the H1s.
+
+**Unicode.** All ten scripts in `unicode.docx` round-trip.
+
+### Observed failure modes
+
+**It drops PPTX speaker notes.** Same as kreuzberg; only MarkItDown keeps them.
+
+**It drops XLSX sheet names.** `data.xlsx` comes back as three unlabelled
+tables. The rows are correct and the sheets are indistinguishable, so a reader
+cannot tell which table is `backends` and which is `corpus`.
+
+**It reads its own deprecated fields.** Docling's PDF pipeline reads
+`generate_table_images`, and pydantic raises a `DeprecationWarning` about it.
+Under `-W error` that fails the conversion, so the adapter filters that one
+message around the convert call. Nothing a user can act on.
+
+**With no route to `huggingface.co`, PDF conversion fails** — cleanly, with an
+actionable message rather than an `httpx.ProxyError` traceback:
+
+```
+error: docling could not reach the network while converting tables.pdf:
+ProxyError: 403 Forbidden: caused by ProxyError: 403 Forbidden
+hint:  this backend downloads a model or vocabulary on first use; run it once on
+a networked machine, or choose a backend that needs no download
+```
+
+### Verification status
+
+**The Office paths were run and their output read.** DOCX, PPTX, XLSX and the
+unicode fixture all converted through the real pipeline, and the structure above
+is quoted from that output.
+
+**The PDF path is implemented but unverified.** The development sandbox's egress
+proxy denies `huggingface.co`, so the layout models cannot be fetched there. The
+failure path above *is* verified — that is what the sandbox produces. The
+success path is not, and `PROGRESS.md` records it as unverified rather than
+done. `tests/integration/test_document_backends.py::TestDoclingOnPdf` covers it
+behind the `heavy` marker, and the manual-dispatch `docling` CI job runs it.
+
+---
+
+## Failure modes every backend in this tier shares
+
+**A scanned PDF produces an empty document.** `scanned.pdf` has no text layer by
+design and every backend here returns nothing for it. All of them warn; none of
+them fails. Reading text off page images needs OCR, which is Phase 9.
+
+**None of them does OCR.** Not pdfplumber, not pypdf, not MarkItDown without a
+plugin, not Kreuzberg with OCR disabled, not docling with OCR disabled.
+
+**A binary source's "before" count is not a token count.** Converting a `.docx`
+reports something like `68,190 -> 3,494`. The first number is the file's own
+bytes decoded as text — nobody would ever hand a model the bytes of a zip
+archive — so the percentage between them is not a saving. The pipeline says so:
+
+```
+warning:  report.docx is a binary format, so the before-count is its own bytes
+decoded as text, not text any model would be given. The after-count is real; the
+percentage between them is not a token saving
+```
+
+The meaningful before/after comparison arrives in Phase 3, where raw HTML and
+extracted Markdown are both text a model could actually be given.
+
+---
+
+## When the preferred backend cannot run
+
+Selection returns a chain, not a single winner, and the pipeline walks it. Two
+things can move it along:
+
+**The preferred backend is not installed.** It is filtered out before ranking.
+With MarkItDown uninstalled, `report.docx` converts through kreuzberg instead:
+
+```console
+$ uv pip uninstall markitdown
+$ tokenmill convert tests/fixtures/report.docx --tokenizer bytes
+source:   report.docx
+backend:  kreuzberg
+```
+
+**The preferred backend fails on this particular file.** The next one gets a
+turn, and the result says so:
+
+```
+attempts: markdownify_html (failed) -> markitdown
+warning:  backend 'markdownify_html' failed and tokenmill fell back to the next
+one: empty.html is empty
+```
+
+When every candidate fails, the error names them all:
+
+```
+error: corrupt.pdf could not be parsed: PdfStreamError: Stream has ended unexpectedly
+hint:  every backend that handles this source failed: pdfplumber, kreuzberg,
+markitdown, pypdf
+```
+
+An explicit `--backend` never falls back — a measurement attributed to a
+converter the user did not choose is worse than an error — and `--no-fallback`
+turns the chain off entirely.
+
+---
+
+## What is not here yet
+
+| Backend | Why | Phase |
+|---|---|---|
+| trafilatura, readability, crawl4ai | Web extraction | 3 |
+| gitingest, repomix, code2prompt | Repository ingestion | 4 |
+| llmlingua2 | Prompt compression | 6 |
+| pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |
+| tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |
+| marker, mineru, olmocr, surya, deepseek-ocr | GPU tier, out of process | 9 |

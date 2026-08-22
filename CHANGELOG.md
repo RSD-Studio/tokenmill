@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 2 — document backends (light tier)
+
+- **Five document backends**, each with its licence verified against the
+  installed package metadata rather than taken from a README:
+  - `pdfplumber` (MIT, **core**) — digital PDFs with their tables intact. It
+    splices rendered Markdown tables into the page text in document order, which
+    is what recovers all 35 cells of the `tables.pdf` fixture.
+  - `pypdf` (BSD-3-Clause, **core**) — plain text with correct multi-column
+    reading order, and no required dependencies of its own.
+  - `markitdown` (MIT, `documents`) — the broadest converter in the tier, and
+    the only one that keeps PPTX speaker notes.
+  - `kreuzberg` (MIT, `documents`, pinned `<5`) — a Rust core with no required
+    Python dependencies; fast, good reading order, infers headings from PDFs.
+  - `docling` (MIT, `docling`) — the best document structure in the permissive
+    tier. Behind its own extra and lazily imported: it resolves to 122 packages
+    and about 5.2 GB.
+- **A per-format backend preference map** (`tokenmill.core.preferences`). A
+  single global priority could not express that MarkItDown is right for `.pptx`
+  and wrong for `.docx`, so ranking is per format. A number in the map replaces
+  a backend's declared priority for that one format; a backend the map does not
+  name keeps its own, so a third-party backend can still outrank the built-ins
+  without editing core. Every number cites an observation on our own corpus.
+- **A fallback chain.** `Registry.candidates()` returns the ordered chain rather
+  than one winner, and the pipeline walks it until one backend succeeds. Every
+  attempt is recorded on `ConversionResult.attempts`, and a fallback attaches a
+  warning naming the backend that failed — a conversion that quietly came from
+  the third choice would attribute the measurement to a converter that never
+  ran. An explicit `--backend` never falls back.
+- **`--no-fallback`** on `tokenmill convert`, and an `attempts:` line in the
+  report whenever a fallback actually happened. The full chain is always in
+  `--json`.
+- **`@pytest.mark.requires("markitdown")`**, which skips a test cleanly and
+  *visibly* when an optional dependency is absent.
+- **[`docs/BACKENDS.md`](docs/BACKENDS.md)** — a section per backend covering
+  what it is good at, what it is bad at, its licence and install extra, and its
+  observed failure modes quoted from real output on our own fixtures.
+
+### Changed
+
+- **`tokenmill convert` warns when the source is a binary format.** Converting a
+  `.docx` reports something like `68,190 -> 3,494`, where the first figure is
+  the zip archive's own bytes decoded as text. That is not text any model would
+  be given, so the percentage between the two is not a token saving, and the
+  pipeline now says so.
+- **Every document backend warns when it produces an empty document.** A scanned
+  PDF has no text layer and all five return nothing for it; an empty conversion
+  exits 0 and looks exactly like success. OCR is Phase 9.
+- **The pdfplumber adapter warns when a page looks multi-column.** It has no
+  layout model and interleaves columns, and interleaved columns still read as
+  fluent prose — so the adapter looks for a column gutter and says which pages
+  are affected and which backends read columns in order. Thresholds calibrated
+  against the corpus.
+- **CI now installs the `documents` extra** for the lint, type-check, test and
+  coverage jobs. Without it mypy saw `Any` for every new adapter and the
+  MarkItDown and Kreuzberg integration tests skipped, so Phase 2's adapters
+  would have been verified nowhere. A new `docling` job runs on manual dispatch
+  only.
+- **The protocol-conformance suite now uses the real fixture corpus.** It built
+  text samples only, so a backend claiming `pdf` or `docx` skipped three checks
+  for want of a sample. It also treats `NetworkRequired` as a correct answer
+  from a backend that needs a model download while `allow_network` is false.
+
+### Fixed
+
+- **A third-party library warning at import time no longer fails a conversion.**
+  MarkItDown imports magika, which imports onnxruntime, which warns
+  `Unsupported Windows version` on load; under `-W error` that turned every
+  MarkItDown conversion on Windows into `BackendFailed`. Such warnings are now
+  captured and handed to the user as conversion warnings — non-fatal, still
+  visible.
+- **mypy no longer stops before checking our code on Python 3.12+.** numpy
+  arrives transitively with the `documents` extra and its stubs use 3.12-only
+  syntax while we target 3.11.
+- **Fixture generation no longer depends on the null device.** It isolated git's
+  config with `GIT_CONFIG_GLOBAL=os.devnull`; a path that does not exist reads
+  as an empty config on every platform and does not assume the null device
+  behaves like a config file.
+
 #### Phase 1 — core architecture
 
 - **The plugin system.** Backends, post-processors and tokenizers are all

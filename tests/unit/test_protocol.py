@@ -13,13 +13,16 @@ conversion either returns text or raises something inside the taxonomy.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
+from tests.conftest import FIXTURE_DIR
 from tests.doubles import EchoConverter, ExplodingConverter
-from tokenmill.core.errors import ConversionError
+from tokenmill.core.errors import ConversionError, NetworkRequired
 from tokenmill.core.models import (
+    ConversionResult,
     ConvertOptions,
     Domain,
     IsolationMode,
@@ -67,6 +70,30 @@ def test_both_reference_backends_are_installed() -> None:
         "the reference backends are missing; run `uv sync` so the entry points "
         "are registered, otherwise the conformance suite tests nothing"
     )
+
+
+def test_the_core_document_backends_are_installed() -> None:
+    """The two PDF backends ship in the core install, so they are never optional."""
+    ids = {c.info.id for c in BACKENDS}
+
+    assert {"pdfplumber", "pypdf"} <= ids, (
+        "the core PDF backends are missing; run `uv sync` so the entry points are registered"
+    )
+
+
+def test_every_backend_that_claims_a_binary_format_gets_a_real_sample() -> None:
+    """Guard the guard: a corpus file that goes missing must not silently skip.
+
+    ``_plausible_source`` falls back to ``None`` — reported as a skip — when it
+    has no sample for a backend's formats. That is right for a format nobody
+    has a fixture for, and wrong for ``pdf``, which is the whole point of two
+    of Phase 2's backends.
+    """
+    for fmt, fixture in _CORPUS_SAMPLES.items():
+        assert (FIXTURE_DIR / fixture).is_file(), (
+            f"the conformance suite needs {fixture} to exercise {fmt} backends; "
+            f"run scripts/make_fixtures.py"
+        )
 
 
 @pytest.mark.parametrize("converter", BACKENDS, ids=_backend_id)
@@ -161,14 +188,7 @@ class TestProtocolConformance:
             converter.convert(source, ConvertOptions())
 
     def test_it_converts_a_source_it_claims(self, converter: Converter, tmp_path: Path) -> None:
-        if not converter.is_available():
-            pytest.skip(f"{converter.info.id} is not available here")
-
-        source = _plausible_source(converter, tmp_path)
-        if source is None:
-            pytest.skip(f"no plausible sample for {converter.info.id}")
-
-        result = converter.convert(source, ConvertOptions())
+        result = _convert_a_sample(converter, tmp_path)
 
         assert isinstance(result.text, str)
         assert result.backend_id == converter.info.id
@@ -181,14 +201,7 @@ class TestProtocolConformance:
         A backend that counted tokens itself would have to know about
         tokenizers, and its numbers would bypass the per-stage accounting.
         """
-        if not converter.is_available():
-            pytest.skip(f"{converter.info.id} is not available here")
-
-        source = _plausible_source(converter, tmp_path)
-        if source is None:
-            pytest.skip(f"no plausible sample for {converter.info.id}")
-
-        result = converter.convert(source, ConvertOptions())
+        result = _convert_a_sample(converter, tmp_path)
 
         assert result.tokens_before is None
         assert result.tokens_after is None
@@ -207,6 +220,45 @@ class TestProtocolConformance:
             converter.convert(source, ConvertOptions(max_bytes=1))
 
 
+def _convert_a_sample(converter: Converter, tmp_path: Path) -> ConversionResult:
+    """Convert a sample this backend claims, or skip with a visible reason.
+
+    Three reasons a backend legitimately produces no result here, all reported
+    as skips rather than failures:
+
+    * it is not installed;
+    * no sample exists for any format it claims;
+    * it needs to download a model and ``ConvertOptions.allow_network`` is
+      ``False``, which is the default. ``NetworkRequired`` is the correct
+      answer to that, so the contract checked is that it raises *that*, with a
+      hint — not that it somehow converts anyway.
+
+    Args:
+        converter: The backend under test.
+        tmp_path: A directory to write the sample into.
+
+    Returns:
+        The conversion result.
+    """
+    if not converter.is_available():
+        pytest.skip(f"{converter.info.id} is not available here")
+
+    source = _plausible_source(converter, tmp_path)
+    if source is None:
+        pytest.skip(f"no plausible sample for {converter.info.id}")
+
+    try:
+        return converter.convert(source, ConvertOptions())
+    except NetworkRequired as exc:
+        needs_network = exc
+
+    assert needs_network.hint, "a backend that needs the network must say what to do about it"
+    pytest.skip(
+        f"{converter.info.id} needs network access for {source.format!r} "
+        f"and allow_network is False: {needs_network.message}"
+    )
+
+
 def _write(directory: Path, name: str, content: str = "x") -> Path:
     """Write a small file and return its path.
 
@@ -223,6 +275,37 @@ def _write(directory: Path, name: str, content: str = "x") -> Path:
     return path
 
 
+#: Text samples small enough to write inline.
+_TEXT_SAMPLES = {
+    "txt": "Hello.\n",
+    "md": "# Title\n\nBody.\n",
+    "markdown": "# Title\n\nBody.\n",
+    "rst": "Title\n=====\n",
+    "log": "started\n",
+    "html": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+    "htm": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+    "xhtml": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
+    "csv": "name,value\nalpha,1\n",
+    "tsv": "name\tvalue\nalpha\t1\n",
+    "json": '{"name": "alpha", "value": 1}',
+    "xml": "<doc><name>alpha</name></doc>",
+    "rtf": "{\\rtf1\\ansi Body.\\par}",
+    "eml": "From: a@example.invalid\nSubject: Hi\n\nBody.\n",
+}
+
+#: Binary formats, taken from the real fixture corpus. Phase 1 built text
+#: samples only, so a backend claiming ``pdf`` or ``docx`` skipped three of
+#: these checks for want of a sample — which meant the conformance suite was
+#: not actually exercising the document backends at all. Wiring the corpus in
+#: is what makes those three checks real for them.
+_CORPUS_SAMPLES = {
+    "pdf": "simple.pdf",
+    "docx": "report.docx",
+    "pptx": "deck.pptx",
+    "xlsx": "data.xlsx",
+}
+
+
 def _plausible_source(converter: Converter, tmp_path: Path) -> Source | None:
     """Build a small, valid input for whatever this backend claims to convert.
 
@@ -231,32 +314,24 @@ def _plausible_source(converter: Converter, tmp_path: Path) -> Source | None:
         tmp_path: A directory to write the sample into.
 
     A backend claiming only formats with no sample here is skipped rather than
-    failed. Adding a sample below is how a new format joins the suite.
+    failed. Adding a sample above is how a new format joins the suite.
 
     Returns:
         The source, or ``None`` if no sample is known for the backend's formats.
     """
-    samples = {
-        "txt": "Hello.\n",
-        "md": "# Title\n\nBody.\n",
-        "markdown": "# Title\n\nBody.\n",
-        "rst": "Title\n=====\n",
-        "log": "started\n",
-        "html": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
-        "htm": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
-        "xhtml": "<html><body><h1>Title</h1><p>Body.</p></body></html>",
-        "csv": "name,value\nalpha,1\n",
-        "tsv": "name\tvalue\nalpha\t1\n",
-        "json": '{"name": "alpha", "value": 1}',
-        "xml": "<doc><name>alpha</name></doc>",
-    }
     for fmt in converter.info.input_formats:
-        content = samples.get(fmt)
-        if content is None:
-            continue
-        path = tmp_path / f"sample.{fmt}"
-        path.write_text(content, encoding="utf-8")
-        return Source.from_path(path)
+        fixture = _CORPUS_SAMPLES.get(fmt)
+        if fixture is not None and (FIXTURE_DIR / fixture).is_file():
+            # Copied rather than used in place so that the size-limit check can
+            # not be confused by anything else touching the corpus.
+            path = tmp_path / f"sample.{fmt}"
+            shutil.copyfile(FIXTURE_DIR / fixture, path)
+            return Source.from_path(path)
+        content = _TEXT_SAMPLES.get(fmt)
+        if content is not None:
+            path = tmp_path / f"sample.{fmt}"
+            path.write_text(content, encoding="utf-8")
+            return Source.from_path(path)
     return None
 
 

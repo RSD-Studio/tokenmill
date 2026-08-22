@@ -167,6 +167,58 @@ class TestConvert:
         assert "not measured" in result.stderr
 
 
+class TestFallbackAtTheCommandLine:
+    """The Phase 2 fallback chain, as a user sees it."""
+
+    @pytest.fixture
+    def corrupt_pdf(self, fixture_dir: Path) -> Path:
+        """The corpus's truncated PDF, which every PDF backend refuses."""
+        return fixture_dir / "corrupt.pdf"
+
+    def test_a_file_no_backend_can_read_fails_and_lists_what_was_tried(
+        self, corrupt_pdf: Path
+    ) -> None:
+        result = runner.invoke(app, ["convert", str(corrupt_pdf), *OFFLINE])
+
+        assert result.exit_code == 1
+        assert "pdfplumber" in result.output
+        assert "pypdf" in result.output
+
+    def test_no_fallback_stops_at_the_preferred_backend(self, corrupt_pdf: Path) -> None:
+        result = runner.invoke(app, ["convert", str(corrupt_pdf), "--no-fallback", *OFFLINE])
+
+        assert result.exit_code == 1
+        assert "every backend" not in result.output
+
+    def test_the_attempt_chain_reaches_the_json_output(self, fixture_dir: Path) -> None:
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "tables.pdf"), *OFFLINE, "--json"]
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["attempts"] == [{"backend": "pdfplumber", "ok": True, "error": None}]
+
+    def test_a_conversion_that_did_not_fall_back_prints_no_attempts_line(
+        self, fixture_dir: Path
+    ) -> None:
+        """One backend, one line. The chain is only worth showing when it was walked."""
+        result = runner.invoke(app, ["convert", str(fixture_dir / "tables.pdf"), *OFFLINE])
+
+        assert result.exit_code == 0
+        assert "attempts:" not in result.output
+
+    def test_a_fallback_prints_the_chain_that_was_walked(self, tmp_path: Path) -> None:
+        empty = tmp_path / "empty.html"
+        empty.write_text("   \n", encoding="utf-8")
+
+        result = runner.invoke(app, ["convert", str(empty), *OFFLINE])
+
+        if result.exit_code != 0:
+            pytest.skip("no document backend is installed to fall back to")
+        assert "attempts: markdownify_html (failed) ->" in result.output
+
+
 class TestBackends:
     def test_it_lists_the_reference_backends_with_licences(self) -> None:
         result = runner.invoke(app, ["backends"])

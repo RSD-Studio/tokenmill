@@ -15,6 +15,14 @@ A plugin that fails to load does not take the process with it. Its exception is
 caught, recorded, and surfaced as a backend whose availability is
 :meth:`~tokenmill.core.models.Availability.broken`. A broken third-party plugin
 must degrade to a greyed-out row, never a crash.
+
+Phase 2 adds ranking per source format. With five document backends installed,
+four of them convert PDFs and three convert every Office format, so "which
+backend is best" is a different answer per format;
+:mod:`tokenmill.core.preferences` holds that map and the evidence behind it.
+Selection therefore returns an ordered *chain* of candidates rather than a
+single winner, and the pipeline walks it — which makes the preference map and
+the fallback chain one mechanism instead of two.
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ from tokenmill.core.models import (
     LicenseTier,
     Source,
 )
+from tokenmill.core.preferences import effective_priority
 from tokenmill.core.protocol import Converter
 
 __all__ = [
@@ -274,6 +283,10 @@ class Registry:
     def for_source(self, source: Source, *, available_only: bool = True) -> tuple[Converter, ...]:
         """Return every backend that claims a source, best first.
 
+        Ordering is per format: :mod:`tokenmill.core.preferences` supplies the
+        ranking for formats several backends claim, and a backend the map does
+        not mention keeps its own declared priority.
+
         Args:
             source: The input to match.
             available_only: Drop backends that cannot currently run.
@@ -284,7 +297,8 @@ class Registry:
         candidates = [c for c in self if c.supports(source)]
         if available_only:
             candidates = [c for c in candidates if c.is_available()]
-        return tuple(sorted(candidates, key=_preference_key))
+        source_format = source.format
+        return tuple(sorted(candidates, key=lambda c: _source_key(c, source_format)))
 
     def select(self, source: Source, *, backend_id: str | None = None) -> Converter:
         """Choose the backend to convert a source with.
@@ -295,10 +309,12 @@ class Registry:
            run, that is an error, not a reason to silently substitute
            something else. Silently converting with a different backend than
            the user asked for would make every measurement unattributable.
-        2. Otherwise, among backends that claim the format and can run:
-           highest :attr:`~tokenmill.core.models.BackendInfo.priority` first,
-           then in-process before out-of-process (cheaper), then by id so the
-           choice is deterministic rather than dependent on entry point order.
+        2. Otherwise, among backends that claim the format and can run: the
+           per-format ranking in :mod:`tokenmill.core.preferences`, falling
+           back to each backend's declared
+           :attr:`~tokenmill.core.models.BackendInfo.priority`, then in-process
+           before out-of-process (cheaper), then by id so the choice is
+           deterministic rather than dependent on entry point order.
 
         Args:
             source: The input to convert.
@@ -306,6 +322,31 @@ class Registry:
 
         Returns:
             The chosen backend.
+
+        Raises:
+            BackendUnavailable: If the named backend cannot run.
+            UnsupportedFormat: If nothing available claims the source.
+        """
+        return self.candidates(source, backend_id=backend_id)[0]
+
+    def candidates(self, source: Source, *, backend_id: str | None = None) -> tuple[Converter, ...]:
+        """Return the backends to try for a source, best first.
+
+        This is :meth:`select` without the commitment to one answer. The
+        pipeline walks the chain: if the preferred backend fails, the next one
+        gets a turn and the result records which actually produced the text.
+
+        An explicit ``backend_id`` yields a chain of exactly one. Falling back
+        from a backend the user named would attribute a measurement to a
+        converter that did not make it, which Phase 1 settled is never worth
+        doing.
+
+        Args:
+            source: The input to convert.
+            backend_id: Force a specific backend, yielding a chain of one.
+
+        Returns:
+            The candidate backends, at least one, in preference order.
 
         Raises:
             BackendUnavailable: If the named backend cannot run.
@@ -320,11 +361,11 @@ class Registry:
                     backend_id=backend_id,
                     hint=availability.hint,
                 )
-            return converter
+            return (converter,)
 
-        candidates = self.for_source(source)
-        if candidates:
-            return candidates[0]
+        chain = self.for_source(source)
+        if chain:
+            return chain
 
         # Distinguish "nothing handles this" from "something does but it is not
         # installed" — those need different messages and different user actions.
@@ -349,7 +390,9 @@ class Registry:
 
 
 def _preference_key(converter: Converter) -> tuple[int, int, str]:
-    """Return the sort key implementing the documented preference order.
+    """Return the format-independent sort key.
+
+    Used where there is no source to rank against — listing a domain, say.
 
     Args:
         converter: The backend to rank.
@@ -359,6 +402,30 @@ def _preference_key(converter: Converter) -> tuple[int, int, str]:
     """
     info = converter.info
     return (-info.priority, 0 if info.isolation is IsolationMode.IN_PROCESS else 1, info.id)
+
+
+def _source_key(converter: Converter, source_format: str) -> tuple[int, int, str]:
+    """Return the sort key implementing the documented preference order.
+
+    Identical to :func:`_preference_key` except that the priority comes from
+    the per-format map when it names this backend for this format. That is what
+    lets ``markitdown`` lead for ``.pptx`` and trail for ``.docx`` without
+    either ranking being a lie about the other.
+
+    Args:
+        converter: The backend to rank.
+        source_format: The source's format token.
+
+    Returns:
+        A tuple ordering by descending effective priority, then in-process
+        first, then id.
+    """
+    info = converter.info
+    return (
+        -effective_priority(info, source_format),
+        0 if info.isolation is IsolationMode.IN_PROCESS else 1,
+        info.id,
+    )
 
 
 _DEFAULT: Registry | None = None

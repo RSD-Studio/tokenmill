@@ -24,16 +24,36 @@ load — no network for its vocabulary — every count is ``None``, a warning is
 attached, and the converted document is still returned. The user gets their
 Markdown with the count honestly marked unavailable. We never substitute an
 estimate for a measurement.
+
+Phase 2 adds the **fallback chain**. The registry no longer returns one backend
+but an ordered chain of every installed backend that claims the source's format,
+ranked by :mod:`tokenmill.core.preferences`. The pipeline walks it until one
+succeeds. Two rules keep that from becoming a way to hide failures:
+
+* **Every attempt is recorded** on the result as a
+  :class:`~tokenmill.core.models.BackendAttempt`, and a fallback attaches a
+  warning naming the backend that failed and why. A conversion that quietly
+  came from the third choice would attribute a measurement to the wrong tool.
+* **An explicit ``--backend`` never falls back.** The chain is one long, and a
+  failure is an error.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 
-from tokenmill.core.errors import TokenizerError
-from tokenmill.core.models import ConversionResult, ConvertOptions, Source, StageCount
+from tokenmill.core.errors import ConversionError, TokenizerError, UnsupportedFormat
+from tokenmill.core.models import (
+    BackendAttempt,
+    ConversionResult,
+    ConvertOptions,
+    Source,
+    StageCount,
+)
+from tokenmill.core.protocol import Converter
 from tokenmill.core.registry import Registry, default_registry
 from tokenmill.post.base import PostProcessorRegistry, default_post_registry
 from tokenmill.tokens.meter import TokenMeter
@@ -100,12 +120,12 @@ class Pipeline:
         opts = options if options is not None else ConvertOptions()
         started = time.perf_counter()
 
-        converter = self.backends.select(source, backend_id=opts.backend)
+        candidates = self.backends.candidates(source, backend_id=opts.backend)
         chain = self.post_processors.resolve(opts.post_processors)
         meter = self._meter(opts)
 
-        result = converter.convert(source, opts)
-        warnings = list(result.warnings)
+        result, attempts = self._convert_with_fallback(source, opts, candidates)
+        warnings = [*_fallback_warnings(attempts), *result.warnings]
 
         stages: list[StageCount] = [self._source_stage(source, meter, warnings)]
         stages.append(_measure(CONVERT_STAGE, result.text, meter))
@@ -141,7 +161,62 @@ class Pipeline:
             stages=tuple(stages),
             post_processors=tuple(p.id for p in chain),
             warnings=tuple(warnings),
+            attempts=attempts,
         )
+
+    def _convert_with_fallback(
+        self,
+        source: Source,
+        options: ConvertOptions,
+        candidates: Sequence[Converter],
+    ) -> tuple[ConversionResult, tuple[BackendAttempt, ...]]:
+        """Try each candidate backend in turn until one converts the source.
+
+        Args:
+            source: The input to convert.
+            options: How to convert it; ``fallback`` decides whether a failure
+                moves on to the next candidate.
+            candidates: The backends to try, best first. Never empty — the
+                registry raises rather than returning an empty chain.
+
+        Returns:
+            The successful backend's result, and the record of every attempt.
+
+        Raises:
+            ConversionError: The last failure, when every candidate failed. It
+                carries a hint listing what else was tried, so the user can see
+                that the fallback happened and still did not help.
+        """
+        attempts: list[BackendAttempt] = []
+        failure: ConversionError | None = None
+        for converter in candidates:
+            backend_id = converter.info.id
+            try:
+                result = converter.convert(source, options)
+            except ConversionError as exc:
+                _log.info("backend %s failed on %s: %s", backend_id, source.name, exc)
+                attempts.append(BackendAttempt(backend_id, ok=False, error=str(exc)))
+                failure = exc
+                if not options.fallback:
+                    break
+                continue
+            attempts.append(BackendAttempt(backend_id, ok=True))
+            return result, tuple(attempts)
+
+        if failure is None:  # pragma: no cover - candidates() never returns empty
+            msg = f"no backend was tried for {source.name!r}"
+            raise UnsupportedFormat(msg)
+
+        # Re-raise the last failure rather than a new error of the same class:
+        # the type, the __cause__ and the traceback are all worth keeping, and a
+        # plugin's ConversionError subclass may not share the base initialiser.
+        # Only the hint is amended, to say that falling back did not help.
+        if len(attempts) > 1:
+            failure.hint = (
+                f"every backend that handles this source failed: "
+                f"{', '.join(a.backend_id for a in attempts)}"
+            )
+        raise failure
 
     def _meter(self, options: ConvertOptions) -> TokenMeter | None:
         """Build the meter for this run, or ``None`` if the tokenizer is unknown.
@@ -180,13 +255,31 @@ class Pipeline:
             The source stage's measurements.
         """
         try:
-            raw = source.read_text()
+            data = source.read_bytes()
         except ValueError:
             warnings.append(
                 f"{source.name} has no readable source text, so there is no before-count "
                 f"to compare against"
             )
             return StageCount(stage=SOURCE_STAGE, characters=0, tokens=None)
+
+        try:
+            raw = data.decode("utf-8")
+        except UnicodeDecodeError:
+            # A binary document — a PDF, or an OOXML zip. Its bytes decode to
+            # mojibake, and counting that is arithmetically fine and
+            # semantically useless: nobody would ever hand a model the bytes of
+            # a .docx. The count stays, because it is a true fact about the
+            # file, but it must not be read as "tokens this document used to
+            # cost". Phase 3 introduces the comparison that is meaningful —
+            # raw HTML against extracted Markdown, where both sides really are
+            # text a model could be given.
+            raw = data.decode("utf-8", errors="replace")
+            warnings.append(
+                f"{source.name} is a binary format, so the before-count is its own bytes "
+                f"decoded as text, not text any model would be given. The after-count is "
+                f"real; the percentage between them is not a token saving"
+            )
         return _measure(SOURCE_STAGE, raw, meter)
 
 
@@ -205,6 +298,27 @@ def _measure(stage: str, text: str, meter: TokenMeter | None) -> StageCount:
     if meter is None:
         return StageCount(stage=stage, characters=len(text), tokens=None)
     return meter.measure_stage(stage, text)
+
+
+def _fallback_warnings(attempts: Sequence[BackendAttempt]) -> list[str]:
+    """Describe any backend that failed before the one that succeeded.
+
+    A fallback that leaves no trace is indistinguishable from the preferred
+    backend having worked, which would make the reported measurement look like
+    it came from a converter that never ran.
+
+    Args:
+        attempts: Every attempt, in order.
+
+    Returns:
+        One warning per failed attempt, empty when the first backend worked.
+    """
+    return [
+        f"backend {attempt.backend_id!r} failed and tokenmill fell back to the next "
+        f"one: {attempt.error}"
+        for attempt in attempts
+        if not attempt.ok
+    ]
 
 
 def convert(

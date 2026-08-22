@@ -323,6 +323,83 @@ class PdfSqueezeConverter(BaseConverter):
 `find_spec` rather than a `try: import` because the probe runs on every
 `tokenmill backends` listing, and importing costs whatever the dependency costs.
 
+**A dependency that warns at import time will fail your conversion.** Not
+hypothetically: MarkItDown imports magika, which imports onnxruntime, which
+warns `Unsupported Windows version` the moment it loads, and under `-W error` —
+which this project's own test suite sets — that warning becomes an exception
+inside your lazy import. `BaseConverter` then reports your perfectly healthy
+backend as `BackendFailed`.
+
+Suppressing it is the wrong fix; "your platform is unsupported" is worth
+hearing. Wrap the import instead, and the warning reaches the user as a warning:
+
+```python
+from tokenmill.backends.documents._common import warnings_as_conversion_warnings
+
+
+def _convert(self, source, options, context) -> str:
+    with warnings_as_conversion_warnings(context, activity="importing pdfsqueeze"):
+        import pdfsqueeze
+
+    ...
+```
+
+**An empty result is not a success.** A converter that returns nothing still
+exits 0 and still writes a file. If yours can legitimately produce nothing —
+a scanned PDF has no text layer, and every document backend here returns an
+empty string for one — say so:
+
+```python
+from tokenmill.backends.documents._common import warn_on_empty_output
+
+warn_on_empty_output(
+    text,
+    source=source,
+    context=context,
+    reason="pdfsqueeze found no text layer, which is what a scanned PDF looks like",
+)
+```
+
+---
+
+## Where your backend ranks
+
+`tokenmill` picks a backend per format. Selection is:
+
+1. an explicit `--backend`, which always wins and never falls back;
+2. otherwise, among backends that claim the format **and** can currently run:
+   highest effective priority, then in-process before out-of-process, then by id.
+
+Effective priority comes from the per-format map in
+[`tokenmill/core/preferences.py`](../src/tokenmill/core/preferences.py), falling
+back to your declared `BackendInfo.priority` when the map does not name you.
+That is deliberate: **a high enough `priority` outranks everything the map
+names**, so a third-party backend never needs a core edit to win a format.
+
+```python
+info = BackendInfo(
+    ...,
+    priority=100,  # beats every built-in for any format the map does not rank you in
+)
+```
+
+If your backend belongs in the map — because it is better or worse than a
+built-in at a specific format, and you can show that on the fixture corpus —
+add it there with the evidence, and add the observation to `docs/BACKENDS.md`.
+
+### Fallback
+
+Selection returns a *chain*, and the pipeline walks it until one backend
+succeeds. So your backend gets a turn when a better-ranked one is uninstalled or
+fails on a particular file, and a better-ranked one gets a turn when yours
+fails. Every attempt is recorded on `ConversionResult.attempts`, and a fallback
+warns naming what failed — nothing about it is silent.
+
+This is one more reason to raise a precise error: `CorruptSource` says the input
+is bad, `BackendUnavailable` says you cannot run, and `BackendFailed` says you
+tried and something went wrong. All three let the chain continue; all three read
+differently to the user.
+
 ---
 
 ## Copyleft and non-Python tools
@@ -368,6 +445,11 @@ Installing a backend automatically enrols it in
 points expose. It checks, among other things, that:
 
 - the metadata is complete and the id is a lowercase token;
+- it converts a real sample of a format it claims — the corpus in
+  `tests/fixtures/` supplies PDF, DOCX, PPTX and XLSX, so declaring one of those
+  means being exercised against a real document, not a stub. Raising
+  `NetworkRequired` counts as a correct answer if your backend needs a download
+  and `allow_network` is false;
 - a licence and tier are declared, and a non-permissive tier implies
   out-of-process isolation;
 - input formats are bare lowercase extensions — `pdf`, not `.pdf`;
@@ -400,6 +482,11 @@ $ pytest tests/unit/test_protocol.py -v
 - [ ] Entry point declared under `[project.entry-points."tokenmill.backends"]`.
 - [ ] Tests written, including the error paths.
 - [ ] `pytest tests/unit/test_protocol.py` green with your backend installed.
+- [ ] Import-time warnings wrapped with `warnings_as_conversion_warnings`.
+- [ ] Empty output reported with `warn_on_empty_output`.
+- [ ] `priority` set, or an entry in `FORMAT_PREFERENCES` with its evidence.
 - [ ] If it produces poor output on some input, that goes in
-      `docs/BACKENDS.md` under failure modes. A wrapper that hides a bad
-      converter is worse than no wrapper.
+      [`BACKENDS.md`](BACKENDS.md) under failure modes, **with a test that
+      asserts the failure**, so a future upstream fix corrects the docs instead
+      of quietly falsifying them. A wrapper that hides a bad converter is worse
+      than no wrapper.

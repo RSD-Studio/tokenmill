@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -41,6 +42,30 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for item in items:
             if marker in item.keywords:
                 item.add_marker(skip)
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip a test whose ``requires`` marker names a dependency that is absent.
+
+    ``@pytest.mark.requires("markitdown")`` is how a per-backend integration
+    test says which optional dependency it needs. The plan asks for exactly
+    this, and for it to skip cleanly rather than fail, so a contributor with
+    only the core install still gets a green suite.
+
+    The skip is loud on purpose. ``pytest -rs`` names every one, and the reason
+    says which extra would make it run — a test that quietly vanishes from the
+    run is how a "verified" claim stops being true without anyone noticing.
+
+    Args:
+        item: The test about to run.
+    """
+    for marker in item.iter_markers(name="requires"):
+        for module in marker.args:
+            if importlib.util.find_spec(str(module)) is None:
+                pytest.skip(
+                    f"needs the optional dependency {module!r}; "
+                    f"install it with an extra (see pyproject.toml) to run this test"
+                )
 
 
 @pytest.fixture(scope="session")

@@ -215,11 +215,41 @@ class TestPlaintextBackend:
 
 class TestErrorPaths:
     def test_an_empty_html_file_is_reported_as_corrupt(self, tmp_path: Path) -> None:
+        """markdownify_html's own error path, pinned to that backend.
+
+        Phase 2 gave HTML more than one candidate backend, so this has to name
+        the backend it is about. Run through auto-selection it now falls back
+        instead — see the test below, which records what that does.
+        """
         empty = tmp_path / "empty.html"
         empty.write_text("   \n", encoding="utf-8")
 
         with pytest.raises(CorruptSource, match="is empty"):
-            Pipeline().run(Source.from_path(empty), OFFLINE)
+            Pipeline().run(Source.from_path(empty), OFFLINE.with_(backend="markdownify_html"))
+
+    def test_an_empty_html_file_falls_back_and_says_so(self, tmp_path: Path) -> None:
+        """The Phase 2 behaviour change, asserted rather than left to be noticed.
+
+        Before the fallback chain, an empty HTML file was a hard error from the
+        one backend that claimed HTML. Now the document backends get a turn,
+        and they return an empty document rather than raising — so the run
+        succeeds with nothing in it. That is only acceptable because both facts
+        are visible: the attempt chain names the backend that failed, and the
+        empty-output warning says nothing was extracted.
+        """
+        empty = tmp_path / "empty.html"
+        empty.write_text("   \n", encoding="utf-8")
+
+        try:
+            result = Pipeline().run(Source.from_path(empty), OFFLINE)
+        except CorruptSource:
+            pytest.skip("no document backend is installed to fall back to")
+
+        assert result.text.strip() == ""
+        assert result.attempts[0].backend_id == "markdownify_html"
+        assert not result.attempts[0].ok
+        assert any("fell back" in warning for warning in result.warnings)
+        assert any("empty document" in warning for warning in result.warnings)
 
     def test_a_file_over_the_size_limit_is_refused(self, fixture_dir: Path) -> None:
         source = Source.from_path(fixture_dir / "boilerplate.html")

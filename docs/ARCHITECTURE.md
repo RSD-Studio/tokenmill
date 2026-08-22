@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** current as of Phase 1. Everything described here exists and is
+**Status:** current as of Phase 2. Everything described here exists and is
 tested; nothing below is a plan. Where a later phase changes something, that is
 called out explicitly.
 
@@ -40,7 +40,12 @@ capability is not reachable from the public API, no surface gets it.
    ┌─────────┴─────────┐     ┌─────────┴────────┐      ┌─────────┴────────┐
    │ plaintext         │     │ normalize_       │      │ tiktoken         │
    │ markdownify_html  │     │   whitespace     │      │ hf     (lazy)    │
-   │ …third-party…     │     │ links            │      │ units  (bytes)   │
+   │ pdfplumber        │     │ links            │      │ units  (bytes)   │
+   │ pypdf             │     │                  │      │                  │
+   │ markitdown (opt)  │     │                  │      │                  │
+   │ kreuzberg  (opt)  │     │                  │      │                  │
+   │ docling    (opt)  │     │                  │      │                  │
+   │ …third-party…     │     │                  │      │                  │
    └───────────────────┘     └──────────────────┘      └──────────────────┘
 ```
 
@@ -191,7 +196,7 @@ instead is no better — then the user cannot work out why the backend they
 installed never appeared. Recording and reporting it is the only option that
 leaves the user able to act.
 
-### Selection order
+### Selection order, and why it is per format
 
 An explicitly requested `--backend` always wins. If it cannot run, that is an
 error, not an invitation to substitute something else: silently converting with
@@ -200,14 +205,84 @@ unattributable, which defeats the point of measuring.
 
 Otherwise, among backends that claim the source's format *and* can currently run:
 
-1. highest declared `priority`;
+1. highest **effective** priority (see below);
 2. in-process before out-of-process, because a subprocess costs more;
 3. by id, so the outcome is deterministic rather than dependent on entry point
    iteration order.
 
+Phase 1 had one candidate per format, so "highest declared `priority`" was
+enough. Phase 2 broke that. Five document backends overlap heavily — four
+convert PDFs, three convert every Office format — and *best* turns out to be a
+different backend for each format. MarkItDown is the right choice for `.pptx`
+(the only one that keeps speaker notes) and the wrong one for `.docx` (it demotes
+the title to body text). A single global integer cannot say both.
+
+So `src/tokenmill/core/preferences.py` holds a **per-format map**, and effective
+priority is:
+
+```python
+FORMAT_PREFERENCES.get(source_format, {}).get(backend_id, info.priority)
+```
+
+A number in the map **replaces** the backend's declared priority for that one
+format. A backend the map does not mention keeps its own. Three properties
+follow, and all three were the point:
+
+- **The map is a default, not a gate.** A third-party PDF backend declaring
+  `priority=100` outranks everything we ship, without editing core. That keeps
+  the "add a backend without touching core" promise true.
+- **Ranking is not filtering.** Availability is applied first, so an
+  uninstalled backend never reaches the ordering.
+- **Every number is evidence.** Each entry cites an observation on our own
+  fixture corpus, `docs/BACKENDS.md` quotes the output it came from, and
+  `tests/unit/test_preferences.py` asserts the map is well formed — every id it
+  names exists, and every backend it ranks for a format actually claims that
+  format.
+
 When nothing available claims the format, the error distinguishes "no backend
 handles this" from "a backend handles it but is not installed" — those need
 different actions from the user.
+
+### The fallback chain
+
+`Registry.candidates()` returns the whole ordered chain; `select()` is now just
+its head. The pipeline walks the chain until one backend succeeds. This is the
+same mechanism as the preference map rather than a second one: uninstall the
+preferred backend and it drops out of the ordering; leave it installed and let
+it fail on a particular file and the pipeline moves on.
+
+Two rules stop that becoming a way to hide failures.
+
+**Every attempt is recorded.** `ConversionResult.attempts` carries a
+`BackendAttempt` per backend tried, and each failure also attaches a warning
+naming the backend and its error. A conversion that quietly came from the third
+choice would otherwise look exactly like one the preferred backend handled, and
+the measurement would be attributed to a converter that never ran. The CLI
+prints an `attempts:` line only when a fallback actually happened.
+
+**An explicit `--backend` never falls back.** Its chain is one long. `--no-fallback`
+turns the chain off for auto-selection too, for anyone who would rather see the
+preferred backend's error than a substitute's output.
+
+When every candidate fails, the *last* error is re-raised — its class, its
+`__cause__` and its traceback are all worth keeping — with its hint amended to
+name everything that was tried.
+
+### A measurement whose "before" is not text
+
+Phase 2 introduced a number that is arithmetically fine and semantically
+useless. Converting a `.docx` reports `68,190 -> 3,494`: the first figure is the
+zip archive's own bytes decoded as text. Nobody would ever hand a model the
+bytes of a `.docx`, so the percentage between the two is not a saving.
+
+The count stays — it is a true fact about the file, and dropping it would leave
+document conversions with no "before" at all — but the pipeline now detects a
+source that does not decode as UTF-8 and warns that the figure must not be read
+as a token saving. The comparison that *is* meaningful arrives in Phase 3, where
+raw HTML and extracted Markdown are both text a model could actually be given.
+
+This is an open question for the owner rather than a settled design; see
+`PROGRESS.md`.
 
 ---
 
@@ -388,9 +463,53 @@ documents to C libraries or external binaries.
 
 ---
 
-## What Phase 1 deliberately does not include
+## Third-party libraries that misbehave, and where that is handled
+
+Wrapping five libraries turned up three failures that had nothing to do with any
+document, and all three would have reached users as broken conversions. They are
+handled in `backends/documents/_common.py` rather than in each adapter, because
+they are the same problem wearing different hats.
+
+**A library that warns at import time must not fail a conversion.** MarkItDown
+imports magika, which imports onnxruntime, which warns `Unsupported Windows
+version` the moment it loads. Under `-W error` — which this project's own test
+suite sets, and which applications embedding tokenmill may too — that warning
+became an exception inside the lazy import, and `BaseConverter` reported a
+perfectly healthy converter as `BackendFailed`. Suppressing it would be the
+wrong fix: "your platform is unsupported" is exactly the kind of thing a user
+should hear. So `warnings_as_conversion_warnings` captures warnings raised
+during a third-party import and hands them to the user as conversion warnings —
+non-fatal, still visible, attributed to what raised them.
+
+The exception is a library's *internal* deprecation churn, which a user cannot
+act on: Docling's PDF pipeline reads its own deprecated field, and that one
+message is filtered around the convert call rather than forwarded.
+
+**Five exception hierarchies, one taxonomy.** `classify_failure` maps whatever a
+library raises onto `CorruptSource`, `NetworkRequired` or `BackendFailed`, so a
+truncated PDF reads the same way from all four PDF backends even though they
+raise four unrelated types. It walks the `__cause__` chain, because these
+libraries routinely wrap the informative exception inside a bland one. Anything
+it does not recognise stays `BackendFailed` — guessing harder would mean telling
+a user their file is damaged when the fault is in the converter.
+
+**An empty conversion is not a success.** `warn_on_empty_output` exists because
+exiting 0 with an empty file looks identical to working. `scanned.pdf` has no
+text layer by design and every backend in this tier returns nothing for it.
+
+Note that `warnings.catch_warnings` manipulates global state and is not
+thread-safe. Nothing runs conversions concurrently today; the Phase 8 batch
+runner will have to account for it, and `PROGRESS.md` records that.
+
+## What Phase 2 deliberately does not include
 
 Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
+
+- **OCR.** Every backend here returns an empty document for a scanned PDF, and
+  every one of them warns about it. Reading text off page images is Phase 9.
+- **A layout model for multi-column PDFs.** pdfplumber interleaves columns and
+  the adapter warns when it detects a gutter, but detecting is as far as it
+  goes; reordering a page is a layout engine, not an adapter.
 
 - **URL fetching.** `Source.from_url` exists and validates the scheme, but no
   backend fetches. Fetching, `robots.txt`, redirect limits and offline mode are
@@ -399,8 +518,6 @@ Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
   Phase 4.
 - **Formats beyond Markdown and text.** `OutputFormat` has two members. CSV,
   TOON and JSON encoders are Phase 5.
-- **Fallback chains.** Selection picks one backend. Trying the next when the
-  first fails, and recording which actually ran, is Phase 2.
 - **Cost estimation.** The plan puts it in the token layer with user-supplied
   rates only. No rates, no estimate, so it is not here.
 - **Reference-style link handling.** `links` handles inline links and images and

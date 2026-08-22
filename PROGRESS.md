@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-20 by Claude Code_
+_Last updated: 2026-08-21 by Claude Code_
 
 ## Status at a glance
 
@@ -8,7 +8,7 @@ _Last updated: 2026-08-20 by Claude Code_
 |-------|------|--------|-----------|
 | 0 | Scaffolding and toolchain | ✅ Complete | passed 2026-08-20 |
 | 1 | Core architecture | ✅ Complete | passed 2026-08-20 |
-| 2 | Document backends (light tier) | ⬜ Not started | — |
+| 2 | Document backends (light tier) | ✅ Complete | passed 2026-08-21 |
 | 3 | Web backends | ⬜ Not started | — |
 | 4 | Repository backends | ⬜ Not started | — |
 | 5 | Post-processing, formats, measurement depth | ⬜ Not started | — |
@@ -20,7 +20,69 @@ _Last updated: 2026-08-20 by Claude Code_
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
-## Current phase: 1 — Core architecture (complete)
+## Current phase: 2 — Document backends (complete)
+
+**Goal:** real document conversion, CPU-only, permissive licences.
+
+**Phase 2's content ends at commit `a9d36be`.** The first commit proven
+green across all 23 CI jobs was **`2e675f5`** (run 12), after three real
+failures on run 11 that none of the local checks could have caught — see the
+verification log.
+
+**Built:**
+
+- `backends/documents/` — five adapters, plus `_common.py` holding the
+  behaviour all five must share.
+  - `pdfplumber` (MIT, **core**) — the only backend in the tier that recovers a
+    bordered PDF table as a Markdown table. Splices rendered tables into the
+    page text in document order; warns when a page looks multi-column.
+  - `pypdf` (BSD-3-Clause, **core**) — plain text, correct multi-column reading
+    order, no required dependencies. The last-resort member of the PDF chain.
+  - `markitdown` (MIT, `documents`) — breadth; the only backend that keeps PPTX
+    speaker notes.
+  - `kreuzberg` (MIT, `documents`, pinned `<5`) — Rust core, fast, good reading
+    order, infers headings from PDFs.
+  - `docling` (MIT, `docling`) — best document structure; lazily imported
+    because it resolves to 122 packages and about 5.2 GB.
+- `core/preferences.py` — the per-format backend ranking, with the evidence for
+  every number recorded beside it.
+- `core/registry.py` — `candidates()` returns the ordered chain; `select()` is
+  its head; ordering is now per format.
+- `core/pipeline.py` — walks the chain, records every `BackendAttempt`, warns
+  on a fallback, and warns that a binary source's before-count is not a token
+  saving.
+- `core/models.py` — `BackendAttempt`, `ConversionResult.attempts`,
+  `ConvertOptions.fallback` (all additive).
+- `cli/` — `--no-fallback`, an `attempts:` line when a fallback happened, the
+  chain in `--json`.
+- `tests/conftest.py` — the `@pytest.mark.requires("markitdown")` mechanism the
+  plan asks for.
+- `docs/BACKENDS.md` — a section per backend, with observed failure modes
+  quoted from real output.
+- 542 tests passing locally (537 without docling installed), 23 skipped.
+
+**Acceptance criteria, one by one:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Every fixture format converts through at least one backend | ✅ **Observed.** pdf, docx, pptx, xlsx all converted and the Markdown read. Command output in the verification log. |
+| 2 | Table-bearing PDF: at least one backend preserves the table as a Markdown table, verified by reading the output | ✅ **Observed.** pdfplumber recovers all **35 cells** of `tables.pdf` as a real Markdown table, header row correct, first column in the right order, spliced between the introduction and the footnote. Read, not inferred from exit code. |
+| 3 | Fallback chain demonstrably works when the primary backend is uninstalled | ✅ **Observed.** Uninstalled markitdown; `report.docx` and `deck.pptx` converted through kreuzberg instead. Also observed for the *failure* path: an empty HTML file fails `markdownify_html` and falls through to `markitdown`, with `attempts: markdownify_html (failed) -> markitdown` in the report. |
+| 4 | No core-install regression | ✅ **Verified in CI**, all nine cells (3 OS × 3 Python). Docling stays behind its extra with a lazy import; `import tokenmill` still pulls in zero third-party modules. |
+
+**What Phase 2 does *not* do**, so nobody reads more into it than is there:
+
+- **No OCR.** `scanned.pdf` has no text layer and *every* backend here returns
+  an empty document for it. All of them warn; none of them fails. Phase 9.
+- **No layout model.** pdfplumber interleaves two-column pages. The adapter
+  detects a column gutter and warns, which is as far as an adapter should go —
+  reordering a page is a layout engine.
+- **Docling's PDF path is unverified.** See below.
+
+**Blocked on:** nothing. Two items need an owner decision — Open questions 1
+and 2.
+
+## Previous phase: 1 — Core architecture (complete)
 
 **Goal:** the plugin system and token measurement working end to end, proven by
 two deliberately trivial backends.
@@ -119,6 +181,26 @@ with the gateway itself logging the 403s. See the verification log entry
 "Blocked-host re-probe". The Phase 1 token layer was designed around this — the
 arithmetic is testable offline, and everything needing a real vocabulary is
 behind the `network` marker.
+
+**Re-probed again at the start of Phase 2 (2026-08-21): still denied**, both of
+them, unchanged. Phase 2 added a third consequence, which was probed rather than
+assumed: **Docling downloads its layout models from `huggingface.co`**, so its
+PDF path cannot run here either. Its Office paths turn out not to need any
+model and do run — see the verification log.
+
+**One more environment defect, found by running things.** This container's
+`/dev/null` is not a device. It is a 48-byte regular file containing a shell
+start-up error message (`/bin/bash: line 1: unalias: unsetenv: not found`).
+`scripts/make_fixtures.py` isolated git's config with
+`GIT_CONFIG_GLOBAL=os.devnull`, and git refused it —
+`fatal: bad config line 1 in file /dev/null` — which broke fixture
+regeneration for a reason with nothing to do with fixtures. I could not repair
+the device node (the sandbox denies `mknod` and `truncate` on it, reasonably),
+so the generator now points git's config lookup at a path that does not exist,
+which reads as an empty config on every platform. `--check` still reports 22
+files reproduced byte-for-byte, so the corpus is unchanged. **Worth flagging to
+the owner**: anything else in these sessions that writes to `/dev/null`
+expecting it to discard is instead appending to a file.
 
 ## Verification log
 
@@ -736,6 +818,388 @@ verified by a blocking job that cannot silently stop running.
 **Verdict: PASS.** Phase 1 is green on every platform and Python version in the
 matrix, and its central claim is proven against a real tokenizer.
 
+### 2026-08-21 — Blocked-host re-probe (start of Phase 2)
+
+Re-probed both hosts before designing anything, as instructed.
+
+- Command: `curl -sS -o /dev/null -w '%{http_code}\n' --max-time 25 "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"`
+- Result: `curl: (56) CONNECT tunnel failed, response 403`
+- Command: `curl -sS -o /dev/null -w '%{http_code}\n' --max-time 25 "https://huggingface.co/gpt2/resolve/main/tokenizer.json"`
+- Result: `curl: (56) CONNECT tunnel failed, response 403`
+- Command: same against `https://pypi.org/simple/`
+- Result: `200`
+
+**Verdict: unchanged from Phases 0 and 1.** Every local number below is
+`--tokenizer bytes`, i.e. UTF-8 bytes, and is labelled as such.
+
+### 2026-08-21 — Can Docling run here? (probed in the first ten minutes)
+
+The plan puts Docling behind its own extra because it pulls PyTorch. Before
+designing the adapter I installed it and tried to use it, rather than assuming
+either that it would work or that it would not.
+
+- Command: `uv pip install docling` into a throwaway venv
+- Result: succeeded. **122 packages, 5.2 GB**, including `torch 2.13.0`,
+  `torchvision`, `triton` and 43 `nvidia-*` CUDA packages. This is the
+  measurement behind "Docling must stay behind its own extra".
+- Licence audit of all 122, read from installed metadata: `docling`,
+  `docling-core`, `docling-slim`, `docling-parse`, `docling-ibm-models` all
+  **MIT**; `transformers` Apache-2.0; `rapidocr` Apache-2.0. **No GPL and no
+  AGPL anywhere in the tree.** The only non-MIT/Apache/BSD entries are
+  `certifi` and `tqdm`, both MPL-2.0, both already accepted in Phase 1.
+
+- Command: `DocumentConverter().convert('tests/fixtures/tables.pdf')`
+- Result: **failed**, and not where I expected. Docling's default PDF pipeline
+  enables RapidOCR, which tried to fetch weights from a *third* host:
+  ```
+  [RapidOCR] Initiating download: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/torch/PP-OCRv6/det/PP-OCRv6_det_small.pth
+  [RapidOCR] Download failed
+  rapidocr.utils.download_file.DownloadFileException
+  ```
+- Command: same with `PdfPipelineOptions(do_ocr=False)`
+- Result: **failed**, now at the layer it really needs:
+  `httpx.ProxyError: 403 Forbidden` — the DocLayNet layout model and
+  TableFormer, from `huggingface.co`.
+
+- Command: `DocumentConverter().convert(...)` on `report.docx`, `deck.pptx`,
+  `data.xlsx` and `unicode.docx`
+- Result: **all four succeeded, fully offline, in under a second each.**
+
+**This is the finding that shaped the adapter.** Docling's Office formats go
+through direct parsers and need no model; only its PDF path downloads anything.
+So the adapter disables OCR, and `core/preferences.py` ranks docling **first for
+DOCX and last for PDF** — auto-selecting it for a PDF would begin a
+several-hundred-megabyte download inside a command the user believed was local.
+
+### 2026-08-21 — Phase 2 exit gate
+
+Run from a virtualenv synced with `uv sync --extra dev --extra fixtures --extra
+documents`.
+
+- Command: `uv run ruff check .`
+- Result: `All checks passed!`
+
+- Command: `uv run ruff format --check .`
+- Result: `87 files already formatted`
+
+- Command: `uv run mypy` (strict, over `src` + `scripts` + `tests`)
+- Result: `Success: no issues found in 56 source files`
+
+- Command: `uv run pytest -q --cov=tokenmill`
+- Result: `542 passed, 23 skipped`, `TOTAL 1802 stmts, 92%`. Per-package
+  statement coverage against the plan's >=85% target on `core` and `tokens`:
+
+  | Package | Coverage |
+  |---|---|
+  | `core` | **99%** (`pipeline`, `registry`, `preferences` all 100%) |
+  | `tokens` | **88.5%** |
+  | `backends/documents` | 74% — the docling adapter is 35% here because docling is not installed in this venv |
+
+- Command: `uv run python scripts/make_fixtures.py --check`
+- Result: `OK: 22 files reproduced byte-for-byte`
+
+- Command: `uv run pytest -q tests/integration -m "not heavy"`
+- Result: `74 passed, 6 skipped, 2 deselected` — the 6 skips are the docling
+  Office tests, reported as `needs the optional dependency 'docling'`.
+
+**Smoke scenario, exactly as the plan specifies it.**
+
+- Command: `uv run tokenmill backends --all`
+- Result:
+  ```
+  id                domains    license       tier        isolation   availability
+  ----------------  ---------  ------------  ----------  ----------  ---------------------------
+  docling           documents  MIT           permissive  in-process  missing dependency: docling
+  kreuzberg         documents  MIT           permissive  in-process  available
+  markdownify_html  web        MIT           permissive  in-process  available
+  markitdown        documents  MIT           permissive  in-process  available
+  pdfplumber        documents  MIT           permissive  in-process  available
+  plaintext         text       Apache-2.0    permissive  in-process  available
+  pypdf             documents  BSD-3-Clause  permissive  in-process  available
+  ```
+
+- Command: the plan's loop over every `*.pdf`, `*.docx`, `*.pptx`, `*.xlsx`
+  fixture, with `--tokenizer bytes`
+- Result: **eight of nine converted, exit 0. `corrupt.pdf` failed, which is
+  what it is for.**
+
+  | Fixture | Backend | bytes before → after | Notes |
+  |---|---|---|---|
+  | `simple.pdf` | pdfplumber | 4,753 → 2,370 | |
+  | `tables.pdf` | pdfplumber | 2,795 → 599 | |
+  | `twocolumn.pdf` | pdfplumber | 4,354 → 4,050 | **warned: multi-column** |
+  | `scanned.pdf` | pdfplumber | 144,338 → 0 | **warned: empty document** |
+  | `corrupt.pdf` | — | — | **exit 1**, all four PDF backends tried |
+  | `report.docx` | markitdown | 68,190 → 3,494 | |
+  | `unicode.docx` | markitdown | 67,241 → 1,312 | |
+  | `deck.pptx` | markitdown | 65,725 → 753 | |
+  | `data.xlsx` | markitdown | 10,524 → 675 | |
+
+  **These are UTF-8 bytes, not tokens**, and for these binary formats the
+  "before" figure is the file's own bytes decoded as text — which the CLI now
+  says out loud on every one of them:
+  ```
+  warning:  report.docx is a binary format, so the before-count is its own bytes
+  decoded as text, not text any model would be given. The after-count is real;
+  the percentage between them is not a token saving
+  ```
+
+- Command: `uv run tokenmill convert tests/fixtures/corrupt.pdf --tokenizer bytes`
+- Result: **exit 1**, and the fallback chain visible in the hint:
+  ```
+  error: corrupt.pdf could not be parsed: PdfStreamError: Stream has ended unexpectedly
+  hint:  every backend that handles this source failed: pdfplumber, kreuzberg, markitdown, pypdf
+  ```
+
+- Command: `uv run tokenmill convert tests/fixtures/tables.pdf --backend pdfplumber --tokenizer bytes --show-stages`
+- Result:
+  ```
+  source:   tables.pdf
+  backend:  pdfplumber
+  format:   markdown
+  duration: 73 ms
+  post:     normalize_whitespace
+  tokens:   2,795 -> 599  (-78.6%, bytes)
+
+  stage                 chars  tokens  change
+  --------------------  -----  ------  ---------
+  source                2,140  2,795   -
+  convert               599    599     -78.6%
+  normalize_whitespace  599    599     no change
+  ```
+
+- Command: `uv run tokenmill convert tests/fixtures/tables.pdf --backend docling --show-stages`
+- Result: **exit 1**, degrading exactly as designed rather than crashing:
+  ```
+  error: backend 'docling' is not available: missing dependency: docling
+  hint:  pip install "tokenmill[docling]"
+  ```
+
+**The emitted Markdown, read rather than assumed.**
+
+*`tables.pdf` — the acceptance criterion.* All **35 cells** present, as a real
+Markdown table, with the prose spliced around it in document order:
+
+```
+Converter Comparison
+Backend characteristics
+The table below is the fixture's reason for existing: a converter that flattens it into prose has lost the
+data.
+
+| Backend | License | Runtime | Tables | Pages/sec |
+| --- | --- | --- | --- | --- |
+| markitdown | MIT | CPU | weak | 12.0 |
+| docling | MIT | CPU | strong | 0.8 |
+| pdfplumber | MIT | CPU | good | 3.4 |
+| pypdf | BSD-3 | CPU | none | 18.5 |
+| pymupdf4llm | AGPL-3.0 | CPU | good | 11.1 |
+| marker | GPL-3.0 | GPU | strong | 1.9 |
+
+Figures are illustrative placeholders for structural testing and are not measurements of any real
+backend.
+```
+
+Header row correct, first column in the right order, 7 rows × 5 columns, no
+empty cells. **Criterion 2 met on inspection.**
+
+*`twocolumn.pdf` — reading order, per backend.* Extracted every `ORDERMARK`
+in output order:
+
+| Backend | Order | Verdict |
+|---|---|---|
+| pypdf | `01 02 03 04 05 06 07 08 09 10 11 12` | **correct** |
+| kreuzberg | `01 02 03 04 05 06 07 08 09 10 11 12` | **correct** |
+| pdfplumber | `01 08 02 09 03 10 04 11 05 12 06 07` | **wrong** — columns interleaved |
+| markitdown | `08 09 10 11 12 01 02 03 04 05 06 07` | **wrong** — second column first |
+
+pdfplumber is the auto-selected PDF backend, so the default answer for this
+fixture is the wrong one. Because interleaved columns still read as fluent
+English, nothing in the output announces the problem — so the adapter now
+detects the column gutter and warns:
+
+```
+warning:  twocolumn.pdf looks multi-column on page(s) 1. pdfplumber has no layout
+model and reads a page in scan-line order, so the columns are very likely
+interleaved in this output. This is a heuristic, not a certainty — check the
+text, and try --backend pypdf or --backend kreuzberg, which read columns in order
+```
+
+The detector was calibrated against the corpus, not guessed: largest gap
+between adjacent word centres is 10.8 pt and 9.4 pt on `simple.pdf`'s two
+pages, 23.9 pt on `tables.pdf` (which has a five-column table), and 37.8 pt on
+`twocolumn.pdf`. The thresholds sit in that gap. Confirmed it fires on
+`twocolumn.pdf` and on neither of the others.
+
+*`unicode.docx` — all ten scripts round-tripped*, read in full: Urdu, Arabic,
+Chinese, Japanese, Korean, Russian, Hindi, Greek, the emoji line including the
+ZWJ family sequence and the regional-indicator flag, and the mathematical
+symbols line.
+
+*`deck.pptx` — speaker notes kept.* All four present under `### Notes:`
+headings, with all five slides and their titles.
+
+*`report.docx` — read across all three Office backends*, headings, lists and
+table compared side by side:
+
+| | title as heading | H1 / H2 | bullets | numbered | table header |
+|---|---|---|---|---|---|
+| **docling** | ✅ `#` | `##` / `###` | ✅ `-` | ✅ nested restarts at `1.` | ✅ real header |
+| **markitdown** | ❌ body text | `#` / `##` | ✅ `*` | ⚠️ nested flattened to `4.` | ❌ **empty header row** above the real one |
+| **kreuzberg** | ✅ `#` | `#` / `##` — collides with the title | ❌ lost | ❌ lost | ✅ real header |
+
+That comparison is why `preferences.py` ranks docling first for `docx`.
+
+*`scanned.pdf` — empty, loudly.* Zero characters out, and:
+```
+warning:  scanned.pdf converted to an empty document: pdfplumber found no text
+layer across 2 page(s), which is what a scanned or image-only PDF looks like.
+Extracting text from page images needs OCR, which tokenmill does not ship yet.
+The conversion succeeded; there was simply nothing to extract.
+```
+
+**Exit gate item: the fallback chain when the primary backend is uninstalled.**
+
+- Command: `uv pip uninstall markitdown`, then `uv run tokenmill backends`
+- Result: markitdown gone from the listing; six backends remain.
+- Command: `uv run tokenmill convert tests/fixtures/report.docx --tokenizer bytes`
+- Result: `backend:  kreuzberg`, `tokens: 68,190 -> 3,472 (-94.9%, bytes)`
+- Command: `uv run tokenmill convert tests/fixtures/deck.pptx --tokenizer bytes`
+- Result: `backend:  kreuzberg`, `tokens: 65,725 -> 398 (-99.4%, bytes)` — and
+  note the smaller output, because kreuzberg drops the speaker notes markitdown
+  keeps. The fallback works and it costs something, which is exactly why the
+  preference order exists.
+- Then `uv sync --extra documents` restored it. **Criterion 3 met.**
+
+The *other* fallback path — installed but failing on this file — was observed
+too:
+
+- Command: `uv run tokenmill convert <an empty .html file> --tokenizer bytes`
+- Result: **exit 0**, with the whole chain visible:
+  ```
+  backend:  markitdown
+  attempts: markdownify_html (failed) -> markitdown
+  warning:  backend 'markdownify_html' failed and tokenmill fell back to the next one: empty.html is empty
+  warning:  empty.html converted to an empty document: MarkItDown parsed the file but found no extractable text in it.
+  ```
+
+**Exit gate item: Docling, run for real.**
+
+Installed tokenmill into the venv that has docling and drove it through the real
+pipeline, not just the library.
+
+- Command: `tokenmill backends --all` → docling `available`
+- Command: `tokenmill convert tests/fixtures/report.docx --backend docling --tokenizer bytes --show-stages`
+- Result: **exit 0**, `duration: 3918 ms`, `68,190 -> 3,561 (-94.8%, bytes)`,
+  and the Markdown has three correct heading levels, both lists with markers,
+  the nested item nested, and a real table header row.
+- Command: `tokenmill convert tests/fixtures/report.docx --tokenizer bytes`
+  (auto-selection, docling installed)
+- Result: `backend:  docling` — the preference map picks it for docx.
+- Command: `tokenmill convert tests/fixtures/deck.pptx --tokenizer bytes`
+- Result: markitdown's output (`<!-- Slide number: 1 -->`) — the map does *not*
+  pick docling for pptx.
+- Command: `tokenmill convert tests/fixtures/tables.pdf --tokenizer bytes`
+- Result: `backend:  pdfplumber` — the map does **not** pick docling for PDF
+  even with it installed, so no surprise model download.
+- Command: `tokenmill convert tests/fixtures/tables.pdf --backend docling --tokenizer bytes`
+- Result: **exit 1**, the blocked host reported as an actionable error rather
+  than a traceback:
+  ```
+  error: docling could not reach the network while converting tables.pdf: ProxyError: 403 Forbidden: caused by ProxyError: 403 Forbidden
+  hint:  this backend downloads a model or vocabulary on first use; run it once on a networked machine, or choose a backend that needs no download
+  ```
+- Command: `pytest -q` in that venv
+- Result: `542 passed, 15 skipped`. The docling Office tests pass; the two PDF
+  ones skip with `docling needs network access for 'pdf' and allow_network is
+  False`.
+
+**Verdict: PASS on the exit gate**, with **Docling's PDF path explicitly
+unverified** — implemented, its failure path observed, its success path never
+run anywhere. See Open question 1.
+
+**Bugs found and fixed during verification** (every one found by running
+something, not by reading it):
+
+1. **Docling's PDF pipeline failed on a `DeprecationWarning` about its own
+   deprecated field.** `standard_pdf_pipeline.py` reads
+   `generate_table_images`, pydantic warns, and `filterwarnings = ["error"]`
+   turned that into a failed conversion. Nothing tokenmill does causes it and
+   nothing tokenmill can do avoids it, so the adapter filters that one message
+   around the convert call. Found only because I installed docling and ran the
+   suite against it.
+2. **An empty HTML file stopped being reported as corrupt.** With more than one
+   backend claiming `html`, `markdownify_html`'s `CorruptSource` now hands over
+   to markitdown, which returns an empty document instead. That is a real
+   behaviour change from Phase 1, caught by a Phase 1 test. The old test now
+   pins the backend it was actually about, and a new one records the new
+   pipeline behaviour — which is acceptable only because the attempt chain and
+   the empty-output warning both make it visible.
+3. **The preference map named backends and formats that did not exist.** I had
+   ranked `ppt`, `xls` and `tsv` for backends that do not claim them.
+   `test_preferences.py` caught it on the first run; the entries are gone.
+4. **I claimed markitdown loses `report.docx`'s bullet markers. It does not.**
+   That came from reading a filtered dump whose pattern did not match `*`. It
+   keeps both list types and flattens only the *nested* item. Corrected in the
+   adapter docstring, in `preferences.py`, and before it reached
+   `docs/BACKENDS.md`; three tests now pin all three backends' list handling.
+5. **I claimed docling keeps `data.xlsx`'s sheet names. It does not — but my
+   test said it did.** A substring search for the sheet name `corpus` matched
+   the cell `corpus_items` in a different sheet. The claim was right and the
+   test was wrong; it now asserts on headings.
+6. **Fixture regeneration was broken by the container's `/dev/null`.** See the
+   Environment section.
+
+### 2026-08-21 — CI: three red jobs, two causes, then all green
+
+Neither cause could have been caught in this sandbox, which is the whole
+argument for the CI matrix.
+
+**Run 11 (`008f5f4`) — 20 jobs green, 3 red, 1 skipped by design.**
+
+1. **Test — windows × py3.12 and py3.13**, 11 tests each, `523 passed, 11
+   failed`. markitdown imports magika, which imports onnxruntime, which warns
+   at import time:
+   `UserWarning: Unsupported Windows version (2025server). ONNX Runtime supports Windows 10 and above, only.`
+   Under `filterwarnings = ["error"]` that becomes an exception inside the lazy
+   import, and `BaseConverter` reported a healthy converter as
+   `BackendFailed`. **py3.11 on Windows passed**, and Linux and macOS passed on
+   all three versions, so nothing local would ever have shown it.
+
+   Suppressing the warning would have been the wrong fix — "your platform is
+   unsupported" is worth hearing. Warnings raised while importing a backend's
+   dependency are now captured and handed to the user as conversion warnings:
+   non-fatal, still visible, attributed.
+
+2. **Type check.** `numpy/__init__.pyi:737: error: Type statement is only
+   supported in Python 3.12 and greater [syntax]`, then
+   `errors prevented further checking` — so mypy checked *none* of our code.
+   numpy arrives transitively with the `documents` extra (markitdown → magika,
+   and pandas) and its stubs use 3.12 syntax while we target 3.11. Locally the
+   interpreter is 3.11 and it passed; the CI runner picked 3.12.
+
+   Reproduced locally by building a 3.12 venv (`uv venv --python 3.12`), fixed
+   with a per-module skip for numpy, and **re-verified in that same 3.12 venv**
+   rather than only on CI.
+
+**Run 12 (`2e675f5`) — all 23 jobs green**, with the `docling` job skipped as
+designed (`workflow_dispatch` only). **Run 13 (`88d1721`) green on the same 23,
+and run 15 on the phase's final commit `15eaeda` green on all 23 as well** —
+verified job by job, not from the run's summary.
+
+- `Test`: green on ubuntu, macOS and Windows × Python 3.11/3.12/3.13 — nine
+  cells, now with the `documents` extra installed, so the markitdown and
+  kreuzberg integration tests actually **ran** rather than skipping.
+- `Clean core install`: green on the same nine cells. **The core install
+  guard survived Phase 2 adding two dependencies to it.**
+- `Real tokenizers (network)`, `Coverage gate`, `Lint and format`,
+  `Type check`, `Fixture corpus is reproducible`: green.
+
+**The `docling` job has never run.** It is `workflow_dispatch`-only by design,
+and I cannot trigger it — the API returns
+`403 Resource not accessible by integration`, because this session's token has
+no `actions: write`. That is why Docling's PDF path is recorded as unverified
+rather than done. Open question 1.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned
@@ -747,15 +1211,26 @@ The Phase 1 licences below were verified against the installed package metadata
 during the exit gate, not taken on trust: markdownify reports `MIT License`
 (v1.2.3), tiktoken `MIT License`, typer `MIT`.
 
-| Backend | Domain | License (per RESEARCH.md, unverified) | Tier | Wired | Tested | Notes |
-|---------|--------|---------------------------------------|------|-------|--------|-------|
+**Where each Phase 2 backend was verified**, since that is the part that is easy
+to overstate:
+
+| Backend | Verified locally | Verified in CI | Unverified |
+|---|---|---|---|
+| `pdfplumber` | ✅ all four PDF fixtures, output read | ✅ 9 cells | — |
+| `pypdf` | ✅ all four PDF fixtures, output read | ✅ 9 cells | — |
+| `markitdown` | ✅ pdf, docx, pptx, xlsx, unicode, output read | ✅ 9 cells | — |
+| `kreuzberg` | ✅ pdf, docx, pptx, xlsx, unicode, output read | ✅ 9 cells | — |
+| `docling` | ✅ **Office formats only** — docx, pptx, xlsx, unicode | ❌ not in the default matrix | ⚠️ **its PDF path has never been run anywhere** |
+
+| Backend | Domain | License | Tier | Wired | Tested | Notes |
+|---------|--------|---------|------|-------|--------|-------|
 | plaintext | text | Apache-2.0 (ours) | core | ✅ | ✅ | Phase 1 reference backend. Passes text/Markdown through; warns on non-UTF-8 input |
 | markdownify_html | web | MIT **(verified v1.2.3)** | core | ✅ | ✅ | Phase 1 reference backend. Converts markup faithfully; **does not strip boilerplate** — that is Phase 3 |
-| markitdown | documents | MIT | documents | ❌ | ❌ | Phase 2; breadth, weak PDF layout |
-| pdfplumber | documents | MIT | core | ❌ | ❌ | Phase 2 |
-| pypdf | documents | BSD-3 | core | ❌ | ❌ | Phase 2 |
-| kreuzberg | documents | MIT (v4 line only) | documents | ❌ | ❌ | Phase 2; v1 "Xberg" line is Elastic-2.0 — pin v4 |
-| docling | documents | MIT | docling | ❌ | ❌ | Phase 2; pulls PyTorch, must stay out of core |
+| pdfplumber | documents | MIT **(verified 0.11.10)** | core | ✅ | ✅ | **Recovers all 35 cells of `tables.pdf`.** Interleaves multi-column pages; warns when it detects a gutter |
+| pypdf | documents | BSD-3-Clause **(verified 6.16.1)** | core | ✅ | ✅ | Correct multi-column reading order. No tables, no headings |
+| markitdown | documents | MIT **(verified 0.1.7)** | documents | ✅ | ✅ | **Only backend that keeps PPTX speaker notes.** Mis-splits PDF table headers; demotes the DOCX title |
+| kreuzberg | documents | MIT **(verified 4.10.2)** | documents | ✅ | ✅ | Fast, correct reading order, infers PDF headings. **Flattens PDF tables into prose**; drops DOCX lists |
+| docling | documents | MIT **(verified 2.121.0)** | docling | ✅ | ⚠️ | **Best structure fidelity.** Office paths verified; **PDF path unverified** — needs `huggingface.co`. 122 packages, 5.2 GB |
 | trafilatura | web | Apache-2.0 | core | ❌ | ❌ | Phase 3; primary web extractor |
 | markdownify | web | MIT | core | ❌ | ❌ | Phase 3 |
 | readability | web | Apache-2.0 | web | ❌ | ❌ | Phase 3 fallback |
@@ -785,6 +1260,105 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
+
+### Phase 2 — document backends (2026-08-21)
+
+- **The backend preference map is per format, not a global priority.** Phase 1's
+  single `BackendInfo.priority` worked because each format had one candidate.
+  With five document backends it cannot express that MarkItDown is the right
+  choice for `.pptx` (the only one that keeps speaker notes) and the wrong one
+  for `.docx` (it demotes the title to body text). `core/preferences.py` holds a
+  per-format map whose numbers *replace* a backend's declared priority for that
+  one format; a backend the map does not name keeps its own. So a third-party
+  backend with a high enough priority still outranks everything we ship without
+  a core edit — the map is a default, not a gate — and a test asserts every id
+  it names exists and claims the format it is ranked for.
+
+- **Docling is ranked first for DOCX and last for PDF.** Its Office paths need
+  no model and it is measurably the best of the three there. Its PDF path
+  downloads the DocLayNet layout model and TableFormer from `huggingface.co` on
+  first use, and auto-selection must never start a several-hundred-megabyte
+  download inside a command the user believed was local. It is reachable by name
+  and, being last, is only tried for a PDF after both core backends have failed.
+  **This one changes the product's behaviour, so say if you want it differently.**
+
+- **A failing backend hands over to the next one, and says so.** Every attempt
+  is recorded on `ConversionResult.attempts`, a fallback attaches a warning
+  naming what failed, and the CLI prints an `attempts:` line. A conversion that
+  quietly came from the third choice would attribute its measurement to a
+  converter that never ran, which is the same failure mode Phase 1 refused when
+  it decided an explicit `--backend` must never be substituted. That rule still
+  holds: an explicit backend's chain is one long.
+
+- **The last failure is re-raised rather than rebuilt.** When every candidate
+  fails, the original exception is raised with only its `hint` amended to list
+  what was tried. Its class, its `__cause__` and its traceback are all worth
+  keeping, and a plugin's `ConversionError` subclass may not share the base
+  initialiser.
+
+- **A binary source's before-count is flagged, not removed.** Converting a
+  `.docx` reports `68,190 -> 3,494`, where the first figure is the zip
+  archive's bytes decoded as text. That is a true fact about the file, so it
+  stays; it is not text a model would ever be given, so the pipeline warns that
+  the percentage is not a token saving. **What the honest "before" for a binary
+  document should be is Open question 2** — it changes the product's headline
+  number, so it is not mine to settle quietly.
+
+- **pdfplumber warns when a page looks multi-column.** It has no layout model
+  and interleaves columns, and interleaved columns still read as fluent
+  English — nothing in the output announces the problem. The adapter measures
+  the widest gap between adjacent word centres and warns when it finds a
+  gutter. The thresholds were calibrated against the corpus (10.8/9.4/23.9 pt on
+  the single-column fixtures, 37.8 pt on the two-column one) and sit in the gap.
+  It is a heuristic, it says so, and it changes nothing about the extraction:
+  detecting is as far as an adapter should go, because reordering a page is a
+  layout engine.
+
+- **OCR is off in every backend that offers it.** Kreuzberg can drive Tesseract
+  or EasyOCR and Docling enables RapidOCR by default. Both would make output
+  depend on which binaries and weights happen to be present, which is not
+  something `docs/BACKENDS.md` could describe truthfully, and Docling's default
+  fetches from a *third* host. OCR is Phase 9. Kreuzberg's cache is off for the
+  same reason: a converter that writes to a cache directory behind the user's
+  back makes a second run of the same command unreproducible.
+
+- **MarkItDown runs with plugins disabled.** It will load third-party converter
+  plugins from the environment, and a backend whose output depends on what else
+  is installed cannot be reported honestly.
+
+- **A third-party library's import-time warning must not fail a conversion, but
+  must not be hidden either.** Found on the Windows CI runners: onnxruntime
+  (via magika, via markitdown) warns `Unsupported Windows version` on load, and
+  under `-W error` that turned every MarkItDown conversion into `BackendFailed`.
+  Such warnings are now captured and handed to the user as conversion warnings.
+  The exception is a library's *internal* deprecation churn, which a user cannot
+  act on: Docling's own deprecated-field warning is filtered instead.
+  `warnings.catch_warnings` is not thread-safe — recorded under Deferred work
+  for the Phase 8 batch runner.
+
+- **`kreuzberg` is pinned `>=4.0,<5`.** `RESEARCH.md` records that the successor
+  "Xberg" v1 line moved to Elastic-2.0 while the v4 line stayed MIT. A resolver
+  must not be able to change our licence position by picking up a new major.
+
+- **CI installs the `documents` extra for lint, types, test and coverage.**
+  Without it mypy saw `Any` for every new adapter and checked nothing, and the
+  MarkItDown and Kreuzberg integration tests skipped in CI exactly as they do
+  locally — so Phase 2's adapters would have been verified nowhere. Everything
+  the extra pulls is CPU-only, permissively licensed and wheel-installable on
+  all three platforms. Docling stays out, which is the point of its own extra.
+
+- **Correction to `RESEARCH.md`, verified against the packages themselves.**
+  Category 1 describes Kreuzberg as "~71MB, ~20 deps". Version 4.10.2 has
+  **zero** required Python dependencies — everything is optional, behind extras.
+  The licence claim (MIT for the v4 line) is correct. Reality wins and is
+  recorded here, per the plan's risk register.
+
+- **`scripts/make_fixtures.py` no longer isolates git's config with
+  `os.devnull`.** This container's `/dev/null` is a 48-byte regular file, and
+  git refused it. A path that does not exist reads as an empty config on every
+  platform and does not assume the null device behaves like a config file. The
+  corpus is unchanged — `--check` still reports 22 files byte-for-byte.
+
 
 ### Post-Phase-1 follow-up (owner accepted the recommendations)
 
@@ -944,6 +1518,42 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 
 ## Deferred / future work
 
+### From Phase 2
+
+- **Docling's PDF path is implemented but has never been run.** The adapter is
+  complete — its failure path is verified here, cleanly reporting the blocked
+  host — but the success path needs `huggingface.co`. It cannot be covered by a
+  `network`-marked test "without a multi-gigabyte download": docling is 122
+  packages and 5.2 GB before the models are fetched at all. The manual-dispatch
+  `docling` CI job exists to run it; **I cannot trigger it** (`403 Resource not
+  accessible by integration` — this session's token has no `actions: write`).
+  Open question 1.
+- **OCR.** Every backend in this tier returns an empty document for
+  `scanned.pdf` and every one of them warns about it. That warning is the
+  honest answer until Phase 9.
+- **A layout model for multi-column PDFs.** pdfplumber interleaves columns; the
+  adapter detects a gutter and warns, and stops there. Reordering a page is a
+  layout engine, not an adapter. `pypdf` and `kreuzberg` both get our fixture
+  right, and the warning points at them.
+- **`warnings.catch_warnings` is not thread-safe.** Two Phase 2 adapters use it
+  — one to keep an import-time warning non-fatal, one to filter Docling's
+  internal deprecation. Nothing runs conversions concurrently today. The Phase 8
+  batch runner, and any process-pool parallelism from `DEVELOPMENT_PLAN.md` §4,
+  will have to account for it.
+- **The `documents` extra pulls more than it looks like.** markitdown's Office
+  converters bring pandas, lxml and mammoth, and magika brings onnxruntime and
+  numpy. All CPU-only, all permissive, all wheel-installable — but it is not the
+  "light-ish" the plan's §1.6 implies, and it is worth re-checking if the extra
+  ever needs to shrink.
+- **Backend preference is not user-configurable.** `core/preferences.py` is a
+  default and `--backend` is the override, but there is no way to say "always
+  prefer pypdf for PDFs" in `tokenmill.toml`. Left out rather than stubbed; it
+  belongs with the Phase 8 settings panel, which needs the same thing.
+- **Reference-style Markdown tables, and table reformatting.** pdfplumber's
+  tables are emitted as GitHub-flavoured Markdown only. CSV/TOON/JSON encoders
+  are Phase 5.
+
+
 - **A real BPE token count still cannot be produced in this sandbox**, and that
   has not changed — the proxy still denies both tokenizer hosts. What has changed
   is that `tests/unit/test_tokens_network.py` now runs in CI on every push, in a
@@ -979,7 +1589,9 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
   `tokens`; the job passes at 96.07%.
 - **Phase tags still cannot be pushed** (`send-pack: unexpected disconnect`, as
   in Phase 0). Recording the commit SHA here instead, as instructed. Phase 0
-  ended at `772d99b`; Phase 1's content ends at `e18b3d8`.
+  ended at `772d99b`; Phase 1's content ends at `e18b3d8`, and Phase 1 was first
+  proven green at `3aa6e59`. Phase 2's first all-green commit is `2e675f5`; its
+  content ends at `a9d36be`.
 
 ### Carried over from Phase 0
 
@@ -1015,8 +1627,73 @@ during the exit gate, not taken on trust: markdownify reports `MIT License`
 
 ## Open questions for the owner
 
-Everything that was mine to decide has been decided, implemented and verified in
-CI. One thing remains, and it needs repository-admin access I do not have.
+Two things need you. Both are recorded because acting on either alone would
+change something visible without your say-so.
+
+1. **Run the `docling` CI job so its PDF path stops being unverified.** The job
+   exists on this branch and runs only on `workflow_dispatch`, so it costs
+   nothing on a normal push. I cannot trigger it: the API returns
+   `403 Resource not accessible by integration`, because this session's GitHub
+   token has no `actions: write`.
+
+   From the Actions tab: **CI → Run workflow → branch
+   `claude/phase-2-document-backends`**. It installs the `docling` extra with
+   CPU-only torch, runs the Office tests (which pass here already) and then the
+   `heavy`-marked PDF tests, which are the ones that have never run anywhere.
+
+   Whatever it shows, tell me and I will record it. If it fails, that is a real
+   finding about the adapter and I would rather have it than the current
+   "implemented, unverified". Either grant the token `actions: write` for future
+   phases, or keep dispatching it by hand — Phase 9's GPU backends will have the
+   same shape of problem.
+
+2. **What should the "before" count be for a binary document?** Converting a
+   `.docx` currently reports `68,190 -> 3,494`. The first number is the zip
+   archive's own bytes decoded as text. It is a true fact about the file and it
+   is not a token count of anything a model would ever be shown, so the
+   percentage between them is not a saving. Right now the pipeline prints it and
+   warns that it is not a saving, which is honest but awkward — the headline
+   number on every document conversion carries a disclaimer.
+
+   The options, as I see them:
+
+   - **(a) Keep it, keep the warning.** What ships today. Honest, slightly ugly,
+     and a user who ignores warnings gets a misleading percentage.
+   - **(b) Report no "before" for binary sources.** `tokens: n/a -> 3,494`.
+     Cannot mislead; also means document conversion — most of the product —
+     shows no saving at all.
+   - **(c) Make "before" mean the converter's raw output** and "after" the
+     post-processed text, for binary sources only. Measures something real (what
+     post-processing saved) but means the headline pair means different things
+     for different inputs, which is its own trap.
+
+   I lean towards (a) until Phase 5, when per-stage reporting and the `compare`
+   command give a better place to put this, and Phase 10's benchmark gives the
+   fidelity axis that makes any of these numbers meaningful. But this is the
+   product's headline number and the choice is yours.
+
+3. **The default branch is `Main`, with a capital M — is that deliberate?**
+   You created it and merged Phase 1 into it via PR #1, which closes the Phase 1
+   question. But it caught the second half of the bug Phase 1 found: CI's push
+   filter named `main`, GitHub matches those patterns **case-sensitively**, so a
+   push to the default branch would not have triggered a single job. I have
+   added `Main` to the filter so it works either way.
+
+   If the capital was accidental, renaming it to `main` is the tidier fix —
+   `pyproject.toml`'s `Changelog` URL and `CHANGELOG.md`'s `[Unreleased]` link
+   both point at `/blob/main/` and `/commits/main`, the ecosystem convention is
+   lowercase, and the duplicated filter entry goes away. If it was deliberate,
+   say so and I will make the URLs match instead. Either way it needs
+   repository-admin access I do not have.
+
+### Closed in Phase 2
+
+4. ~~**Create `main` and make it the default branch.**~~ **Done by the owner.**
+   Phase 1 is merged into `Main` via PR #1, and this branch is cut from that
+   merge (`5d0b9e7`). See question 3 above for the one loose end.
+
+<details>
+<summary>The original text of that question, kept for the record</summary>
 
 1. **Create `main` and make it the default branch.** The repository still has no
    default branch — its only branches are the three `claude/**` ones, so "Phase 0
@@ -1042,8 +1719,10 @@ CI. One thing remains, and it needs repository-admin access I do not have.
    how the project looks to everyone who visits it, and the settings change is
    not something I can make.
 
-2. **Optional, and no longer blocking: allow-list the two tokenizer hosts** for
-   these sessions. Token counting is now verified — but in CI, one push at a
+</details>
+
+5. **Optional, and still not blocking: allow-list the tokenizer and model
+   hosts** for these sessions. Token counting is now verified — but in CI, one push at a
    time. Every future phase that touches measurement gets its feedback a
    round-trip later than it could. The alternative, if allow-listing is
    unattractive, is a warmed tiktoken cache (four files, hash-checked by
@@ -1060,3 +1739,4 @@ CI. One thing remains, and it needs repository-admin access I do not have.
 | Phase 0 #4 | Should CI gate coverage? | Closed — gated at 85% on `core` and `tokens`; passing at 96.07% |
 | Phase 1 #3 | Should the `bytes` tokenizer ship? | Closed — yes, with the fencing it already has |
 | Phase 1 #4 | Branch naming | Closed — same as Phase 0 #3 |
+| Phase 1 #1 | Create `main` and make it the default branch | Closed — done by the owner; `Main` exists and Phase 1 is merged into it |
