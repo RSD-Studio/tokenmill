@@ -22,10 +22,16 @@ on:
     # exercises is a claim quietly decaying, and docling — 122 packages deep — is
     # the likeliest to drift.
     #
-    # The rest of the matrix runs too, and that is wanted rather than tolerated:
-    # `clean-core-install` uses plain `pip install .` with no lockfile, so a
-    # weekly run is the one thing that catches a new release of a core
-    # dependency breaking a fresh install. Sunday 04:00 UTC.
+    # The weekly run is deliberately lean: `docling` and `clean-core-install`
+    # only. Everything else is gated off this event with
+    # `github.event_name != 'schedule'`. Re-running nine OS/Python cells against
+    # a frozen lockfile every week would prove nothing that the last push did
+    # not already prove, and Actions minutes are not free — macOS bills at 10x
+    # and Windows at 2x. `clean-core-install` earns its place because it uses
+    # plain `pip install .` with no lockfile, so it is the one job that catches
+    # a new release of a core dependency breaking a fresh install.
+    #
+    # Sunday 04:00 UTC.
     - cron: "0 4 * * 0"
 
 concurrency:
@@ -38,6 +44,8 @@ env:
 jobs:
   lint:
     name: Lint and format
+    # Not on the weekly schedule: see the cron comment above.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +60,8 @@ jobs:
 
   types:
     name: Type check
+    # Not on the weekly schedule: see the cron comment above.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +78,8 @@ jobs:
 
   test:
     name: Test (py${{ matrix.python }} / ${{ matrix.os }})
+    # Not on the weekly schedule: see the cron comment above.
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -90,6 +102,8 @@ jobs:
 
   coverage:
     name: Coverage gate (core and tokens)
+    # Not on the weekly schedule: see the cron comment above.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -109,6 +123,8 @@ jobs:
 
   tokenizers:
     name: Real tokenizers (network)
+    # Not on the weekly schedule: see the cron comment above.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +144,8 @@ jobs:
 
   fixtures:
     name: Fixture corpus is reproducible
+    # Not on the weekly schedule: see the cron comment above.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
