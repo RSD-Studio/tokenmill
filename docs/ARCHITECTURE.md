@@ -268,21 +268,45 @@ When every candidate fails, the *last* error is re-raised — its class, its
 `__cause__` and its traceback are all worth keeping — with its hint amended to
 name everything that was tried.
 
-### A measurement whose "before" is not text
+### A binary document has no "before", so it is not given one
 
-Phase 2 introduced a number that is arithmetically fine and semantically
-useless. Converting a `.docx` reports `68,190 -> 3,494`: the first figure is the
-zip archive's own bytes decoded as text. Nobody would ever hand a model the
-bytes of a `.docx`, so the percentage between the two is not a saving.
+Phase 2 first shipped a number that was arithmetically fine and semantically
+empty: converting a `.docx` reported `68,190 -> 3,494`, where the first figure
+was the zip archive's own bytes decoded as text. Nobody hands a model the bytes
+of a `.docx`, so that figure cannot be subtracted from anything and the
+percentage between the two was not a saving.
 
-The count stays — it is a true fact about the file, and dropping it would leave
-document conversions with no "before" at all — but the pipeline now detects a
-source that does not decode as UTF-8 and warns that the figure must not be read
-as a token saving. The comparison that *is* meaningful arrives in Phase 3, where
-raw HTML and extracted Markdown are both text a model could actually be given.
+The first fix printed it with a warning. That was honest and wrong, for a reason
+worth recording: **it spent the warning budget.** Phase 2's other warnings —
+an empty document from a scanned PDF, interleaved columns, a missing `exiftool`
+— are ones a user must act on. Attaching a disclaimer to *every* document
+conversion trains people to skim the block those live in. A number that needs an
+apology under it is a number that should not be the headline.
 
-This is an open question for the owner rather than a settled design; see
-`PROGRESS.md`.
+So the shape of the report now depends on the kind of source:
+
+| Source | Headline |
+|---|---|
+| text — `.html`, `.md`, `.txt`, a URL | `tokens: 12,481 -> 6,802 (-45.5%)` |
+| binary — `.pdf`, `.docx`, `.pptx`, `.xlsx` | `tokens: 3,494` plus `size: 37.4 KiB in, no comparable before` |
+
+Three things follow, and each was a deliberate choice:
+
+- **There is no `source` stage for a binary input**, rather than an unmeasured
+  one. If the source stage merely had no token count, `tokens_before` would fall
+  through to the *first measured* stage — the converter's own output — and
+  "before" would silently come to mean "after conversion". That is a worse lie
+  than reporting nothing, and `Pipeline.run` guards against it explicitly.
+- **The shape changes, not the meaning.** One number instead of two is visibly
+  different at a glance. Keeping the two-number shape while quietly changing
+  what the pair means would be the real trap.
+- **The size is reported as a size**, in bytes, in binary units. It is a true
+  fact about the input and it is not pretending to be a token count.
+
+The comparison that *is* meaningful for a document is between backends on the
+same file — `tokenmill compare`, Phase 5. The before/after pair keeps its full
+meaning where both sides really are text a model could be given: raw HTML
+against extracted Markdown in Phase 3, and compression in Phase 6.
 
 ---
 

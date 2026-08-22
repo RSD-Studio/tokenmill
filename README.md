@@ -113,25 +113,33 @@ backend:  pdfplumber
 format:   markdown
 duration: 73 ms
 post:     normalize_whitespace
-tokens:   2,795 -> 599  (-78.6%, bytes)
+tokens:   599  (bytes)
+size:     2.1 KiB in, no comparable before
 
 stage                 chars  tokens  change
 --------------------  -----  ------  ---------
-source                2,140  2,795   -
-convert               599    599     -78.6%
+convert               599    599     -
 normalize_whitespace  599    599     no change
-
-warning:  tables.pdf is a binary format, so the before-count is its own bytes
-decoded as text, not text any model would be given. The after-count is real; the
-percentage between them is not a token saving
 ```
 
 That transcript is real output on `tests/fixtures/tables.pdf`, measured with
 `--tokenizer bytes` because the machine it was run on cannot reach tiktoken's
-vocabulary host. **It is a byte count, not a token count**, and — as the warning
-says — the "before" figure is the PDF's own bytes, which is not text any model
-would be given. `--tokenizer o200k_base` is the default and gives real BPE
-counts wherever that host is reachable.
+vocabulary host. **It is a byte count, not a token count**;
+`--tokenizer o200k_base` is the default and gives real BPE counts wherever that
+host is reachable.
+
+**Note what is *not* printed: a percentage.** A PDF has no before-count worth
+comparing against — nobody hands a model the bytes of a PDF — so tokenmill
+reports what the output costs and reports the input as the size it is. Where
+both sides really are text a model could be given, the delta comes back:
+
+```console
+$ tokenmill convert page.html --tokenizer bytes
+tokens:   12,481 -> 6,802  (-45.5%, bytes)
+```
+
+The comparison that *is* meaningful for a document is between backends on the
+same file, and that arrives with `tokenmill compare` in Phase 5.
 
 The Markdown that came out has the fixture's 7×5 table intact, all 35 cells:
 
