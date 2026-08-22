@@ -9,8 +9,8 @@ _Last updated: 2026-08-22 by Claude Code_
 | 0 | Scaffolding and toolchain | ✅ Complete | passed 2026-08-20 |
 | 1 | Core architecture | ✅ Complete | passed 2026-08-20 |
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
-| 3 | Web backends | ⬜ Not started | — |
-| 4 | Repository backends | ⬜ Not started | — |
+| 3 | Web backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
+| 4 | Repository backends | ⬜ Not started — assigned, see `docs/prompts/PHASE_3_AND_4.md` | — |
 | 5 | Post-processing, formats, measurement depth | ⬜ Not started | — |
 | 6 | Prompt compression (optional tier) | ⬜ Not started | — |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
@@ -1259,6 +1259,104 @@ This work is a fresh change cut from that merge, per `CONTRIBUTING.md`.
    gone: one rule now covers both ways a source can lack a comparable before.
    The warning still fires and `tokens_before` is still `None`.
 
+### 2026-08-22 — CI cannot schedule runners, and it is not our YAML
+
+Four consecutive runs — 25, 26, 27 and 28, across both `claude/phase-2-followups`
+and `claude/tokenmill-phase-2-djouak`, on commits `38c8c52` and `e65337b` — failed
+within seconds of starting. Run 24 on `Main` had succeeded 2h20m earlier on
+`0a74c8f`.
+
+The failure signature is identical in every job of every run:
+
+```
+"runner_id": 0, "runner_name": "", "runner_group_id": 0,
+"status": "completed", "conclusion": "failure",
+"started_at": "2026-08-22T11:14:55Z", "completed_at": "2026-08-22T11:14:57Z"
+```
+
+No `steps` array at all, no logs (the logs endpoint returns 404), and empty
+check-run output. All three runner labels fail the same way — `ubuntu-latest`,
+`macos-latest` and `windows-latest` — which rules out a single image being
+broken.
+
+**This is not the workflow file, and it is worth being precise about why**, since
+`ci.yml` *was* modified on this branch and that is the obvious suspect:
+
+- All 24 job records were created with their correct expanded names
+  (`Test (py3.12 / windows-latest)`, `Clean core install (py3.11 / macos-latest)`
+  and so on), so the YAML parsed and the matrices expanded.
+- The `Docling (weekly and on demand)` job evaluated its `if:` condition and
+  concluded `skipped`, correctly, on a `push` event. Expression evaluation
+  therefore worked too.
+- A malformed workflow fails at the *run* level with a parse error, not with 23
+  individually-created jobs that each fail to acquire a runner.
+
+The most likely cause is exhausted Actions minutes or a spending limit — this
+repository has run ~28 workflows of 24 jobs each in three days, and macOS bills
+at 10x and Windows at 2x. **Only the owner can check that**; these sessions
+cannot call `run_workflow` or `rerun_failed_jobs` (both return 403 `Resource not
+accessible by integration`).
+
+**What is verified locally on `e65337b`**, from a venv synced with `--extra dev
+--extra fixtures --extra documents`:
+
+- `uv run pytest -q` → `558 passed, 23 skipped in 6.01s`
+- `uv run ruff check .` → `All checks passed!`
+- `uv run mypy` → `Success: no issues found in 56 source files`
+
+That is local green, and it is **not** the same claim as CI green. Nothing in
+this session has been proven on Windows, on macOS, on Python 3.12 or 3.13, or
+against real tokenizer vocabularies, because the jobs that prove those things
+never started. Recorded as unverified accordingly.
+
+The one change made in response was to `ci.yml` itself: the weekly cron now runs
+`docling` and `clean-core-install` only, with the other six jobs gated off the
+schedule event. That is better design on its own terms — re-running nine
+OS/Python cells weekly against a frozen lockfile proves nothing a push has not
+already proved — and it also stops the schedule from making a minutes problem
+worse. It is not a fix for this failure and is not offered as one.
+
+### 2026-08-22 — Handover prompt for Phases 3 and 4
+
+`docs/prompts/PHASE_3_AND_4.md` is the assignment for the next session: both
+phases in one go, then a full re-evaluation of the app, stopping before Phase 5.
+
+It carries the environment facts re-probed today rather than assumed, because
+they have changed between phases before:
+
+| Host / tool | Result |
+|---|---|
+| `pypi.org` | 200 |
+| `registry.npmjs.org` | 200 — repomix is genuinely runnable here |
+| `crates.io` API | 403 — code2prompt likely not installable from source |
+| `example.com` | denied — no live-URL testing in this sandbox |
+| `openaipublic.blob.core.windows.net` | denied |
+| `huggingface.co` | denied |
+| Node | v22.22.2 |
+| npx | 10.9.7 |
+| cargo | 1.94.1 |
+
+And the traps that will otherwise be rediscovered the expensive way:
+
+1. Phase 3's ~70–90% boilerplate-reduction criterion needs **real model
+   tokens**, and both tokenizer hosts are denied here. The `bytes` tokenizer
+   measures UTF-8 bytes, not tokens; a byte percentage is a different claim.
+   Only the CI `tokenizers` job can produce the publishable figure.
+2. Making trafilatura outrank `markdownify_html` for `html` breaks
+   `tests/integration/test_reference_backends.py`, which asserts the current
+   backend by id, `strips_boilerplate is False`, and that every marker in
+   `boilerplate_markers_must_be_absent` **survives**. Those assertions get
+   pinned to `--backend markdownify_html` and mirrored for trafilatura, not
+   loosened.
+3. Phase 4 needs subprocess adapters, but `SubprocessConverter` is a Phase 7
+   deliverable. Build the minimum Phase 4 needs, sited where Phase 7 can absorb
+   it, and record what Phase 7 still owes.
+4. `docs/BENCHMARKS.md` does not exist, yet Phase 3's exit gate names it while
+   `README.md` calls it Phase 10. Ruling: create it now, small and partial.
+5. `docs/LICENSES.md` is a dead link from `CONTRIBUTING.md`.
+6. CI could not schedule runners as of 11:15 UTC today — re-check before
+   relying on it.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned
@@ -1737,16 +1835,32 @@ closed; these are the decisions and what changed.
 
 ## Open questions for the owner
 
-**None.** Phase 2's three questions were answered on 2026-08-22 and the answers
-are implemented; see Decisions for each, and the table below.
+Phase 2's three questions were answered on 2026-08-22 and the answers are
+implemented; see Decisions for each, and the table below. One new question has
+opened since, and it needs owner-level access rather than a decision.
+
+**1. CI cannot schedule runners — please check the Actions billing state.**
+Runs 25 through 28 all failed within seconds, every job at `runner_id: 0`, no
+steps, no logs, across all three runner labels. Run 24 on `Main` succeeded 2h20m
+earlier. The evidence that this is not our workflow file is in the verification
+log: all 24 job records were created with correct expanded names and the
+`docling` job correctly evaluated its `if:` to `skipped`, so the YAML parsed and
+expressions ran. The likeliest cause is exhausted Actions minutes or a spending
+limit — ~28 runs × 24 jobs in three days, with macOS billing at 10x and Windows
+at 2x. These sessions cannot re-run jobs (403 `Resource not accessible by
+integration`), so only you can see the billing page.
+
+Until it is resolved, nothing is proven on Windows, macOS, Python 3.12/3.13, or
+against real tokenizer vocabularies. Local green on `e65337b` is recorded and is
+not the same claim.
 
 Two things remain *pending* rather than open, in the sense that they need an
 action rather than a decision:
 
 - **Docling's PDF path is still unverified.** The weekly job will cover it from
-  the next Sunday run on `Main`. Until one has run, the honest status is
-  unchanged: implemented, its failure path observed here, its success path never
-  executed anywhere.
+  the next Sunday run on `Main` — assuming runners are available by then. Until
+  one has run, the honest status is unchanged: implemented, its failure path
+  observed here, its success path never executed anywhere.
 - **A one-off dispatch would close it sooner.** Actions → CI → Run workflow.
   Tell me what it shows and I will record it.
 
