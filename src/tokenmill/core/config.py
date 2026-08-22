@@ -58,9 +58,16 @@ class Config:
             registry's non-destructive default.
         image_handling: Default image handling.
         link_handling: Default link handling.
-        allow_network: Whether backends may make network calls.
+        allow_network: Whether backends may make network calls of their own,
+            such as downloading a model on first use.
         fallback: Whether auto-selection may try the next candidate backend
             when the preferred one fails.
+        fetch: Whether tokenmill may retrieve a source given as a URL. Separate
+            from ``allow_network``; see
+            :class:`~tokenmill.core.models.ConvertOptions`.
+        respect_robots: Whether a URL fetch obeys the origin's ``robots.txt``.
+        max_redirects: How many HTTP redirects a fetch follows.
+        user_agent: Overrides the ``User-Agent`` used when fetching.
         timeout_s: Default per-conversion time budget in seconds.
         max_bytes: Default maximum input size in bytes.
         source_path: The config file these settings came from, if any. Recorded
@@ -75,6 +82,10 @@ class Config:
     link_handling: LinkHandling = LinkHandling.KEEP
     allow_network: bool = False
     fallback: bool = True
+    fetch: bool = True
+    respect_robots: bool = True
+    max_redirects: int = 5
+    user_agent: str | None = None
     timeout_s: float = 120.0
     max_bytes: int = 256 * 1024 * 1024
     source_path: Path | None = None
@@ -99,6 +110,10 @@ class Config:
             link_handling=self.link_handling,
             allow_network=self.allow_network,
             fallback=self.fallback,
+            fetch=self.fetch,
+            respect_robots=self.respect_robots,
+            max_redirects=self.max_redirects,
+            user_agent=self.user_agent,
             timeout_s=self.timeout_s,
             max_bytes=self.max_bytes,
         )
@@ -246,12 +261,15 @@ def _coerce(key: str, value: Any, origin: str) -> Any:
             return ImageHandling(str(value))
         if key == "link_handling":
             return LinkHandling(str(value))
-        if key in {"allow_network", "fallback"}:
+        if key in {"allow_network", "fallback", "fetch", "respect_robots"}:
             return _as_bool(value)
         if key == "timeout_s":
             return float(value)
-        if key == "max_bytes":
+        if key in {"max_bytes", "max_redirects"}:
             return int(value)
+        if key == "user_agent":
+            text = str(value)
+            return text or None
         if key == "post_processors":
             if isinstance(value, str):
                 return tuple(part.strip() for part in value.split(",") if part.strip())

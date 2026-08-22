@@ -62,7 +62,7 @@ import warnings
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
-from tokenmill.backends.documents._common import (
+from tokenmill.backends._common import (
     classify_failure,
     probe_module,
     source_as_file,

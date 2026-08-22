@@ -101,6 +101,15 @@
         "A token count without a fidelity score is not a result."
       ]
     },
+    "jsrendered.html": {
+      "description": "A page whose article is inserted by a script: parsers see a placeholder, a browser-driving backend sees the article.",
+      "needs_javascript": true,
+      "rendered_paragraph_count": 3,
+      "rendered_sentinel": "RSD-TOKENMILL-RENDERED-9317",
+      "rendered_sentinel_occurrences": 1,
+      "rendered_title": "The Article That Only Exists After Hydration",
+      "unrendered_placeholder": "Loading article. This placeholder is what a parser sees, because the article below it is inserted by a script that only a browser will run."
+    },
     "long_context.md": {
       "character_count": 79255,
       "description": "Deliberately redundant prose sized for prompt-compression tests, with one checkable needle fact.",

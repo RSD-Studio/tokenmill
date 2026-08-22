@@ -46,8 +46,11 @@ architecture — that gap is what tokenmill is for.
 These are the numbers we consider well-supported today. They come from
 [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md), which cites its
 sources. **They are other people's measurements, not ours.** Our own numbers
-land in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) from Phase 10, produced by
-the harness in `benchmarks/` on the corpus in `tests/fixtures/`.
+land in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), which starts at Phase 3 and
+fills out from Phase 10's harness in `benchmarks/` on the corpus in
+`tests/fixtures/`. Read its "Units" section before quoting anything from it:
+byte reductions and token reductions are different claims and this project does
+not conflate them.
 
 - **Boilerplate removal is the big win, ~70–90% on real web pages.** Cloudflare
   measured one of its own blog posts at 16,180 tokens as HTML versus 3,150 as
@@ -217,16 +220,26 @@ its adapter was written, not taken from a README.
 | `markitdown` | documents | MIT | `documents` | breadth; **PPTX speaker notes** | ✅ Phase 2 |
 | `kreuzberg` | documents | MIT | `documents` | speed; reading order; heading inference | ✅ Phase 2 |
 | `docling` | documents | MIT | `docling` | **document structure** — headings, lists, table headers | ⚠️ Phase 2 — Office paths verified, **PDF path unverified** |
-| trafilatura, readability, crawl4ai | web | Apache-2.0 / MIT | core, `web` | boilerplate extraction | Phase 3 |
-| gitingest, repomix, code2prompt | repo | MIT | core, subprocess | repository ingestion | Phase 4 |
+| `trafilatura` | web | Apache-2.0 | core | **boilerplate extraction** — removes all six markers on our fixture | ✅ Phase 3 |
+| `readability` | web | Apache-2.0 | `web` | an independent second extraction | ✅ Phase 3 |
+| `crawl4ai` | web | Apache-2.0 | `crawl4ai` | **pages that need JavaScript** | ✅ Phase 3 — weaker extraction; 677 MB |
+| `gitingest` | repo | MIT | `repo` | **packing a repository** with no external runtime | ✅ Phase 4 |
+| `repomix` | repo | MIT | Node binary | the most complete pack of the three | ✅ Phase 4 — subprocess |
+| `code2prompt` | repo | MIT | Rust binary | speed: 103 ms against 564 and 1,082 | ✅ Phase 4 — subprocess |
 | llmlingua2 | compress | MIT | `compress` | prompt compression | Phase 6 |
 | pymupdf4llm, pandoc, libreoffice | documents | **AGPL-3.0 / GPL-2.0+ / MPL-2.0** | isolated | — | Phase 7 — **subprocess only, never imported** |
 | marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | install docs only | GPU tier | Phase 9 |
 
-**What Phase 2 does not do.** None of these backends does OCR, so a scanned PDF
-converts to an empty document — loudly, with a warning, never silently. That is
-Phase 9. And `markdownify_html` converts HTML markup faithfully without stripping
-boilerplate; the 70–90% reductions cited above are Trafilatura's job in Phase 3.
+**What these backends do not do.** None does OCR, so a scanned PDF converts to
+an empty document — loudly, with a warning, never silently. That is Phase 9.
+
+**On the 70–90% figures above:** Phase 3 measured our own equivalent on our own
+fixture and got **−77.1%**, which is inside that band. That number is in **UTF-8
+bytes**, not model tokens, because the environment it was measured in cannot
+reach either tokenizer vocabulary host; the token figure is asserted by a
+`network`-marked test and is **not yet published anywhere**. See
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), which explains why the two are
+different claims and what a single synthetic fixture can and cannot support.
 
 [`docs/BACKENDS.md`](docs/BACKENDS.md) documents what each backend gets **wrong**
 on our fixtures, quoted from real output: pdfplumber interleaving two-column
@@ -304,8 +317,17 @@ adapter declares its licence, and the CLI and GUI show it.
 | **Copyleft** (AGPL/GPL — PyMuPDF4LLM, Marker, Surya, Pandoc, Firecrawl core) | **Never imported.** Invoked only via subprocess or a service boundary |
 | **Non-commercial weights** (e.g. ReaderLM, CC-BY-NC-4.0) | Excluded by default; opt-in flag with a visible warning |
 
-A CI test asserts that no copyleft package is importable from our process
-namespace. See [`docs/LICENSES.md`](docs/LICENSES.md) (Phase 7).
+`BackendInfo.__post_init__` refuses to construct a copyleft or non-commercial
+backend that claims in-process isolation, the registry re-checks at
+registration, and the conformance suite asserts it for every installed backend —
+so the rule is enforced rather than documented.
+
+[`docs/LICENSES.md`](docs/LICENSES.md) records what tokenmill actually pulls in,
+including the one dependency whose licence needs explaining: `tld`, reached via
+`trafilatura` → `courlan`, is tri-licensed
+`MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`. That is a disjunction and
+tokenmill takes the MPL-1.1 option, so no GPL obligation is incurred. Automating
+the audit is Phase 7.
 
 tokenmill itself is Apache-2.0.
 
@@ -313,7 +335,7 @@ tokenmill itself is Apache-2.0.
 
 ```bash
 uv venv
-uv sync --extra dev --extra fixtures --extra documents
+uv sync --extra dev --extra fixtures --extra documents --extra web --extra repo
 
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
@@ -336,8 +358,9 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Plugin/adapter design, data model, pipeline, error taxonomy |
 | [`docs/BACKENDS.md`](docs/BACKENDS.md) | Per-backend reference, including observed failure modes |
 | [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
-| `docs/LICENSES.md` | Tiering rules and isolation rationale *(Phase 7)* |
-| `docs/BENCHMARKS.md` | Our own measured results *(Phase 10)* |
+| [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, and the audits actually run |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results *(partial; the full harness is Phase 10)* |
+| [`docs/REVIEW_PHASES_0_4.md`](docs/REVIEW_PHASES_0_4.md) | A full re-evaluation after Phase 4: every acceptance criterion with its evidence, the whole corpus end to end, and an honest defects list |
 
 ## Non-goals
 

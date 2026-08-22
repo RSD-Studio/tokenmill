@@ -334,7 +334,7 @@ Suppressing it is the wrong fix; "your platform is unsupported" is worth
 hearing. Wrap the import instead, and the warning reaches the user as a warning:
 
 ```python
-from tokenmill.backends.documents._common import warnings_as_conversion_warnings
+from tokenmill.backends._common import warnings_as_conversion_warnings
 
 
 def _convert(self, source, options, context) -> str:
@@ -350,7 +350,7 @@ a scanned PDF has no text layer, and every document backend here returns an
 empty string for one — say so:
 
 ```python
-from tokenmill.backends.documents._common import warn_on_empty_output
+from tokenmill.backends._common import warn_on_empty_output
 
 warn_on_empty_output(
     text,

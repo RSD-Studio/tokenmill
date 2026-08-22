@@ -310,6 +310,182 @@ against extracted Markdown in Phase 3, and compression in Phase 6.
 
 ---
 
+## Fetching happens in the pipeline, not in the backends
+
+`src/tokenmill/backends/web/fetch.py`, called from `Pipeline.run`.
+
+A URL source is retrieved once, before any converter sees it, and what the
+converters receive is bytes. Three things follow, and the third is the reason.
+
+**One policy point.** The user agent, the timeout, the redirect limit, the byte
+cap and `robots.txt` are decided in one function. Four web backends cannot end
+up obeying four different sets of rules, and there is exactly one place that can
+open a socket — which is what makes "converting a local file makes no network
+call" provable rather than asserted.
+
+**One fetch.** Walking a fallback chain would otherwise re-download the page for
+each candidate.
+
+**A real before-count.** This is the load-bearing one. The downloaded HTML
+becomes an ordinary readable source, so the `source` stage measures it, and
+"12,481 bytes of HTML became 2,854 bytes of Markdown" is a measurement. A
+backend that fetched privately would leave the pipeline with nothing to compare
+against, and the headline number would be an assertion about a quantity nobody
+counted.
+
+It also means the *response* decides the format rather than the URL.
+`https://example.com/blog/post` is an HTML page whose path ends in `post`, and a
+URL serving `application/pdf` routes to the PDF backends — `Source.format_hint`
+carries that decision.
+
+### The one backend that is exempt, and why only one kind can be
+
+A converter declaring `BackendInfo.fetches_urls` is handed the raw URL. Exactly
+one does: `crawl4ai`, which drives a browser so the page's JavaScript runs.
+That cannot be done to a response somebody already saved, so for that backend
+the fetch *is* the contribution.
+
+Such a backend is never auto-selected. It has to be named, and naming it is what
+skips the pre-fetch. Launching a browser inside a command a user thought was a
+download is the same mistake as starting a several-hundred-megabyte model
+download, which the preference map already settled for docling's PDF path.
+
+### `fetch` and `allow_network` are two permissions, not one
+
+`ConvertOptions.fetch` defaults to **true**; `allow_network` defaults to
+**false**. That looks inconsistent until you see what each authorises.
+
+Naming a URL *is* the request to fetch that URL. Refusing to do the thing the
+user typed, pending a second flag, is not a security posture — it is an
+obstacle. So `fetch` permits **one retrieval of the address the user supplied**,
+and nothing else.
+
+`allow_network` governs everything a backend might reach for on its own
+initiative: a layout model, a tokenizer vocabulary, a browser loading whatever
+subresources a page asks for. That stays default-deny, and the guarantee it
+protects — a local conversion never reaches out — is unchanged, because a local
+file never enters the fetch path at all.
+
+`--offline` sets `fetch` to false, which makes tokenmill refuse the retrieval
+rather than perform it. A test asserts it refuses *before* opening a socket,
+because fetching and then discarding would satisfy the letter of it and none of
+the point.
+
+### Two numbers for a web page, deliberately not one
+
+`tokens_before → tokens_after` counts everything that went away: tags, scripts,
+styles **and** page furniture. A web backend additionally records
+`boilerplate_reduction`: the share of the page's *visible text* it discarded,
+measured against a tag-stripped, script-free rendering of the same page.
+
+They answer different questions, and on our fixture they disagree usefully.
+`markdownify_html` removes 45.5% of the file's bytes and discards **no** text at
+all — its boilerplate figure is *negative*, because Markdown bullets, link
+targets and table pipes cost characters. `trafilatura` removes 77.1% of the
+bytes and 41.7% of the text.
+
+A converter cannot score well on both by accident, and reporting either as the
+other is precisely the misattribution `RESEARCH.md` Category 7 is about: *"the
+savings come overwhelmingly from stripping nav/ads/scripts, not from markdown
+syntax itself."* Keeping them apart in the data model is how the CLI, the JSON
+output and the Phase 8 GUI all stay honest about it without each having to
+remember to be.
+
+## Repository packing: three engines, one set of promises
+
+`src/tokenmill/backends/repo/`.
+
+gitingest is a Python import, Repomix is a Node program and code2prompt is a
+Rust binary. What makes them one product rather than three CLIs behind a shared
+prefix is that everything a *user* controls is tokenmill's, not the tool's: the
+same globs, the same `.gitignore` respect, the same budget, the same
+per-directory breakdown, the same clone-and-clean-up for a remote URL. Each
+adapter translates those into its own tool's flags and parses the result back
+into per-file sections.
+
+### The one place a backend may consult a tokenizer
+
+The rule elsewhere is absolute: backends convert, the pipeline measures. A token
+budget bends it, and the line is worth stating precisely.
+
+**A backend may consult a tokenizer to obey a limit the user set. It may never
+report a count.** The budget is an *input constraint*, like `max_bytes` — it
+changes what the converter emits — and the pipeline still does every piece of
+reporting measurement. The conformance suite's assertion that a result carries
+no token counts applies to repository backends exactly as it does to the others,
+and a test checks it.
+
+The budget's unit follows the run's tokenizer, so `--token-budget 5000
+--tokenizer bytes` caps at 5,000 UTF-8 bytes and `--tokenizer o200k_base` caps at
+5,000 model tokens. That is what makes the flag honest on a machine that cannot
+download a vocabulary. When no tokenizer loads at all, the budget is **not
+silently ignored**: the conversion warns that it could not be applied and emits
+everything, because a cap that quietly did nothing is worse than no cap — the
+user believes the output is bounded.
+
+### The truncation strategy, and why the note degrades before the content
+
+Three rules. The preamble — the summary and the directory tree — is always kept,
+because it is the only thing telling a reader which files are missing. Files are
+kept in the order the tool emitted them, since each tool orders deliberately and
+re-sorting would substitute tokenmill's judgement for the one the user chose an
+engine for. And **a file is never partially included**: half a module is worse
+than none, because a model cannot tell the rest was cut and will reason happily
+about a class whose methods have vanished.
+
+The fourth rule is the one that took three attempts. The truncation note is part
+of the output, so it counts against the budget — but **a file that fits is never
+evicted to make room for a longer explanation of the files that did not.** The
+full table appears when it fits and a one-line note when it does not; the
+complete list is always in the result's metadata, so shortening the prose loses
+nothing.
+
+Both wrong versions are recorded in the code, because they are instructive. The
+first appended the note after computing the budget and emitted 1,482 bytes
+against a 1,200-byte cap — a cap exceeded by the explanation of the cap. The
+second dropped files to make room, and since each drop adds a row to the note it
+emptied the pack chasing a note that grew faster than the content shrank.
+
+### Parsing a third-party tool's output, and admitting when it fails
+
+Budgeting and the breakdown both need per-file structure, and none of the three
+tools offers one. So each adapter carries a regular expression for its own tool's
+file header, anchored to the start of a line so that a matching string *inside* a
+file cannot fake one.
+
+That is brittle by nature, and the design point is what happens when it breaks:
+**an unrecognised format produces no sections, and the adapter says so.**
+
+```
+warning:  code2prompt's Markdown format was not recognised, so the token budget
+and the per-directory breakdown could not be applied. The pack itself is
+complete and unmodified; this is a tokenmill parsing problem
+```
+
+The alternative — reporting a file count of zero — would read as an empty
+repository and would let a budget silently do nothing. This is not hypothetical:
+code2prompt's format was guessed from repomix's and was wrong, and that warning
+is what surfaced it in minutes.
+
+### Subprocess isolation before Phase 7 owns it
+
+`IsolationMode.SUBPROCESS` and `BackendFailed.stderr` have existed since Phase 1;
+the hardened `SubprocessConverter` is Phase 7. `tokenmill.backends._subprocess`
+is the minimum Phase 4 needs, sited one level above the tiers so Phase 7 can
+absorb it: PATH lookup, list arguments with `shell=False`, a timeout, captured
+output, and every failure mapped into the taxonomy.
+
+What it does **not** do is as important, and is listed in its docstring and in
+`PROGRESS.md`: no sandboxing, no binary allow-list, no version probing, no
+streaming. The allow-list is the one that matters for Phase 7's real job —
+enforcing that a copyleft tool is *actually* isolated needs a checked list of
+what may be invoked, not an adapter's declaration that it behaves.
+
+Note that these two backends run out of process because they are TypeScript and
+Rust, **not** because of their licences: both are MIT and could legally be
+imported if they were Python. That makes them useful practice for Phase 7, since
+getting the isolation wrong on them carries no licence risk.
+
 ## The pipeline
 
 `src/tokenmill/core/pipeline.py`.
@@ -525,7 +701,7 @@ Note that `warnings.catch_warnings` manipulates global state and is not
 thread-safe. Nothing runs conversions concurrently today; the Phase 8 batch
 runner will have to account for it, and `PROGRESS.md` records that.
 
-## What Phase 2 deliberately does not include
+## What Phases 2, 3 and 4 deliberately do not include
 
 Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
 
@@ -535,11 +711,14 @@ Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
   the adapter warns when it detects a gutter, but detecting is as far as it
   goes; reordering a page is a layout engine, not an adapter.
 
-- **URL fetching.** `Source.from_url` exists and validates the scheme, but no
-  backend fetches. Fetching, `robots.txt`, redirect limits and offline mode are
-  Phase 3.
-- **Repository ingestion.** `SourceKind.REPO` exists; no backend claims it.
-  Phase 4.
+- ~~**URL fetching.**~~ **Done in Phase 3**, in the pipeline — see above.
+- ~~**Repository ingestion.**~~ **Done in Phase 4** — see above.
+- **A hardened `SubprocessConverter`.** `tokenmill.backends._subprocess` is the
+  minimum Phase 4 needed. Binary discovery beyond `PATH`, version probing, an
+  allow-list and the sandboxing policy are Phase 7.
+- **Conditional or authenticated fetching.** No cookies, no headers beyond the
+  user agent, no ETag or caching. A page behind a login is not fetchable, and
+  saying so beats a half-implemented credential story.
 - **Formats beyond Markdown and text.** `OutputFormat` has two members. CSV,
   TOON and JSON encoders are Phase 5.
 - **Cost estimation.** The plan puts it in the token layer with user-supplied

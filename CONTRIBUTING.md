@@ -10,15 +10,27 @@ for where it is going.
 git clone https://github.com/RSD-Studio/tokenmill
 cd tokenmill
 uv venv
-uv sync --extra dev --extra fixtures --extra documents
+uv sync --extra dev --extra fixtures --extra documents --extra web --extra repo
 uv run pre-commit install
 uv run python scripts/make_fixtures.py
 ```
 
-`--extra documents` is worth having locally: without it the MarkItDown and
-Kreuzberg integration tests skip, and mypy sees `Any` for their adapters. The
-`docling` extra is deliberately not in that line — it resolves to 122 packages
-and about 5.2 GB.
+`--extra documents`, `--extra web` and `--extra repo` are worth having locally:
+without them the MarkItDown, Kreuzberg, readability and gitingest integration
+tests skip, and mypy sees `Any` for their adapters.
+
+Two extras are deliberately not in that line. `docling` resolves to 122 packages
+and about 5.2 GB; `crawl4ai` to 94 packages and 677 MB, plus a browser download.
+
+Repomix and code2prompt are external programs rather than Python packages, so
+no extra installs them. Their tests skip cleanly when the binary is absent —
+which is itself a Phase 4 acceptance criterion, so the *absent* case has tests
+that always run:
+
+```bash
+npm install -g repomix        # or let npx fetch it with --allow-network
+cargo install code2prompt     # needs a Rust toolchain
+```
 
 ## The checks that must pass
 
@@ -37,6 +49,7 @@ They report as skips, not silence:
 uv run pytest -q -m network    # real tokenizer vocabulary downloads
 uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path, Phase 9)
 uv run pytest -q -m compress   # the compress extra plus a model (Phase 6)
+uv run pytest -q -m browser    # drives a real Chromium (crawl4ai, Phase 3)
 ```
 
 A test that needs an optional dependency declares it and skips cleanly without
@@ -172,7 +185,7 @@ a complete, working example you can copy. The short version:
 8. **Do not let a dependency's noise become your failure.** A library that warns
    at import time will fail a conversion under `-W error`. Use
    `warnings_as_conversion_warnings` from
-   `tokenmill.backends.documents._common` so the warning reaches the user as a
+   `tokenmill.backends._common` so the warning reaches the user as a
    warning rather than as a broken backend. Likewise, an empty result is not a
    success: say so with `warn_on_empty_output`.
 

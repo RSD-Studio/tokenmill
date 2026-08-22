@@ -1,10 +1,18 @@
 """The ``tokenmill`` command line.
 
-Three commands, matching ``docs/DEVELOPMENT_PLAN.md`` §Phase 1:
+Four commands:
 
 * ``tokenmill convert`` — convert a source and report the token change.
+* ``tokenmill repo`` — pack a repository into one file, with the repository
+  options the plan's Phase 4 names: include and exclude globs, a token budget
+  that genuinely truncates, and a per-directory breakdown.
 * ``tokenmill backends`` — list backends with availability and licence.
 * ``tokenmill tokens`` — count the tokens in a file or a string.
+
+``repo`` exists as its own command rather than as flags on ``convert`` because a
+Git URL means two different things depending on which the user typed:
+``https://github.com/owner/project`` is a web page to ``convert`` and a
+repository to clone to ``repo``. Both go through the same pipeline.
 
 Two conventions run through all of them.
 
@@ -39,6 +47,7 @@ from tokenmill.core.models import (
     LinkHandling,
     OutputFormat,
     Source,
+    SourceKind,
 )
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.core.registry import default_registry
@@ -137,6 +146,7 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
         "token_delta": result.token_delta,
         "reduction_ratio": result.reduction_ratio,
         "post_processors": list(result.post_processors),
+        "web": _web_summary(result),
         "attempts": [
             {"backend": attempt.backend_id, "ok": attempt.ok, "error": attempt.error}
             for attempt in result.attempts
@@ -155,6 +165,32 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
     if include_text:
         payload["text"] = result.text
     return payload
+
+
+#: Metadata keys a web backend records, surfaced as their own object in
+#: ``--json`` so a consumer does not have to know they live in ``metadata``.
+_WEB_KEYS = (
+    "strips_boilerplate",
+    "html_characters",
+    "visible_text_characters",
+    "output_characters",
+    "boilerplate_reduction",
+)
+
+
+def _web_summary(result: ConversionResult) -> dict[str, Any] | None:
+    """Render the web-specific measurements, or ``None`` for a non-web result.
+
+    Args:
+        result: The conversion to describe.
+
+    Returns:
+        The web metrics, or ``None`` when the backend recorded none — which is
+        every document and repository conversion.
+    """
+    if "strips_boilerplate" not in result.metadata:
+        return None
+    return {key: result.metadata.get(key) for key in _WEB_KEYS}
 
 
 @app.command()
@@ -197,6 +233,37 @@ def convert(
             "Never applies to an explicit --backend.",
         ),
     ] = None,
+    offline: Annotated[
+        bool,
+        typer.Option(
+            "--offline",
+            help="Refuse to retrieve a URL. Converting a local file never reaches "
+            "the network with or without this.",
+        ),
+    ] = False,
+    ignore_robots: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-robots",
+            help="Fetch a URL even when the site's robots.txt disallows it. "
+            "Yours to decide for a site you control.",
+        ),
+    ] = False,
+    allow_network: Annotated[
+        bool,
+        typer.Option(
+            "--allow-network",
+            help="Permit backends to make network calls of their own, such as "
+            "downloading a model or driving a browser.",
+        ),
+    ] = False,
+    user_agent: Annotated[
+        str | None,
+        typer.Option("--user-agent", help="Identify as this instead of tokenmill's default."),
+    ] = None,
+    max_redirects: Annotated[
+        int | None, typer.Option("--max-redirects", help="Redirects a URL fetch may follow.")
+    ] = None,
     show_stages: Annotated[
         bool, typer.Option("--show-stages", help="Show the per-stage token breakdown.")
     ] = False,
@@ -226,6 +293,14 @@ def convert(
         image_handling=images,
         link_handling=links,
         fallback=fallback,
+        user_agent=user_agent,
+        max_redirects=max_redirects,
+        # These three are flags rather than tri-state options, so `False` means
+        # "not passed" and must not clobber a configured value — the same rule
+        # `to_options` applies to everything else it is handed.
+        fetch=False if offline else None,
+        respect_robots=False if ignore_robots else None,
+        allow_network=True if allow_network else None,
     )
     # Asking for image or link handling without naming a chain implies wanting
     # the `links` post-processor; it is destructive, so it is not in the default
@@ -256,6 +331,139 @@ def convert(
 
     if not quiet and not as_json:
         print(format_result_report(result, show_stages=show_stages), file=sys.stderr)
+
+
+@app.command()
+def repo(
+    target: Annotated[
+        str, typer.Argument(help="Repository directory, or a Git URL to clone shallowly.")
+    ],
+    backend: Annotated[
+        str | None, typer.Option("--backend", "-b", help="Force a specific backend id.")
+    ] = None,
+    tokenizer: Annotated[
+        str | None, typer.Option("--tokenizer", "-t", help="Tokenizer to measure with.")
+    ] = None,
+    include: Annotated[
+        str | None,
+        typer.Option("--include", help="Comma-separated globs; only matching files are packed."),
+    ] = None,
+    exclude: Annotated[
+        str | None, typer.Option("--exclude", help="Comma-separated globs to leave out.")
+    ] = None,
+    token_budget: Annotated[
+        int | None,
+        typer.Option(
+            "--token-budget",
+            help="Cap the pack at this many tokens, counted in the run's tokenizer. "
+            "Whole files are dropped from the end and every one is reported.",
+        ),
+    ] = None,
+    tree_tokens: Annotated[
+        bool,
+        typer.Option("--tree-tokens", help="Append a per-directory token breakdown."),
+    ] = False,
+    max_file_size: Annotated[
+        int | None, typer.Option("--max-file-size", help="Skip files larger than this many bytes.")
+    ] = None,
+    gitignore: Annotated[
+        bool,
+        typer.Option("--gitignore/--no-gitignore", help="Respect .gitignore rules."),
+    ] = True,
+    branch: Annotated[
+        str | None, typer.Option("--branch", help="Branch, tag or commit to clone.")
+    ] = None,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Write the pack here instead of stdout.")
+    ] = None,
+    allow_network: Annotated[
+        bool,
+        typer.Option(
+            "--allow-network",
+            help="Permit a backend to fetch its own runtime, such as npx downloading repomix.",
+        ),
+    ] = False,
+    show_stages: Annotated[
+        bool, typer.Option("--show-stages", help="Show the per-stage token breakdown.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the result as JSON on stdout.")] = (
+        False
+    ),
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Suppress the report.")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
+) -> None:
+    """Pack a repository into one prompt-ready file, with token accounting."""
+    _configure_logging(verbose)
+
+    try:
+        config = load_config()
+    except TokenmillError as exc:
+        _fail(exc.message, exc.hint)
+
+    source = _repo_source(target)
+    extra: dict[str, Any] = {
+        "include": include,
+        "exclude": exclude,
+        "token_budget": token_budget,
+        "tree_tokens": tree_tokens,
+        "max_file_bytes": max_file_size,
+        "respect_gitignore": gitignore,
+        "branch": branch,
+    }
+    options = config.to_options(
+        backend=backend,
+        tokenizer=tokenizer,
+        allow_network=True if allow_network else None,
+    ).with_(extra={k: v for k, v in extra.items() if v is not None})
+
+    try:
+        result = Pipeline().run(source, options)
+    except TokenmillError as exc:
+        _fail(exc.message, exc.hint)
+
+    if as_json:
+        print(json.dumps(_result_to_json(result, include_text=output is None), indent=2))
+    elif output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(result.text, encoding="utf-8")
+        print(f"wrote {output}", file=sys.stderr)
+    else:
+        print(result.text, end="" if result.text.endswith("\n") else "\n")
+
+    if not quiet and not as_json:
+        print(format_result_report(result, show_stages=show_stages), file=sys.stderr)
+
+
+def _repo_source(target: str) -> Source:
+    """Turn a ``tokenmill repo`` argument into a repository source.
+
+    A Git URL is *not* fetched as a web page here, which is the whole reason
+    this command builds its own source rather than reusing
+    :func:`_make_source`: ``https://github.com/owner/project`` is an HTML page
+    to ``convert`` and a repository to clone to ``repo``, and only the command
+    the user typed can tell those apart.
+
+    Args:
+        target: A directory path, or a Git URL.
+
+    Returns:
+        The source.
+    """
+    if target.startswith(("http://", "https://", "git://", "ssh://")):
+        try:
+            return Source.from_git(target)
+        except ValueError as exc:
+            _fail(str(exc))
+    try:
+        source = Source.from_path(target)
+    except FileNotFoundError as exc:
+        _fail(str(exc), hint="pass a directory that exists, or a Git URL")
+    if source.kind is not SourceKind.REPO:
+        _fail(
+            f"{target} is a file, not a repository",
+            hint="pass the directory that contains it, or use `tokenmill convert` for one file",
+        )
+    return source
 
 
 @app.command()

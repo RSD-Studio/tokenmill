@@ -63,6 +63,21 @@ classifiers = [
 #   pypdf        BSD-3-Clause  plain text, correct multi-column reading order,
 #                              no required dependencies of its own
 #
+# Phase 3 adds one, the web tier's primary extractor and the thing the project's
+# central claim is measured with. §1.6 of the plan puts it in core and the
+# measurements agree: it adds 12 packages and about 54 MB to a core install
+# (28 -> 40 packages, 72 -> 126 MB), all wheels, no compiler, no system binary.
+#
+#   trafilatura  Apache-2.0    the article without the website around it
+#
+# One licence in its tree is worth knowing about and is recorded in
+# docs/LICENSES.md: courlan requires `tld`, which is tri-licensed
+# `MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`. A disjunction lets the
+# recipient choose, and tokenmill takes MPL-1.1 — file-level copyleft, like the
+# certifi MPL-2.0 already accepted in Phase 1. No GPL obligation is incurred.
+#
+# gitingest is *not* here despite §1.6 listing it; see the `repo` extra below.
+#
 # Everything markitdown, kreuzberg and docling need stays in an extra. Nothing
 # here pulls PyTorch, needs a compiler, or requires a system binary.
 #
@@ -75,6 +90,7 @@ dependencies = [
     "markdownify>=0.13",
     "pdfplumber>=0.11",
     "pypdf>=5.0",
+    "trafilatura>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -103,8 +119,42 @@ documents = [
 # standing guard on that. Imported lazily, inside _convert.
 docling = ["docling>=2.0"]
 
-# Phase 3 — JS-rendering web backends (crawl4ai + playwright; browser download).
-web = []
+# Phase 3 — the second-opinion web extractor.
+#
+# readability-lxml is Apache-2.0, verified from installed metadata (0.8.4.1).
+# It is light — lxml, cssselect and chardet — but it duplicates a job
+# trafilatura already does in the core install, so nothing in core needs it and
+# it stays optional.
+web = ["readability-lxml>=0.8"]
+
+# Phase 3 — the browser-driving web backend, in its own group.
+#
+# The plan put crawl4ai in `web`. It gets its own group instead, for the reason
+# Phase 2 gave docling one: `pip install crawl4ai` resolves to 94 packages and
+# 677 MB in our measurement, before Playwright downloads a browser on top of
+# that. Putting it behind the same flag as a three-package fallback extractor
+# would make `pip install "tokenmill[web]"` a surprise. Apache-2.0 throughout;
+# the 94-package audit found no GPL, no AGPL and no PyTorch.
+#
+# Installing the package is not enough to use it — `playwright install chromium`
+# fetches the browser — which is why the adapter reports a missing browser as an
+# actionable failure rather than pretending the probe covers it.
+crawl4ai = ["crawl4ai>=0.7"]
+
+# Phase 4 — repository ingestion.
+#
+# gitingest is MIT, verified from installed metadata (0.3.1). The plan's §1.6
+# lists it in `core`; it is in its own extra instead, and the measurement is why.
+# It requires starlette, pydantic, httpx and loguru — a web-service stack, from
+# the FastAPI app gitingest also ships — which is 14 packages and about 10 MB
+# added to every `pip install tokenmill` for a feature most users of a document
+# converter will never touch. Nothing here pulls a compiler or a system binary,
+# so it would not have breached rule 1; it would just have been weight nobody
+# asked for. Recorded as a deliberate departure from the plan in PROGRESS.md.
+#
+# Repomix (Node) and code2prompt (Rust) are not here and never will be: they are
+# invoked as child processes, and a Python extra cannot install either.
+repo = ["gitingest>=0.3"]
 
 # Phase 6 — prompt compression (llmlingua, transformers). CPU-feasible.
 compress = []
@@ -166,6 +216,12 @@ tokenmill = "tokenmill.cli.main:main"
 [project.entry-points."tokenmill.backends"]
 plaintext = "tokenmill.backends.plaintext:PlaintextConverter"
 markdownify_html = "tokenmill.backends.web.markdownify_html:MarkdownifyHtmlConverter"
+trafilatura = "tokenmill.backends.web.trafilatura_web:TrafilaturaConverter"
+readability = "tokenmill.backends.web.readability_web:ReadabilityConverter"
+crawl4ai = "tokenmill.backends.web.crawl4ai_web:Crawl4AIConverter"
+gitingest = "tokenmill.backends.repo.gitingest_repo:GitingestConverter"
+repomix = "tokenmill.backends.repo.repomix_repo:RepomixConverter"
+code2prompt = "tokenmill.backends.repo.code2prompt_repo:Code2PromptConverter"
 pdfplumber = "tokenmill.backends.documents.pdfplumber_pdf:PdfplumberConverter"
 pypdf = "tokenmill.backends.documents.pypdf_pdf:PypdfConverter"
 markitdown = "tokenmill.backends.documents.markitdown_adapter:MarkItDownConverter"
@@ -253,6 +309,11 @@ convention = "google"
 "scripts/make_fixtures.py" = ["T201", "E501", "RUF001", "RUF002", "RUF003"]
 # The CLI presentation layer is the one place allowed to write to stdout.
 "src/tokenmill/cli/**" = ["T201"]
+# The network-marked benchmark test prints the measured figure on purpose: the
+# CI log is the only place a real model-token number can be *read out* of a run
+# in this project, and CONTRIBUTING.md rule 4 says a figure that is not in
+# captured output does not go in a document.
+"tests/unit/test_web_tokens_network.py" = ["T201"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -302,6 +363,11 @@ module = [
     "markitdown.*",
     "kreuzberg.*",
     "docling.*",
+    "trafilatura.*",
+    "readability.*",
+    "crawl4ai.*",
+    "gitingest.*",
+    "loguru.*",
 ]
 ignore_missing_imports = true
 
@@ -320,6 +386,7 @@ markers = [
     "heavy: needs a GPU or a multi-gigabyte model download; skipped by default",
     "compress: needs the `compress` extra and a model download",
     "network: performs real network I/O; skipped by default",
+    "browser: drives a real browser via Playwright; needs a browser download, skipped by default",
 ]
 filterwarnings = ["error"]
 

@@ -1,6 +1,6 @@
 # Backends
 
-**Status:** current as of Phase 2. Every backend described here exists and is
+**Status:** current as of Phase 4. Every backend described here exists and is
 installed by `pip install tokenmill` or one of its extras.
 
 This is the document that keeps the project honest about the tools it wraps.
@@ -32,6 +32,10 @@ every file is generated, so the observations are reproducible by anyone.
 | `unicode.docx` | Ten scripts including RTL, CJK, a ZWJ emoji family and a flag |
 | `deck.pptx` | Five slides, speaker notes on four of them |
 | `data.xlsx` | Three named sheets, one `AVERAGE` formula |
+| `article.html` | The clean article: the extraction baseline, no boilerplate |
+| `boilerplate.html` | The same article body wrapped in nav, ads, banners and a footer. 12,481 bytes, 4,902 characters of visible text |
+| `jsrendered.html` | A page whose article is inserted by a script. Parsers see a placeholder; a browser sees the article |
+| `sample_repo/` | A real git repository: 9 tracked files across `src/`, `tests/`, `docs/`, a binary blob, and a `.gitignore`d `secrets.env` whose sentinel string must never reach a model |
 
 ---
 
@@ -44,6 +48,12 @@ every file is generated, so the observations are reproducible by anyone.
 | [`markitdown`](#markitdown) | `documents` | MIT | permissive | breadth; PPTX speaker notes | PDF layout, DOCX title |
 | [`kreuzberg`](#kreuzberg) | `documents` | MIT | permissive | speed, reading order, heading inference | destroys PDF tables, drops lists |
 | [`docling`](#docling) | `docling` | MIT | permissive | document structure | 5.2 GB; PDF needs a model download |
+| [`trafilatura`](#trafilatura) | core | Apache-2.0 | permissive | extracting an article from a web page | short pages; it silently stops extracting |
+| [`readability`](#readability) | `web` | Apache-2.0 | permissive | a second, independent extraction | pages that are mostly links |
+| [`crawl4ai`](#crawl4ai) | `crawl4ai` | Apache-2.0 | permissive | pages that need JavaScript | weak extraction; refuses small SPA shells; 677 MB |
+| [`gitingest`](#gitingest) | `repo` | MIT | permissive | packing a repository with no external runtime | pulls a web-service stack; reconfigures host logging |
+| [`repomix`](#repomix) | binary | MIT | permissive | the category leader's output | needs Node; npx downloads it per run |
+| [`code2prompt`](#code2prompt) | binary | MIT | permissive | speed on a large tree | needs a Rust toolchain to install |
 
 Every licence above was read from the **installed package metadata** at the
 moment its adapter was written, not taken from `docs/research/RESEARCH.md`. All
@@ -63,7 +73,9 @@ module and the evidence is below.
 | `pptx` | markitdown → docling → kreuzberg | Only markitdown keeps speaker notes. |
 | `xlsx` | markitdown → kreuzberg → docling | docling drops the sheet names. |
 | `csv` | kreuzberg → markitdown → docling | kreuzberg renders a Markdown table. |
-| `html` | markdownify_html → markitdown → kreuzberg → docling | HTML is the web domain's; Phase 3 revisits it. |
+| `html` | trafilatura → readability → markdownify_html → markitdown → kreuzberg → docling → crawl4ai | Extraction first; the whole-page converter next; the browser last so auto-selection never starts one. |
+| `url` | crawl4ai only | Every other web backend is handed the page the pipeline already fetched. |
+| `repo` | gitingest → repomix → code2prompt | The one that needs no external runtime first. The other two are reachable by name. |
 
 A backend the map does not name keeps its own declared priority, so a
 third-party backend can outrank all of these without anyone editing core.
@@ -502,6 +514,478 @@ behind the `heavy` marker, and the manual-dispatch `docling` CI job runs it.
 
 ---
 
+## `trafilatura`
+
+**Install:** core — `pip install tokenmill`
+**License:** Apache-2.0 (verified against installed metadata, 2.2.0)
+**Upstream:** <https://github.com/adbar/trafilatura>
+**Formats:** `html`, `htm`, `xhtml`
+
+The default for a web page since Phase 3, and the backend the project's central
+claim is measured with.
+
+### What it is good at
+
+**Removing the website and keeping the article.** On `boilerplate.html` it
+removes **all six** of the corpus manifest's
+`boilerplate_markers_must_be_absent` — the cookie banner, both advertisement
+slots, the trending rail, the newsletter block and the footer copyright — while
+keeping all six headings at the right level, all seven article paragraphs, and
+the 7×5 summary table as a real Markdown table:
+
+```
+# Why Your Context Window Is Mostly Navigation Menus
+
+A short look at where context windows actually go.
+
+## Where the tokens actually go
+...
+## Summary table
+
+| Backend | License | Runtime | Tables | Pages/sec |
+|---|---|---|---|---|
+| markitdown | MIT | CPU | weak | 12.0 |
+```
+
+12,481 bytes in, 2,854 out: **−77.1%**, in UTF-8 bytes. See
+[`BENCHMARKS.md`](BENCHMARKS.md) for what that figure does and does not claim.
+
+**It keeps structure while stripping furniture**, which is the combination
+`RESEARCH.md` Category 7's rule for this repository asks for — "keep structure,
+strip boilerplate", citing arXiv:2407.05750 measuring +8–33% F1 when layout
+survives. An extractor that took the headings with the navigation would be
+buying a better percentage with worse answers.
+
+### Observed failure modes
+
+**A short page gets no extraction at all, and does not say so.** Trafilatura's
+`MIN_EXTRACTED_SIZE` is 250 characters. Below it, the main algorithm yields
+nothing and a baseline extractor returns the page's raw text instead — with no
+Markdown structure and with the navigation still in it. On a four-element page:
+
+```
+$ tokenmill convert small.html --backend trafilatura --tokenizer bytes
+Nav
+Title
+Body text here.
+```
+
+No `# Title`, and `Nav` survives. So a short page gets neither of the two things
+this backend is for, silently. This is why the CLI's own tests pin
+`--backend markdownify_html`: their sample page is far under the threshold.
+Asserted by
+`test_a_short_page_loses_its_structure_and_keeps_its_navigation`, with
+`test_a_long_enough_page_does_get_structure_and_does_lose_the_navigation` as
+the contrast so the claim stays bounded.
+
+**A heading outside the detected content region is dropped, not demoted.** An
+`<h1>` that sits next to the navigation rather than inside the article is
+treated as page furniture and removed with it.
+
+**A page with no text at all is a failure, not an empty document.** Deliberate,
+and the opposite of how the document tier treats a scanned PDF. A scanned PDF has
+nothing for *anyone* to extract, so the backends warn and return empty. A page
+trafilatura declined is a page another backend can convert in full, so failing
+hands it to the chain:
+
+```
+$ tokenmill convert scriptonly.html --tokenizer bytes
+attempts: trafilatura (failed) -> markdownify_html
+warning:  backend 'trafilatura' failed and tokenmill fell back to the next one:
+trafilatura found no main content in scriptonly.html; the page may be a link
+directory, a search results page, or otherwise not an article
+```
+
+**A correction, recorded because it was written down wrongly first.** The first
+version of this page said trafilatura declines a page of nothing but links. It
+does not — it extracts the link text. That claim came from reasoning about what
+an extractor probably does rather than from running one. The failure modes above
+are what running it actually produced.
+
+### Configuration worth knowing about
+
+**Its own fallbacks are switched off.** Trafilatura calls out to readability and
+justext when its primary algorithm is unsure, which would make this backend's
+output depend on which *other* extractors happen to be installed — the same
+objection that made MarkItDown run with plugins disabled. A backend whose output
+depends on the environment cannot be described truthfully on this page.
+tokenmill's own chain does that job visibly instead, through
+`ConversionResult.attempts`.
+
+**Links are kept.** A documentation page whose references have been deleted has
+lost information. Stripping them is available deliberately, through
+`--links strip`.
+
+### A licence note in its dependency tree
+
+trafilatura itself is Apache-2.0. `courlan`, which it requires, requires `tld`,
+which is tri-licensed `MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`. That is a
+disjunction — the recipient chooses — and tokenmill takes MPL-1.1. See
+[`LICENSES.md`](LICENSES.md); it is not a GPL dependency, and the explanation is
+there so that grepping the tree for "GPL" finds an answer rather than an alarm.
+
+---
+
+## `readability`
+
+**Install:** `pip install "tokenmill[web]"`
+**License:** Apache-2.0 (verified against installed metadata, readability-lxml 0.8.4.1)
+**Upstream:** <https://github.com/buriy/python-readability>
+**Formats:** `html`, `htm`, `xhtml`
+
+The Python port of the arc90/Mozilla algorithm behind Firefox's Reader View. It
+returns cleaned HTML, which this adapter converts to Markdown with markdownify.
+
+### What it is good at
+
+**The same job as trafilatura, by an unrelated algorithm.** On
+`boilerplate.html` it also removes all six boilerplate markers and keeps the
+article, the headings and the table. It exists in the chain so that a page
+trafilatura declines outright gets a second opinion rather than falling straight
+through to the whole-page converter.
+
+**It restores the title the algorithm discards.** readability drops the page
+header, title included. The adapter puts back the title readability itself
+identified — not one invented here — because a document with no title is harder
+to use.
+
+### The claim this page does not make
+
+The obvious thing to write is that readability trades precision for recall,
+which is the algorithm's general reputation. **On our fixture it does no such
+thing.** Its output is byte-identical to trafilatura's apart from the spacing
+inside the table's separator row (`| --- |` against `|---|`) — 2,864 characters
+against 2,854.
+
+That was written the other way round first, from reputation rather than
+measurement, and corrected after running both. One fixture is not a benchmark,
+so no general claim about their relative quality appears anywhere in this
+repository; Phase 10's harness over a real corpus is what could support one.
+`test_it_agrees_with_trafilatura_almost_exactly_on_this_page` fails if an
+upstream release makes them diverge, so this section gets corrected rather than
+quietly becoming false.
+
+### Observed failure modes
+
+**Pages that are mostly links.** The scoring is about text density and link
+density, so a link directory is the shape it handles worst. It returns an empty
+result rather than raising, which this adapter turns into a failure so the chain
+continues.
+
+---
+
+## `crawl4ai`
+
+**Install:** `pip install "tokenmill[crawl4ai]"`, **then** `playwright install chromium`
+**License:** Apache-2.0 (verified against installed metadata, 0.9.2; Playwright 1.62.0 Apache-2.0)
+**Upstream:** <https://github.com/unclecode/crawl4ai>
+**Formats:** `html`, `htm`, `xhtml`, `url`
+
+### Read this before installing it
+
+`pip install crawl4ai` resolves to **94 packages and 677 MB**, measured, before
+Playwright downloads a browser on top. A licence audit of all 94 found no GPL, no
+AGPL and no PyTorch. It is far short of docling's 5.2 GB and far past what
+belongs in a core install, so it gets its own extra — the same treatment and the
+same reason.
+
+Three constraints follow from a browser being more than a fetch:
+
+- **It is never auto-selected.** Ranked last for every format it claims. Ask for
+  it by name.
+- **It requires `--allow-network`, even on a local file.** A browser executes
+  whatever scripts the page carries and loads whatever they ask for, from
+  anywhere. Rendering a saved HTML file can therefore reach the network, and the
+  guarantee that converting a local file does not is worth more than the
+  convenience.
+- **Installing the package is not enough.** A missing browser is reported as an
+  actionable failure with the command that fixes it.
+
+### What it is good at
+
+**Pages that do not exist until JavaScript runs**, which is the whole of its
+contribution. On `tests/fixtures/jsrendered.html` — whose article is inserted by
+a script, and whose sentinel is assembled from two halves at run time so it
+appears nowhere in the file's bytes:
+
+```
+$ tokenmill convert tests/fixtures/jsrendered.html --backend crawl4ai --allow-network
+# The Article That Only Exists After Hydration
+This paragraph is inserted by a script and is present in no response body...
+The sentinel RSD-TOKENMILL-RENDERED-9317 appears exactly once in the rendered
+document and never in the source...
+```
+
+trafilatura on the same file returns the placeholder and nothing else. Both are
+asserted, so the pair is the proof rather than the claim.
+
+### Observed failure modes
+
+**Its extraction is measurably weaker than trafilatura's.** The pruning filter
+scores blocks by text and link density rather than identifying an article, so a
+prose-heavy advertisement scores like prose. On `boilerplate.html` it leaves
+**three of the six** markers where trafilatura leaves none:
+
+```
+Accept all cookies
+SPONSORED: Cut your cloud bill by 40%
+Subscribe to our newsletter
+```
+
+12,481 → 3,394 bytes, −72.8%, against trafilatura's −77.1%. Headings and the
+table survive, so it is not destroying structure to get there — it simply keeps
+furniture. Asserted by name, so an upstream improvement fails the test and this
+paragraph gets corrected.
+
+**It refuses small client-rendered pages as anti-bot blocking.** Its detector
+inspects the **un-rendered** response body and rejects any page under 5,000
+bytes whose body holds fewer than 50 characters of visible text:
+
+```
+error: crawl4ai could not render file:///.../spa.html: Blocked by anti-bot
+protection: Structural: minimal_text on small page (1297 bytes, 18 chars visible)
+```
+
+A small single-page-application shell is exactly that. **So the one class of
+page a browser-driving backend is uniquely able to handle is the class its own
+guard rejects.** tokenmill cannot fix this from outside and surfaces it as a
+typed, printable failure; the chain then offers the page to a backend that can
+at least return the shell. `tests/fixtures/jsrendered.html` carries a
+full-sentence placeholder specifically to stay above the threshold, with a test
+on the fixture so nobody shortens it back.
+
+**It skips the browser for `file://` URLs unless told not to.** Found by running
+it: crawl4ai routes local files around the browser entirely unless
+`process_in_browser` is set, so the adapter was returning a parse of the
+response body while claiming to render. The adapter now sets it. Worth knowing
+if you drive crawl4ai directly.
+
+---
+
+## `gitingest`
+
+**Install:** `pip install "tokenmill[repo]"`
+**License:** MIT (verified against installed metadata, 0.3.1)
+**Upstream:** <https://github.com/coderamp-labs/gitingest>
+**Formats:** `repo`
+
+The default for a repository, because it is importable: no Node, no Rust, no
+binary to find. `RESEARCH.md` Category 5 reaches the same conclusion — *"gitingest
+is the best Python-native fit"*.
+
+### What it is good at
+
+**Packing a repository into one document with a tree and every file's contents**,
+and doing it in half a second on our fixture. On `tests/fixtures/sample_repo` it
+packs **7 of the 9 tracked files**:
+
+```
+Directory structure:
+└── sample_repo/
+    ├── README.md
+    ├── pyproject.toml
+    ├── docs/
+    │   └── design.md
+    ├── src/
+    │   └── widgetlib/
+    │       ├── __init__.py
+    │       ├── core.py
+    │       └── utils.py
+    └── tests/
+        └── test_core.py
+
+================================================
+FILE: README.md
+================================================
+# widgetlib
+```
+
+The two it leaves out are correct: `assets/logo.bin` is binary, and `.gitignore`
+is a dot file. The `.gitignore`d `secrets.env` never appears at all — the
+property the fixture exists to check, asserted in both directions so that
+`--no-gitignore` is proven to actually let it through.
+
+### Observed failure modes
+
+All four were found by running it as a *library*, which is a different thing from
+running it as a CLI, and none of them is about repositories.
+
+**It validates `$GITHUB_TOKEN` before looking at the source.** `resolve_token`
+falls back to the environment variable and checks its *format* unconditionally,
+so a placeholder token — which CI systems and development sandboxes export
+routinely — fails a purely local pack:
+
+```
+gitingest.utils.exceptions.InvalidGitHubTokenError: Invalid GitHub token format.
+```
+
+The adapter hides the variable for the duration of the call. tokenmill clones
+through `git`, which uses the user's normal credential helper, so gitingest is
+only ever handed a local path and has no use for a token.
+
+**It reconfigures the host process's logging.** Importing it installs a loguru
+`InterceptHandler` on the standard library's **root** logger and sets that
+logger's level to `0`. Measured:
+
+```
+root handlers before: []                    level 30
+root handlers after:  ['InterceptHandler']  level 0
+```
+
+Every record tokenmill logs — and every record an application embedding
+tokenmill logs — is rerouted, and previously-suppressed INFO starts appearing.
+The adapter snapshots and restores both.
+
+**It logs its own progress at INFO**, eight lines per pack. Silenced with
+`logger.disable("gitingest")`, which is scoped to that package.
+
+**Its ignore rules go through pathspec's deprecated `gitwildmatch` factory**, and
+that DeprecationWarning is fatal under `filterwarnings = ["error"]`. Filtered by
+message, the same treatment docling's internal deprecation gets: a library's own
+deprecation churn is not something a user can act on.
+
+### Why it is in an extra rather than the core install
+
+The plan's §1.6 lists it in `core`. It requires **starlette, pydantic, httpx and
+loguru** — the stack from the FastAPI app gitingest also ships — which is 14
+packages and about 10 MB on every `pip install tokenmill` for a feature most
+users of a document converter never touch. Nothing there breaches rule 1; it
+would simply have been weight nobody asked for.
+
+---
+
+## `repomix`
+
+**Install:** `npm install -g repomix` (or let `npx` fetch it with `--allow-network`)
+**License:** MIT — runs out of process, so its licence never touches ours
+**Upstream:** <https://github.com/yamadashy/repomix>
+**Formats:** `repo` — **subprocess isolation**
+
+The category leader by adoption — ~26.8k stars against gitingest's ~15.3k — and
+TypeScript, so it is a child process.
+
+### What it is good at
+
+**The most complete pack of the three.** It includes 8 files where gitingest and
+code2prompt include 7, and its preamble explains its own format to whatever
+reads it. It sorts files by git change frequency, so the code that moves most
+ends up nearest the end of the context.
+
+Its secret scanning is left **on**: a packing tool that helps a user paste their
+AWS keys into a model is worse than one that is slightly slower.
+
+### Observed failure modes
+
+**Without a local install, every run is a download.** `npx` fetches the package
+on first use, which is a network call inside a command that looks local. So the
+adapter requires `--allow-network` when it has to go through `npx`, and does not
+when `repomix` is on `PATH`:
+
+```
+$ tokenmill repo ./project --backend repomix
+error: repomix is not installed, and running it through npx would download it
+hint:  install Node.js, then either 'npm install -g repomix' (recommended: no
+download per run) or pass --allow-network to let npx fetch it each time
+```
+
+**Its own `--token-budget` does not truncate.** It *fails* with a non-zero exit
+when the pack is too big. tokenmill's `--token-budget` truncates and reports what
+it dropped, in the run's own tokenizer, identically across all three engines —
+the two are not the same feature and this adapter does not pass ours through as
+theirs.
+
+**It is the slowest of the three** through `npx`: about 1.1 s against
+code2prompt's 0.1 s and gitingest's 0.5 s on our fixture, before the first-run
+download.
+
+---
+
+## `code2prompt`
+
+**Install:** `cargo install code2prompt` (needs a Rust toolchain)
+**License:** MIT — runs out of process
+**Upstream:** <https://github.com/mufeedvh/code2prompt>
+**Formats:** `repo` — **subprocess isolation**
+
+### What it is good at
+
+**Speed.** 103 ms on our fixture against gitingest's 564 ms and repomix's 1,082
+ms — it is Rust and it shows. It also produces the smallest pack of the three
+(2,246 characters against 2,862 and 3,978), because its per-file framing is
+lighter.
+
+### Observed failure modes
+
+**There is no wheel and no npm package.** Installing it compiles it, which needs
+a Rust toolchain and a few minutes, and that is why it ranks last — not quality.
+A user without one gets the command that fixes it, and gitingest packs their
+repository meanwhile.
+
+**Its section format is not what a reader of repomix's would guess.** It marks a
+file with a backtick-quoted path and a colon, not `## File:`:
+
+```
+`README.md`:
+
+```md
+# widgetlib
+```
+```
+
+tokenmill's first parser assumed the repomix form, and the adapter reported it
+honestly rather than silently claiming the repository had no files:
+
+```
+warning:  code2prompt's Markdown format was not recognised, so the token budget
+and the per-directory breakdown could not be applied. The pack itself is
+complete and unmodified; this is a tokenmill parsing problem
+```
+
+That warning is the reason this was found in minutes rather than shipping as a
+budget that quietly did nothing. It is still there, and it is what will catch the
+next upstream format change.
+
+---
+
+## What every repository backend shares
+
+These are tokenmill's, not any tool's, and they behave identically across all
+three — which is the point of wrapping them at all.
+
+**A budget that genuinely caps the output.** Whole files only, in the tool's own
+emission order, never partial — half a module is worse than none, because a model
+cannot tell the rest was cut. Measured on our fixture: a 1,200-byte cap produces
+a 999-byte document.
+
+**Truncation is never silent.** Every dropped file is named with what it would
+have cost, in a warning, in the metadata, and **in the document itself** — the
+document is the part that travels to a model, and that reader cannot ask why a
+file is missing.
+
+**The note degrades before the content does.** A file that fits is never evicted
+to make room for a longer explanation of the files that did not. The full table
+appears when it fits and a one-line note when it does not; the complete list is
+always in the result's metadata.
+
+**A per-directory breakdown**, on `--tree-tokens`, rolled up through every
+ancestor so it answers a question about a subtree:
+
+```
+| directory     | bytes | share | files |
+| ---           | ---   | ---   | ---   |
+| src           | 1,425 | 54.6% | 3     |
+| src/widgetlib | 1,425 | 54.6% | 3     |
+| .             | 528   | 20.2% | 2     |
+| tests         | 348   | 13.3% | 1     |
+| docs          | 310   | 11.9% | 1     |
+```
+
+**A shallow clone for a remote URL**, removed on every exit path including
+failure. `ext::` and `file://` are refused at two layers, because `ext::` makes
+git execute an arbitrary command.
+
+---
+
 ## Failure modes every backend in this tier shares
 
 **A scanned PDF produces an empty document.** `scanned.pdf` has no text layer by
@@ -574,8 +1058,6 @@ turns the chain off entirely.
 
 | Backend | Why | Phase |
 |---|---|---|
-| trafilatura, readability, crawl4ai | Web extraction | 3 |
-| gitingest, repomix, code2prompt | Repository ingestion | 4 |
 | llmlingua2 | Prompt compression | 6 |
 | pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |
 | tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |

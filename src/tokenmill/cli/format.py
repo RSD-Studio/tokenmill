@@ -190,6 +190,43 @@ def _format_attempts(attempts: Sequence[BackendAttempt]) -> str:
     )
 
 
+def _format_boilerplate(result: ConversionResult) -> str | None:
+    """Describe how much of a web page's text the backend discarded.
+
+    Deliberately a *second* line rather than a replacement for the ``tokens``
+    line, because it answers a different question. ``tokens`` says what the
+    conversion cost changed to, markup removal included; this says how much of
+    what a reader would have *seen* was navigation, banners and footers. On
+    ``boilerplate.html`` those are 77% and 43%, and reporting either as the
+    other is the misattribution ``RESEARCH.md`` Category 7 is about.
+
+    Args:
+        result: The conversion to describe.
+
+    Returns:
+        The line, or ``None`` when the backend recorded no web metrics — every
+        document and repository conversion, and any web backend that could not
+        measure a page with no visible text at all.
+    """
+    share = result.metadata.get("boilerplate_reduction")
+    if not isinstance(share, int | float):
+        return None
+    visible = result.metadata.get("visible_text_characters")
+    if not isinstance(visible, int) or visible <= 0:
+        return None
+
+    # Characters, and it says so. The `tokens` line above is the token claim;
+    # this one must never be mistaken for a second one.
+    if share > 0:
+        return f"page:     {share:.1%} of {visible:,} visible characters removed as boilerplate"
+    if share == 0:
+        return f"page:     none of {visible:,} visible characters removed as boilerplate"
+    return (
+        f"page:     no boilerplate removed; Markdown syntax added {-share:.1%} to "
+        f"{visible:,} visible characters"
+    )
+
+
 def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
     """Render the human-readable report for one conversion.
 
@@ -232,6 +269,10 @@ def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
             lines.append(f"size:     {format_bytes(result.source_bytes)} in, no comparable before")
     else:
         lines.append("tokens:   not measured — see warnings below")
+
+    boilerplate = _format_boilerplate(result)
+    if boilerplate is not None:
+        lines.append(boilerplate)
 
     if show_stages and result.stages:
         lines.extend(["", format_stage_table(result.stages)])

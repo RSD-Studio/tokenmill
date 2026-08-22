@@ -9,6 +9,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 4 — repository backends
+
+- **Three repository backends**, one set of options over three runtimes:
+  - `gitingest` (MIT, `repo`) — Python-native, so it needs no external tool and
+    is what a repository auto-selects. Packs 7 of the fixture's 9 tracked files,
+    correctly skipping the binary blob and never emitting the `.gitignore`d
+    secret.
+  - `repomix` (MIT, Node, **subprocess**) — the category leader; the most
+    complete pack of the three at 8 files.
+  - `code2prompt` (MIT, Rust, **subprocess**) — the fastest, at 103 ms against
+    564 and 1,082 on our fixture.
+- **`tokenmill repo`**, a new command. `https://github.com/owner/project` is a
+  web page to `convert` and a repository to `repo`, and only the command the
+  user typed distinguishes them. Flags: `--include`, `--exclude`,
+  `--token-budget`, `--tree-tokens`, `--max-file-size`, `--no-gitignore`,
+  `--branch`, `--allow-network`.
+- **A token budget that genuinely caps the output.** Whole files only, in the
+  tool's own emission order, never partial. Measured: a 1,200-byte cap produces
+  a 999-byte document, and **every dropped file is named** — in a warning, in the
+  metadata, and in the document itself, because the document is the part that
+  reaches a model.
+- **A per-directory token breakdown** on `--tree-tokens`, rolled up through
+  every ancestor so it answers a question about a subtree.
+- **Shallow cloning of a remote Git URL** into a temporary directory removed on
+  every exit path including failure. `ext::` and `file://` are refused at two
+  layers, since `ext::` makes git execute an arbitrary command.
+- **`tokenmill.backends._subprocess`** — the minimum runner Phase 4 needs: list
+  arguments, never `shell=True`, timeouts, captured stderr on the exception, and
+  a path beginning with `-` refused rather than passed. **Phase 7 replaces it**;
+  what it deliberately does not do is listed in its docstring and in
+  `PROGRESS.md`.
+
+### Fixed
+
+#### Found by the Phase 0–4 review
+
+- **A conversion could report a large saving for losing the content.**
+  `convert jsrendered.html` reported `1,512 -> 140 (-90.7%)`, a number that would
+  look excellent in a benchmark and represented near-total content loss — the
+  case `benchmarks/README.md` names as disqualifying. Web backends now warn when
+  a page carries scripts and under 15% of its bytes are visible text, calibrated
+  against the corpus and explicitly labelled a heuristic.
+- **A clean install gave a Node error for a Python tool.** With no extras,
+  `tokenmill repo ./project` fell through to repomix and failed with npx
+  instructions, never mentioning `pip install "tokenmill[repo]"`.
+
+#### Phase 4 — gitingest's behaviour as a library
+
+Four things it does to the process that imports it, all found by running it:
+
+- It validated `$GITHUB_TOKEN`'s *format* before looking at the source, so a
+  placeholder token failed a purely **local** pack with
+  `InvalidGitHubTokenError`.
+- **It installed a loguru handler on the stdlib root logger and set that
+  logger's level to 0**, rerouting every record tokenmill and any embedding
+  application logs, and un-suppressing INFO. Snapshotted and restored now.
+- It logged its own progress at INFO, eight lines per pack.
+- Its ignore rules go through pathspec's deprecated `gitwildmatch` factory,
+  whose `DeprecationWarning` is fatal under `filterwarnings = ["error"]`.
+
+#### Phase 3 — web backends
+
+- **Three web backends**, licences verified against the installed package
+  metadata:
+  - `trafilatura` (Apache-2.0, **core**) — extracts a page's article and
+    discards the website around it. On `boilerplate.html` it removes **all six**
+    of the corpus manifest's boilerplate markers while keeping all six headings,
+    all seven article paragraphs and the 7×5 table: 12,481 → 2,854 bytes,
+    **−77.1%**, inside `RESEARCH.md`'s published 70–90% band.
+  - `readability` (Apache-2.0, `web`) — the Firefox Reader View algorithm, as a
+    second independent opinion when trafilatura declines a page.
+  - `crawl4ai` (Apache-2.0, `crawl4ai`) — drives a real Chromium so a page's
+    JavaScript runs. The only backend that can convert a client-rendered page,
+    and measurably the weakest extractor of the three.
+- **URL fetching**, in the pipeline rather than in each backend, with a user
+  agent naming tokenmill and its repository, a timeout, a bounded redirect chain
+  that refuses to leave `http(s)`, a byte cap, and `robots.txt` respect that is
+  on by default. Standard-library `urllib`, so the core install gains no
+  dependency for it.
+- **A boilerplate metric that cannot be confused with the token saving.** A web
+  backend records what share of the page's *visible text* it discarded, next to
+  the byte or token reduction, which counts markup removal too. `markdownify_html`
+  scores **−38.7%** on it — it discards no text and adds Markdown syntax — while
+  removing 45.5% of the file's bytes. Reporting one as the other is the
+  misattribution `RESEARCH.md` Category 7 describes.
+- **`tests/fixtures/jsrendered.html`** — a page whose article is inserted by a
+  script, with a sentinel the script assembles from two halves so it appears
+  nowhere in the file's bytes. It is what makes "crawl4ai renders JavaScript"
+  checkable rather than asserted.
+- **New CLI flags** on `convert`: `--offline`, `--ignore-robots`,
+  `--allow-network`, `--user-agent`, `--max-redirects`. A `page:` line in the
+  report and a `web` object in `--json`.
+- **New `browser` test marker**, opt-in like `network` and `heavy`, so the
+  default suite stays offline and CI never downloads a browser.
+- **[`docs/LICENSES.md`](docs/LICENSES.md)** — created. `CONTRIBUTING.md` rule 2
+  had linked to it for three phases and it did not exist.
+- **[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)** — created, partial, and explicit
+  that its figures are in UTF-8 bytes rather than model tokens.
+
+### Changed
+
+#### Phase 3
+
+- **`trafilatura` is now the default backend for HTML**, ahead of
+  `markdownify_html`. This changes what `tokenmill convert page.html` produces:
+  an extracted article instead of the whole page converted faithfully. Ask for
+  the old behaviour with `--backend markdownify_html`, which remains the right
+  choice when you want the entire page.
+- **The shared adapter helpers moved** from
+  `tokenmill.backends.documents._common` to `tokenmill.backends._common`, since
+  web and repository adapters need them too. The old path re-exports everything
+  and is tested, so no existing import breaks.
+- **Additive model changes**: `Source.format_hint`, `Source.from_fetched`,
+  `Source.from_git`; `ConvertOptions.fetch`, `respect_robots`, `max_redirects`,
+  `user_agent`; `BackendInfo.fetches_urls`. `fetch` is deliberately separate
+  from `allow_network` — naming a URL is the request to fetch *that URL*, while
+  `allow_network` stays default-deny and governs what a backend reaches for on
+  its own.
+
 #### Phase 2 — document backends (light tier)
 
 - **Five document backends**, each with its licence verified against the

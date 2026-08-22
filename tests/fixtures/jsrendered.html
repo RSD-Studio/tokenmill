@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Client-rendered article</title>
+</head>
+<body>
+<main id="app"><p>Loading article. This placeholder is what a parser sees, because the article below it is inserted by a script that only a browser will run.</p></main>
+<script>
+var marker = 'RSD-TOKENMILL' + '-RENDERED-9317';
+var article = document.createElement('article');
+var heading = document.createElement('h1');
+heading.textContent = 'The Article That Only Exists After Hydration';
+article.appendChild(heading);
+var paragraphs = [
+  'This paragraph is inserted by a script and is present in no response body. A converter that parses the HTML a server sent will never see it, and a converter that drives a browser will. That difference is the whole reason a browser-driving backend is worth its weight.',
+  'The sentinel ' + marker + ' appears exactly once in the rendered document and never in the source, because this script joins it from two halves at run time. Asserting on it is therefore a check that rendering happened rather than a check that some text was found.',
+  'Everything here is inserted through the DOM rather than fetched, so the fixture needs no network and behaves identically on an air-gapped machine.'
+];
+for (var i = 0; i < paragraphs.length; i++) {
+  var p = document.createElement('p');
+  p.textContent = paragraphs[i];
+  article.appendChild(p);
+}
+var app = document.getElementById('app');
+app.innerHTML = '';
+app.appendChild(article);
+</script>
+</body>
+</html>

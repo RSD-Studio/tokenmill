@@ -12,10 +12,16 @@ markup converter. On ``tests/fixtures/boilerplate.html`` it removes about half
 the characters — all of it markup, script and style — and every navigation link
 is still there afterwards.
 
-Boilerplate removal is Trafilatura's job and arrives in Phase 3, where the
-70-90% reduction the literature reports (``docs/research/RESEARCH.md``,
-Category 7) becomes measurable. Do not read this backend's output as evidence
-for that number; it is a different operation.
+Boilerplate removal is Trafilatura's job, and Phase 3 brought it. Do not read
+this backend's character reduction as evidence for the 70-90% figures the
+literature reports (``docs/research/RESEARCH.md``, Category 7): those describe
+extraction and this is markup removal, which is a different operation on a
+different denominator. ``boilerplate_reduction`` in this backend's metadata is
+the number that says so — it is near zero here and large for trafilatura, on
+the same page.
+
+It stays the right choice when the whole page is what you want: an archive, a
+diff against the live site, or a page an extractor misjudges.
 
 License: markdownify is MIT (``docs/research/RESEARCH.md``, Category 4). It is
 permissive, so it may be imported into our process. It pulls in
@@ -28,6 +34,7 @@ from __future__ import annotations
 import importlib.util
 from typing import Any, Final
 
+from tokenmill.backends.web._common import note_web_metrics, warn_if_client_rendered
 from tokenmill.core.errors import BackendFailed, CorruptSource
 from tokenmill.core.models import (
     Availability,
@@ -63,7 +70,7 @@ class MarkdownifyHtmlConverter(BaseConverter):
         name="markdownify (HTML)",
         description=(
             "Converts HTML markup to Markdown. Faithful, not selective: "
-            "boilerplate survives. Use trafilatura (Phase 3) to strip it."
+            "boilerplate survives. Use trafilatura to strip it."
         ),
         domains=(Domain.WEB,),
         input_formats=("html", "htm", "xhtml"),
@@ -95,7 +102,7 @@ class MarkdownifyHtmlConverter(BaseConverter):
         Args:
             source: The HTML to convert.
             options: Unused beyond what :class:`BaseConverter` already applied.
-            context: Collects size metadata and any warning.
+            context: Collects the conversion metrics and any warning.
 
         Returns:
             The Markdown.
@@ -144,7 +151,13 @@ class MarkdownifyHtmlConverter(BaseConverter):
                 f"text outside scripts and styles"
             )
 
-        context.note("html_characters", len(html))
+        # The same metrics every web backend reports, so the four are directly
+        # comparable. This one's `boilerplate_reduction` is near zero on any
+        # page, which is the honest number for a faithful markup converter and
+        # the contrast that makes trafilatura's figure mean something.
+        note_web_metrics(context, html=html, output=text, strips_boilerplate=False)
+        warn_if_client_rendered(
+            context, html=html, source_name=source.name, backend_id=self.info.id
+        )
         context.note("markdown_characters", len(text))
-        context.note("strips_boilerplate", False)
         return text

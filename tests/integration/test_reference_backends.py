@@ -7,9 +7,19 @@ release for no good reason.
 
 They also pin down what ``markdownify_html`` does *not* do. It is a faithful
 markup converter, not an extractor: navigation, cookie banners and
-advertisements survive it. Phase 3's Trafilatura adapter is what removes those,
-and the tests below are written so that when it lands, the difference is
-measurable rather than asserted.
+advertisements survive it.
+
+**Phase 3 landed the change these tests were written to notice.** trafilatura
+now outranks ``markdownify_html`` for HTML, so auto-selection no longer produces
+this backend's output for a web page. That is a deliberate change to the
+product's default answer, not a regression, and the response is to pin rather
+than to loosen: every test here now names ``markdownify_html``, so it keeps
+asserting exactly what it always asserted about the backend it is about.
+
+The mirror image — that trafilatura removes every one of those same markers —
+is asserted in ``tests/integration/test_web_backends.py`` against the same list
+in ``ground_truth.json``. Between the two files the difference between a markup
+converter and an extractor is measured on one page, in both directions.
 """
 
 from __future__ import annotations
@@ -30,6 +40,11 @@ pytestmark = pytest.mark.integration
 #: an air-gapped environment. It counts UTF-8 bytes, not model tokens.
 OFFLINE = ConvertOptions(tokenizer="bytes")
 
+#: The same, pinned to the backend this module is about. Since Phase 3, HTML
+#: auto-selects trafilatura, so a test that means "what markdownify_html does"
+#: has to say so.
+RAW = OFFLINE.with_(backend="markdownify_html")
+
 
 @pytest.fixture(scope="module")
 def pipeline() -> Pipeline:
@@ -39,14 +54,14 @@ def pipeline() -> Pipeline:
 
 @pytest.fixture(scope="module")
 def boilerplate_result(fixture_dir: Path, pipeline: Pipeline) -> ConversionResult:
-    """Convert ``boilerplate.html`` once for the whole module."""
-    return pipeline.run(Source.from_path(fixture_dir / "boilerplate.html"), OFFLINE)
+    """Convert ``boilerplate.html`` once for the whole module, through markdownify."""
+    return pipeline.run(Source.from_path(fixture_dir / "boilerplate.html"), RAW)
 
 
 @pytest.fixture(scope="module")
 def article_result(fixture_dir: Path, pipeline: Pipeline) -> ConversionResult:
-    """Convert ``article.html`` once for the whole module."""
-    return pipeline.run(Source.from_path(fixture_dir / "article.html"), OFFLINE)
+    """Convert ``article.html`` once for the whole module, through markdownify."""
+    return pipeline.run(Source.from_path(fixture_dir / "article.html"), RAW)
 
 
 @pytest.fixture(scope="module")
@@ -111,8 +126,11 @@ class TestMarkdownifyOnTheBoilerplateFixture:
     ) -> None:
         """Documenting the limitation, not asserting it is desirable.
 
-        Phase 3's trafilatura adapter is what strips these. If a future change
-        makes them disappear here, that is a behaviour change worth noticing.
+        trafilatura is what strips these, and
+        ``tests/integration/test_web_backends.py`` asserts that it does. Here
+        they must all survive: a markup converter that started dropping page
+        furniture would have stopped being a markup converter, and the
+        comparison that makes the extractor's number meaningful would be gone.
         """
         for marker in boilerplate_markers:
             assert marker in boilerplate_result.text, (
@@ -246,7 +264,10 @@ class TestErrorPaths:
             pytest.skip("no document backend is installed to fall back to")
 
         assert result.text.strip() == ""
-        assert result.attempts[0].backend_id == "markdownify_html"
+        # Which backend heads the chain is `preferences`' business and has
+        # changed once already (Phase 3 put trafilatura there). What this test
+        # is about is that the *first* candidate failed, that the failure is
+        # recorded rather than swallowed, and that the empty result says so.
         assert not result.attempts[0].ok
         assert any("fell back" in warning for warning in result.warnings)
         assert any("empty document" in warning for warning in result.warnings)
