@@ -156,6 +156,18 @@ crawl4ai = ["crawl4ai>=0.7"]
 # invoked as child processes, and a Python extra cannot install either.
 repo = ["gitingest>=0.3"]
 
+# Phase 5 — token-aware chunking.
+#
+# chonkie is MIT and genuinely light by the standards of this neighbourhood,
+# but it is NOT in core, which is a deliberate departure from the plan's 1.6.
+# Measured on 2026-08-24: it adds 10 packages and takes a core install from
+# 126 MB to 196 MB of `lib/`, almost all of it numpy. Defect D4 records that
+# core already grew 2.3x in Phase 3 without anyone deciding that was
+# acceptable, and a further 56% for a feature most users of a document
+# converter never touch would repeat the move that created D4. The owner was
+# asked and chose the extra.
+chunk = ["chonkie>=1.0"]
+
 # Phase 6 — prompt compression (llmlingua, transformers). CPU-feasible.
 compress = []
 
@@ -238,6 +250,7 @@ aggressive_whitespace = "tokenmill.post.aggressive_whitespace:AggressiveWhitespa
 links = "tokenmill.post.links:LinkHandler"
 dedupe_blocks = "tokenmill.post.dedupe:DuplicateBlockRemover"
 normalize_headings = "tokenmill.post.headings:HeadingNormalizer"
+chunk = "tokenmill.post.chunk:Chunker"
 
 [project.entry-points."tokenmill.formats"]
 markdown = "tokenmill.formats.markdown_table:MarkdownTableEncoder"

@@ -186,6 +186,7 @@ class TestPostProcessorRegistry:
             "aggressive_whitespace",
             "dedupe_blocks",
             "normalize_headings",
+            "chunk",
         }
 
     def test_the_chain_is_ordered_by_declared_order_not_discovery_order(self) -> None:
@@ -201,6 +202,7 @@ class TestPostProcessorRegistry:
             "links",
             "dedupe_blocks",
             "normalize_headings",
+            "chunk",
         )
 
     def test_the_default_chain_excludes_destructive_processors(self) -> None:

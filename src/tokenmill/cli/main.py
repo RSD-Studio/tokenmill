@@ -279,6 +279,18 @@ def convert(
     max_redirects: Annotated[
         int | None, typer.Option("--max-redirects", help="Redirects a URL fetch may follow.")
     ] = None,
+    chunk_size: Annotated[
+        int | None,
+        typer.Option(
+            "--chunk-size",
+            help="Chunk size for the `chunk` post-processor, in the run's "
+            "tokenizer's unit. Implies --post ...,chunk.",
+        ),
+    ] = None,
+    chunk_overlap: Annotated[
+        int | None,
+        typer.Option("--chunk-overlap", help="Tokens of overlap between chunks."),
+    ] = None,
     show_stages: Annotated[
         bool, typer.Option("--show-stages", help="Show the per-stage token breakdown.")
     ] = False,
@@ -317,16 +329,31 @@ def convert(
         respect_robots=False if ignore_robots else None,
         allow_network=True if allow_network else None,
     )
-    # Asking for image or link handling without naming a chain implies wanting
-    # the `links` post-processor; it is destructive, so it is not in the default
-    # chain, and silently ignoring the flag would be worse than either option.
-    if chain is None and (
+    chunking = {
+        key: value
+        for key, value in (("chunk_size", chunk_size), ("chunk_overlap", chunk_overlap))
+        if value is not None
+    }
+    if chunking:
+        options = options.with_(extra={**dict(options.extra), **chunking})
+
+    # Asking for image or link handling, or for a chunk size, without naming a
+    # chain implies wanting the post-processor that does it. Those processors
+    # are destructive, so they are not in the default chain, and silently
+    # ignoring the flag would be worse than either option.
+    implied_ids = []
+    if (
         options.image_handling is not ImageHandling.KEEP
         or options.link_handling is not LinkHandling.KEEP
     ):
+        implied_ids.append("links")
+    if chunking:
+        implied_ids.append("chunk")
+    if chain is None and implied_ids:
         registry = Pipeline().post_processors
-        implied = (*[p.id for p in registry.default_chain()], "links")
-        options = options.with_(post_processors=implied)
+        options = options.with_(
+            post_processors=(*[p.id for p in registry.default_chain()], *implied_ids)
+        )
 
     try:
         result = Pipeline().run(source, options)

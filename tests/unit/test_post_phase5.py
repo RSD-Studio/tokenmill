@@ -27,7 +27,10 @@ from tokenmill.post.frontmatter import FrontMatterStripper
 from tokenmill.post.headings import HeadingNormalizer
 from tokenmill.post.links import LinkHandler
 
-DEFAULTS = ConvertOptions()
+#: The `bytes` tokenizer, because the chain now contains `chunk`, which asks
+#: Chonkie to resolve the run's tokenizer. Under the default `o200k_base`
+#: that is a vocabulary download, and this sandbox cannot reach one.
+DEFAULTS = ConvertOptions(tokenizer="bytes")
 
 #: Every post-processor Phase 5 added or changed.
 PHASE_5_IDS = (
@@ -90,7 +93,7 @@ class TestTheDestructiveContract:
     def test_every_processor_is_idempotent_on_the_structured_fixture(self, structured: str) -> None:
         # The protocol asks for idempotence where it is meaningful. Running a
         # chain twice must not keep changing the document.
-        options = ConvertOptions(image_handling=ImageHandling.ALT, link_handling=LinkHandling.STRIP)
+        options = DEFAULTS.with_(image_handling=ImageHandling.ALT, link_handling=LinkHandling.STRIP)
         for processor in default_post_registry():
             once = processor.process(structured, options)
             assert processor.process(once, options) == once, processor.id
@@ -196,7 +199,7 @@ class TestDuplicateBlockRemover:
 
     def test_the_floor_is_configurable(self) -> None:
         text = "### Notes\n\nfirst\n\n### Notes\n\nsecond\n"
-        options = ConvertOptions(extra={"dedupe_min_chars": 3})
+        options = DEFAULTS.with_(extra={"dedupe_min_chars": 3})
         out = DuplicateBlockRemover().process(text, options)
         assert out.count("### Notes") == 1
 
@@ -249,28 +252,28 @@ class TestAggressiveWhitespaceCleaner:
 class TestReferenceLinks:
     def test_inline_links_move_to_definitions(self, structured: str) -> None:
         out = LinkHandler().process(
-            structured, ConvertOptions(link_handling=LinkHandling.REFERENCE)
+            structured, DEFAULTS.with_(link_handling=LinkHandling.REFERENCE)
         )
         assert "[inline link][1]" in out
         assert "[1]: https://example.com/inline" in out
 
     def test_an_existing_definition_is_not_rewritten(self, structured: str) -> None:
         out = LinkHandler().process(
-            structured, ConvertOptions(link_handling=LinkHandling.REFERENCE)
+            structured, DEFAULTS.with_(link_handling=LinkHandling.REFERENCE)
         )
         assert "[ref-one]: https://example.com/reference" in out
 
     def test_a_repeated_target_is_defined_once(self) -> None:
         # The only case where reference mode actually saves anything.
         text = "[a](https://example.com/x) and [b](https://example.com/x)\n"
-        out = LinkHandler().process(text, ConvertOptions(link_handling=LinkHandling.REFERENCE))
+        out = LinkHandler().process(text, DEFAULTS.with_(link_handling=LinkHandling.REFERENCE))
         assert out.count("https://example.com/x") == 1
         assert "[a][1]" in out
         assert "[b][1]" in out
 
     def test_a_url_inside_a_code_fence_is_left_alone(self) -> None:
         text = "```\n[x](https://example.com/y)\n```\n"
-        out = LinkHandler().process(text, ConvertOptions(link_handling=LinkHandling.REFERENCE))
+        out = LinkHandler().process(text, DEFAULTS.with_(link_handling=LinkHandling.REFERENCE))
         assert out == text
 
     def test_keep_still_does_nothing(self, structured: str) -> None:
@@ -283,7 +286,7 @@ class TestTheProcessorsCompose:
     def test_the_whole_destructive_chain_runs_without_damaging_the_table(
         self, structured: str
     ) -> None:
-        options = ConvertOptions(
+        options = DEFAULTS.with_(
             image_handling=ImageHandling.ALT, link_handling=LinkHandling.REFERENCE
         )
         text = structured
@@ -295,7 +298,7 @@ class TestTheProcessorsCompose:
         assert not text.startswith("---\ntitle:")
 
     def test_the_chain_reduces_the_document(self, structured: str) -> None:
-        options = ConvertOptions(
+        options = DEFAULTS.with_(
             image_handling=ImageHandling.STRIP, link_handling=LinkHandling.STRIP
         )
         text = structured
