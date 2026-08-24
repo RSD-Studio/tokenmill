@@ -451,6 +451,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
 | [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, and the audits actually run |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results *(partial; the full harness is Phase 10)* |
+| [`docs/CI_BILLING_CHECK.md`](docs/CI_BILLING_CHECK.md) | Why CI stopped scheduling runners and how to check the Actions billing page, written for a novice |
 | [`docs/REVIEW_PHASES_0_6.md`](docs/REVIEW_PHASES_0_6.md) | A full re-evaluation after Phase 6: every acceptance criterion with its evidence, the whole corpus with tokens beside fidelity, and an honest defects list including the ones it introduced |
 
 ## Non-goals

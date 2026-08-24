@@ -3353,6 +3353,7 @@ implemented; see Decisions for each, and the table below. One new question has
 opened since, and it needs owner-level access rather than a decision.
 
 **1. CI cannot schedule runners — please check the Actions billing state.**
+**Step-by-step instructions: [`docs/CI_BILLING_CHECK.md`](docs/CI_BILLING_CHECK.md).**
 Runs 25 through 28 all failed within seconds, every job at `runner_id: 0`, no
 steps, no logs, across all three runner labels. Run 24 on `Main` succeeded 2h20m
 earlier. The evidence that this is not our workflow file is in the verification
