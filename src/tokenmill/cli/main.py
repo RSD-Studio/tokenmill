@@ -1,8 +1,11 @@
 """The ``tokenmill`` command line.
 
-Four commands:
+Five commands:
 
 * ``tokenmill convert`` — convert a source and report the token change.
+* ``tokenmill fidelity`` — score converted text against a corpus fixture's
+  hand-labelled ground truth, so a token saving can be read next to what it
+  cost.
 * ``tokenmill repo`` — pack a repository into one file, with the repository
   options the plan's Phase 4 names: include and exclude globs, a token budget
   that genuinely truncates, and a per-directory breakdown.
@@ -32,12 +35,16 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, Final, NoReturn
 
 import typer
 
 from tokenmill import __version__
-from tokenmill.cli.format import format_result_report, format_table
+from tokenmill.cli.format import (
+    format_fidelity_report,
+    format_result_report,
+    format_table,
+)
 from tokenmill.core.config import load_config
 from tokenmill.core.errors import TokenmillError
 from tokenmill.core.models import (
@@ -51,6 +58,9 @@ from tokenmill.core.models import (
 )
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.core.registry import default_registry
+from tokenmill.fidelity import load_ground_truth, resolve_fixture
+from tokenmill.fidelity import score as score_fidelity
+from tokenmill.fidelity.models import FidelityScore
 from tokenmill.tokens.registry import default_tokenizer_registry
 
 __all__ = ["app", "main"]
@@ -464,6 +474,126 @@ def _repo_source(target: str) -> Source:
             hint="pass the directory that contains it, or use `tokenmill convert` for one file",
         )
     return source
+
+
+#: Where the corpus lives in a development checkout. There is no packaged
+#: corpus — `ground_truth.json` ships in the sdist and not in the wheel — so an
+#: installed tokenmill scoring somebody else's corpus must be told where it is.
+DEFAULT_CORPUS: Final = Path("tests/fixtures")
+
+
+def _read_target(target: str) -> str:
+    """Read the text to be scored, from a file or from stdin.
+
+    Args:
+        target: A path, or ``-`` for standard input.
+
+    Returns:
+        The text.
+    """
+    if target == "-":
+        return sys.stdin.read()
+    path = Path(target)
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _fail(f"could not read {path}: {exc}")
+    except UnicodeDecodeError:
+        _fail(
+            f"{path} is not UTF-8 text",
+            hint="fidelity scores converted text; convert the source first, "
+            "e.g. `tokenmill convert FILE -o out.md`",
+        )
+
+
+def _fidelity_to_json(score: FidelityScore) -> dict[str, Any]:
+    """Render a fidelity score as JSON.
+
+    Args:
+        score: The score to serialise.
+
+    Returns:
+        The JSON-ready mapping. A component that did not apply carries a
+        ``null`` score rather than being omitted, so a consumer can tell
+        "not measured" from "measured as zero" without knowing which
+        components a fixture supports.
+    """
+    return {
+        "fixture": score.fixture,
+        "backend": score.backend_id,
+        "overall": score.overall,
+        "scored_components": list(score.scored_components),
+        "components": [
+            {
+                "component": component.component,
+                "score": component.score,
+                "expected": component.expected,
+                "found": component.found,
+                "detail": component.detail,
+                "missing": list(component.missing),
+            }
+            for component in score.components
+        ],
+    }
+
+
+@app.command()
+def fidelity(
+    target: Annotated[
+        str,
+        typer.Argument(help="Converted text to score, or `-` to read it from standard input."),
+    ],
+    against: Annotated[
+        str,
+        typer.Option(
+            "--against",
+            "-a",
+            help="The corpus fixture whose ground truth to score against, e.g. boilerplate.html.",
+        ),
+    ],
+    corpus: Annotated[
+        Path | None,
+        typer.Option(
+            "--corpus",
+            help="Directory holding ground_truth.json. Defaults to tests/fixtures.",
+        ),
+    ] = None,
+    backend: Annotated[
+        str | None,
+        typer.Option(
+            "--backend",
+            "-b",
+            help="Record which backend produced this text. Never inferred.",
+        ),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the score as JSON on stdout.")
+    ] = False,
+) -> None:
+    """Score converted text against a fixture's ground truth.
+
+    A token saving on its own is not a result: a converter that emits an empty
+    string scores a 100% reduction. This reports what the saving cost, as six
+    named components rather than one opaque number.
+
+    Pipes, so the two halves of the measurement can be produced together::
+
+        tokenmill convert tests/fixtures/boilerplate.html -q |
+            tokenmill fidelity - --against boilerplate.html
+    """
+    text = _read_target(target)
+    root = corpus if corpus is not None else DEFAULT_CORPUS
+    try:
+        fixtures = load_ground_truth(root)
+        name, truth = resolve_fixture(fixtures, against)
+    except TokenmillError as exc:
+        _fail(exc.message, exc.hint)
+
+    result = score_fidelity(text, truth, fixture=name, backend_id=backend)
+    if as_json:
+        print(json.dumps(_fidelity_to_json(result), indent=2))
+    else:
+        print(format_fidelity_report(result))
 
 
 @app.command()

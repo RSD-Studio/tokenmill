@@ -656,3 +656,123 @@ class TestBrokenBackendDoesNotCrashTheCli:
         assert result.returncode == 1
         assert "failed to load" in result.stderr
         assert "Traceback" not in result.stderr
+
+
+class TestFidelity:
+    """`tokenmill fidelity` — the second half of every token measurement."""
+
+    def test_it_scores_converted_text_against_a_fixture(
+        self, fixture_dir: Path, tmp_path: Path
+    ) -> None:
+        converted = tmp_path / "out.md"
+        converted.write_text(
+            "# Why Your Context Window Is Mostly Navigation Menus\n", encoding="utf-8"
+        )
+        result = runner.invoke(
+            app,
+            [
+                "fidelity",
+                str(converted),
+                "--against",
+                "boilerplate.html",
+                "--corpus",
+                str(fixture_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "heading_recall" in result.output
+        assert "overall:" in result.output
+
+    def test_a_component_without_ground_truth_prints_n_a_never_zero(
+        self, fixture_dir: Path, tmp_path: Path
+    ) -> None:
+        converted = tmp_path / "out.md"
+        converted.write_text("nothing in particular\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["fidelity", str(converted), "-a", "boilerplate.html", "--corpus", str(fixture_dir)],
+        )
+        assert result.exit_code == 0, result.output
+        reading_order = next(
+            line for line in result.output.splitlines() if line.startswith("reading_order")
+        )
+        assert "n/a" in reading_order
+        assert "0.000" not in reading_order
+
+    def test_the_overall_names_what_it_is_made_of(self, fixture_dir: Path, tmp_path: Path) -> None:
+        converted = tmp_path / "out.md"
+        converted.write_text("# Converter Comparison\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["fidelity", str(converted), "-a", "tables.pdf", "--corpus", str(fixture_dir)],
+        )
+        assert "unweighted mean of" in result.output
+
+    def test_json_carries_null_for_a_component_that_did_not_apply(
+        self, fixture_dir: Path, tmp_path: Path
+    ) -> None:
+        converted = tmp_path / "out.md"
+        converted.write_text("# Converter Comparison\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "fidelity",
+                str(converted),
+                "-a",
+                "tables.pdf",
+                "--corpus",
+                str(fixture_dir),
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        by_name = {c["component"]: c for c in payload["components"]}
+        assert by_name["reading_order"]["score"] is None
+        assert set(payload["scored_components"]) <= set(by_name)
+
+    def test_it_reads_standard_input(self, fixture_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["fidelity", "-", "-a", "tables.pdf", "--corpus", str(fixture_dir)],
+            input="# Converter Comparison\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "heading_recall" in result.output
+
+    def test_an_unknown_fixture_lists_the_known_ones(
+        self, fixture_dir: Path, tmp_path: Path
+    ) -> None:
+        converted = tmp_path / "out.md"
+        converted.write_text("x\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["fidelity", str(converted), "-a", "nope.pdf", "--corpus", str(fixture_dir)],
+        )
+        assert result.exit_code == 1
+        assert "tables.pdf" in result.output
+
+    def test_a_missing_corpus_names_the_generator(self, tmp_path: Path) -> None:
+        converted = tmp_path / "out.md"
+        converted.write_text("x\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["fidelity", str(converted), "-a", "tables.pdf", "--corpus", str(tmp_path / "gone")],
+        )
+        assert result.exit_code == 1
+        assert "make_fixtures.py" in result.output
+
+    def test_a_binary_input_says_to_convert_it_first(self, fixture_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "fidelity",
+                str(fixture_dir / "tables.pdf"),
+                "-a",
+                "tables.pdf",
+                "--corpus",
+                str(fixture_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "convert" in result.output

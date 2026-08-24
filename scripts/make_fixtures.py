@@ -101,6 +101,11 @@ ARTICLE_PARAGRAPHS: Final = [
     ),
 ]
 
+#: The section headings in simple.pdf. Named because scanned.pdf is a
+#: rasterised copy of that file and states the same ground truth: the page
+#: really does carry these headings, whether or not a backend can read them.
+SIMPLE_PDF_SECTIONS: Final = ["Introduction", "Method", "Results", "Discussion"]
+
 ARTICLE_SECTIONS: Final = [
     ("Where the tokens actually go", ARTICLE_PARAGRAPHS[0:2]),
     ("The misattributed win", ARTICLE_PARAGRAPHS[2:4]),
@@ -231,7 +236,7 @@ def build_simple_pdf(out: Path) -> dict[str, Any]:
     styles = getSampleStyleSheet()
     path = out / "simple.pdf"
 
-    headings = ["Introduction", "Method", "Results", "Discussion"]
+    headings = list(SIMPLE_PDF_SECTIONS)
     story: list[Any] = [Paragraph(ARTICLE_TITLE, styles["Title"]), Spacer(1, 12)]
     for index, heading in enumerate(headings):
         story.append(Paragraph(heading, styles["Heading1"]))
@@ -251,7 +256,7 @@ def build_simple_pdf(out: Path) -> dict[str, Any]:
     doc.build(story)
     return {
         "description": "Baseline digital PDF: title, four H1 sections, multi-page.",
-        "expected_headings": [ARTICLE_TITLE, *headings],
+        "expected_headings": [ARTICLE_TITLE, *SIMPLE_PDF_SECTIONS],
         "min_pages": 2,
         "must_contain": ["Strip the boilerplate", "load-bearing"],
     }
@@ -434,6 +439,13 @@ def build_scanned_pdf(out: Path) -> dict[str, Any]:
         "has_text_layer": False,
         "requires_ocr": True,
         "source_fixture": "simple.pdf",
+        # What the page says, even though no backend in the current tier can
+        # read it. Ground truth describes the document, not what our converters
+        # manage — so every backend correctly scores 0.0 content recall here,
+        # which is the honest measurement of "this tier has no OCR", and Phase
+        # 9 has a regression target that moves it to 1.0.
+        "expected_headings": [ARTICLE_TITLE, *SIMPLE_PDF_SECTIONS],
+        "must_contain": ["Strip the boilerplate", "load-bearing"],
     }
 
 
@@ -1043,6 +1055,19 @@ app.appendChild(article);
         "unrendered_placeholder": JS_PLACEHOLDER,
         "rendered_title": "The Article That Only Exists After Hydration",
         "rendered_paragraph_count": 3,
+        # Scorable ground truth, added when the fidelity scorer was built. This
+        # fixture is the reason it exists: `convert jsrendered.html` reports a
+        # -90.7% reduction achieved by losing every word of the article, and
+        # without these keys the scorer had nothing to say about the one result
+        # that most needed contradicting. A parser-only backend now scores 0.0
+        # content recall here and a browser-driving one scores 1.0.
+        "expected_headings": ["The Article That Only Exists After Hydration"],
+        # "present in no response body" appears only in the paragraph the
+        # script inserts. The obvious phrase "inserted by a script" would
+        # have been a false positive: it is also in the placeholder, so a
+        # backend that recovered nothing scored 0.5 for finding it.
+        "must_contain": [JS_SENTINEL, "present in no response body"],
+        "must_not_contain": [JS_PLACEHOLDER],
     }
 
 

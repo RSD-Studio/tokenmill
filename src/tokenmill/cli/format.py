@@ -12,9 +12,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from tokenmill.core.models import BackendAttempt, ConversionResult, StageCount, TokenCount
+from tokenmill.fidelity.models import FidelityScore
 
 __all__ = [
     "format_bytes",
+    "format_fidelity_report",
     "format_result_report",
     "format_stage_table",
     "format_table",
@@ -281,3 +283,65 @@ def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
         lines.append("")
         lines.extend(f"warning:  {warning}" for warning in result.warnings)
     return "\n".join(lines)
+
+
+def format_score(score: float | None) -> str:
+    """Render one component score.
+
+    Args:
+        score: The fraction, or ``None`` when the component did not apply.
+
+    Returns:
+        The score to three decimal places, or ``n/a``. Never ``0.000`` for a
+        component that was not measured — that is the distinction the whole
+        fidelity package exists to preserve, and it must survive being printed.
+    """
+    return "n/a" if score is None else f"{score:.3f}"
+
+
+def format_fidelity_report(score: FidelityScore) -> str:
+    """Render a fidelity score as a table a person can act on.
+
+    Args:
+        score: The score to render.
+
+    Returns:
+        The report: one row per component with its score, what it counted and
+        one sentence of detail, then the overall and the components it was
+        composed of.
+    """
+    rows = [
+        [
+            component.component,
+            format_score(component.score),
+            ("-" if component.expected is None else f"{component.found}/{component.expected}"),
+            component.detail,
+        ]
+        for component in score.components
+    ]
+    out = [
+        f"fidelity: {score.fixture}" + (f" via {score.backend_id}" if score.backend_id else ""),
+        "",
+        format_table(["component", "score", "count", "detail"], rows),
+        "",
+    ]
+
+    if score.overall is None:
+        out.append(
+            "overall: n/a — this fixture's ground truth supported no component, so "
+            "the text was not assessed. That is not the same as scoring zero."
+        )
+    else:
+        out.append(
+            f"overall: {score.overall:.3f} "
+            f"(unweighted mean of {', '.join(score.scored_components)})"
+        )
+
+    named = [c for c in score.components if c.missing]
+    if named:
+        out.append("")
+        out.append("what is missing:")
+        out.extend(
+            f"  {component.component}: {item}" for component in named for item in component.missing
+        )
+    return "\n".join(out)

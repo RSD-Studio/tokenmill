@@ -310,6 +310,22 @@ class TestMarkItDown:
             ground_truth["data.xlsx"]["sheet_row_counts"].values()
         )
 
+    def test_xlsx_cell_values_have_their_markdown_syntax_escaped(
+        self, fixture_dir: Path, pipeline: Pipeline
+    ) -> None:
+        # docs/BACKENDS.md, MarkItDown failure modes. `backend_count` comes back
+        # as `backend\_count`, so a literal search of the output for the cell's
+        # own value fails. Kreuzberg does not do this, and the fidelity scorer
+        # reads the difference as content recall 0.667 against 1.000.
+        #
+        # If this fails because MarkItDown stopped escaping, that is an
+        # improvement: drop the "Markdown syntax inside XLSX cell values is
+        # escaped" section from docs/BACKENDS.md and the note from
+        # docs/BENCHMARKS.md.
+        result = convert(pipeline, fixture_dir / "data.xlsx", "markitdown")
+        assert "backend\\_count" in result.text
+        assert "backend_count" not in result.text
+
     def test_docx_headings_nest_but_the_title_is_lost(
         self, fixture_dir: Path, pipeline: Pipeline
     ) -> None:

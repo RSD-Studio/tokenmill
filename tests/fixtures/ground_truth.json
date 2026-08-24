@@ -103,6 +103,16 @@
     },
     "jsrendered.html": {
       "description": "A page whose article is inserted by a script: parsers see a placeholder, a browser-driving backend sees the article.",
+      "expected_headings": [
+        "The Article That Only Exists After Hydration"
+      ],
+      "must_contain": [
+        "RSD-TOKENMILL-RENDERED-9317",
+        "present in no response body"
+      ],
+      "must_not_contain": [
+        "Loading article. This placeholder is what a parser sees, because the article below it is inserted by a script that only a browser will run."
+      ],
       "needs_javascript": true,
       "rendered_paragraph_count": 3,
       "rendered_sentinel": "RSD-TOKENMILL-RENDERED-9317",
@@ -227,7 +237,18 @@
     },
     "scanned.pdf": {
       "description": "Rasterised copy of simple.pdf: images only, no text layer.",
+      "expected_headings": [
+        "Why Your Context Window Is Mostly Navigation Menus",
+        "Introduction",
+        "Method",
+        "Results",
+        "Discussion"
+      ],
       "has_text_layer": false,
+      "must_contain": [
+        "Strip the boilerplate",
+        "load-bearing"
+      ],
       "page_count": 2,
       "requires_ocr": true,
       "source_fixture": "simple.pdf"
