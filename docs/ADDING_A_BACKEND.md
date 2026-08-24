@@ -490,3 +490,55 @@ $ pytest tests/unit/test_protocol.py -v
       asserts the failure**, so a future upstream fix corrects the docs instead
       of quietly falsifying them. A wrapper that hides a bad converter is worse
       than no wrapper.
+
+---
+
+## Post-processors, tokenizers and table formats register the same way
+
+Nothing here is special-cased. Four entry point groups, one mechanism:
+
+| Group | What it registers | Protocol |
+|---|---|---|
+| `tokenmill.backends` | Converters | `Converter` |
+| `tokenmill.postprocessors` | Post-processors | `PostProcessor` |
+| `tokenmill.tokenizers` | Tokenizer providers | `TokenizerProvider` |
+| `tokenmill.formats` | Table encoders | `TableEncoder` |
+
+```toml
+[project.entry-points."tokenmill.postprocessors"]
+shouty = "my_package.shouty:Shouty"
+
+[project.entry-points."tokenmill.formats"]
+yaml = "my_package.yaml_table:YamlTableEncoder"
+```
+
+### If your post-processor can lose anything, say so
+
+```python
+class Shouty(BasePostProcessor):
+    id = "shouty"
+    name = "Shouty"
+    description = "Upper-cases everything."
+    destructive = True   # <- keeps it out of the default chain
+    order = 300
+
+    def process(self, text: str, options: ConvertOptions) -> str:
+        return text.upper()
+```
+
+`default_chain()` is built by **excluding** destructive post-processors, so the
+default pipeline cannot damage a document by construction rather than by
+convention. A post-processor that changes the document's shape — even without
+losing information — should set the flag too; `chunk` does.
+
+Pick an `order` inside the band that matches what you do; `docs/ARCHITECTURE.md`
+lists them. Two post-processors sharing an order is not an error but does make
+the chain depend on id ordering, so avoid it.
+
+### If your encoder cannot represent something, raise
+
+A `TableEncoder` implements `encode(table)` and `decode(text)`, and the contract
+is that they round-trip. Where your format genuinely cannot carry something —
+JSON cannot key a row by an unnamed column — raise `TableError` rather than
+dropping it silently. Where the loss is inherent and unavoidable, document it on
+the encoder, as the Markdown encoder does for line breaks in cells.

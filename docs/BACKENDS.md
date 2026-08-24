@@ -1076,3 +1076,244 @@ turns the chain off entirely.
 | pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |
 | tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |
 | marker, mineru, olmocr, surya, deepseek-ocr | GPU tier, out of process | 9 |
+
+---
+
+# Post-processors
+
+Same standard as the backends above: **what each one destroys, stated plainly,
+with a test asserting it.** A post-processor that quietly damages a document is
+worse than none, and every claim below is held by
+`tests/unit/test_post_phase5.py` or `tests/unit/test_chunk.py`.
+
+One number governs the whole list: **the default chain is exactly
+`normalize_whitespace`.** Everything else here is destructive and off unless
+asked for. That is enforced over the whole registry rather than per processor,
+because the failure mode is the *next* post-processor forgetting the flag.
+
+## `normalize_whitespace` — the only one that runs by default
+
+**Destroys:** nothing. Its non-destructive claim is meant literally: fenced code
+blocks are passed through untouched and Markdown hard line breaks are preserved
+as exactly two spaces, because stripping them would silently change how the
+document renders.
+
+**Measured:** −0.2% on `structured.md`, fidelity 1.000.
+
+## `strip_frontmatter`
+
+**Destroys:** the document's metadata — its title, author, tags, canonical URL,
+whatever the front matter carried. Once removed the document cannot say where it
+came from.
+
+**Does not destroy:** a `---` in the middle of the document, which is a thematic
+break. Only a block at the very start is removed, and an *unterminated* block is
+left alone rather than eating the file.
+
+**A limit of the fidelity score, not a clean bill of health:** it scores 1.000
+because no component tracks front matter. 1.000 means "nothing ground truth
+asked about was lost", which is not "nothing was lost".
+
+**Measured:** −5.9% on `structured.md`.
+
+## `aggressive_whitespace`
+
+**Destroys:** Markdown hard line breaks (the two-trailing-space kind), runs of
+spaces inside a line, and paragraph indentation. Aligned text and ASCII layout
+lose their alignment.
+
+**Does not destroy:** fenced code, indented code blocks, list nesting, or the
+spacing inside an inline code span.
+
+**Worth knowing before you enable it:** on this project's own corpus it is close
+to worthless — `+0.0%` on `twocolumn.pdf` and `boilerplate.html`, `−0.1%` on
+`report.docx` — because the backends already emit tidy Markdown and
+`normalize_whitespace` runs first. It earns its place on hand-written or scraped
+input. Measure it on your own documents rather than assuming.
+
+## `links`
+
+**Destroys:** URLs, under `--links strip`; image targets, under `--images strip`;
+image markup, under `--images alt`, which keeps only the alt text.
+
+**Does not destroy:** anything under the defaults — both settings are `keep` and
+the processor returns the text unchanged, so having it in a chain costs nothing.
+URLs inside fenced code blocks and inline code spans are never touched: a URL in
+a code sample is content.
+
+**`--links reference` is not a saving unless a target repeats.** It moves every
+target into a definition list and leaves `[text][n]` behind, so a document whose
+URLs are all distinct gets *larger*: **+0.5%** on `structured.md`. It saves
+exactly when the same URL appears more than once.
+
+**Not handled:** autolinks (`<https://example.com>`) and bare URLs in prose.
+Rewriting a bare URL means deciding where it ends, and the answer differs
+between Markdown flavours; guessing wrong corrupts the sentence around it.
+
+**Measured:** −5.4% at fidelity 0.955 on `structured.md` with both set to
+`strip` — the missing 0.045 is three link targets, counted by
+`structure_retention`.
+
+## `dedupe_blocks`
+
+**Destroys:** the second and later copies of any block that repeats verbatim.
+A repeat can be deliberate and no metric can tell the difference.
+
+**Does not destroy:** fenced code blocks, which are never removed and never
+merged — two identical code samples in a tutorial are two examples. Nor blocks
+shorter than 80 characters after whitespace collapsing, which is what stops a
+document with two `### Notes` sections losing the second heading. The floor is
+overridable through `extra['dedupe_min_chars']`.
+
+**Measured:** the largest saving in the toolkit that costs nothing measurable —
+**−11.4% at fidelity 1.000** on `structured.md`, and **−8.3%** on `report.docx`,
+which repeats a "detail" paragraph per section. It correctly finds nothing to
+remove in `boilerplate.html` and `twocolumn.pdf`.
+
+## `normalize_headings`
+
+**Destroys:** the document's original heading levels. It promotes the shallowest
+heading to `#` and closes up skipped levels, and afterwards the source's ranks
+are not recoverable. A specification with deliberately deep numbering comes out
+saying something different.
+
+**Does not destroy:** a `#` inside a fenced code block, and it passes a leading
+front-matter block through untouched — a YAML block's closing `---` is
+indistinguishable from a setext underline, and without that guard `draft: false`
+became a heading.
+
+**Depth comes from the ancestor chain, not from a remap of the levels used.**
+On a document going `##`, `####`, `###`, remapping the distinct levels emits
+`#`, `###`, `##` — which still skips. Walking the chain emits `#`, `##`, `##`.
+
+**Measured:** −0.3% at **fidelity 0.750** on `structured.md`. It deletes
+nothing; every heading is present at a different rank, and the score's detail
+says which of those two things happened.
+
+## `chunk`
+
+**Destroys:** nothing. It inserts `<!-- tokenmill:chunk n/total -->` markers
+between chunks.
+
+**Costs tokens rather than saving them.** The markers are not free:
+`long_context.md` at a 2,048-byte chunk size grows **+1.8%**, and the per-stage
+report shows it as a rise. That is the opposite of what a token-reduction
+toolkit reads like it should do, and there is a test asserting it.
+
+**Needs `pip install "tokenmill[chunk]"`.** Without Chonkie it raises an
+actionable error rather than returning the text unchanged, because a flag that
+silently does nothing is worse than no flag.
+
+**The chunk size is in the run's own unit.** Chonkie's `ByteTokenizer` was
+checked against tokenmill's `bytes` counter on multibyte text and emoji and
+agrees exactly. Under a real model tokenizer the id is handed to Chonkie, which
+needs that tokenizer's vocabulary download; where that is unavailable the error
+names `--tokenizer bytes` as the way round it.
+
+**Marked destructive, which is a stretch.** It loses nothing; the flag is the
+only mechanism that keeps a post-processor out of the default chain. Recorded in
+`PROGRESS.md` as an open question rather than papered over.
+
+---
+
+# Table formats
+
+`tokenmill compare --formats` re-encodes a converted table. Every encoder here
+**round-trips losslessly**, proven by property tests over generated tables that
+include embedded delimiters, quotes, backslashes, leading zeros, exponents,
+`true`, empty strings, control characters and emoji.
+
+Cells are strings, and are written as a bare number, boolean or null **exactly
+when that renders back to the identical string**. So `9.99` is a number and
+`05`, `+1` and `1e-6` stay quoted strings. Without that rule JSON and TOON would
+quote what CSV writes bare, and the comparison would flatter CSV by two
+characters per numeric cell.
+
+## `markdown`
+
+**The only lossy encoder here, in two ways, both of them GFM's limits rather
+than ours** — and both documented instead of papered over with a non-standard
+escape that no other tool could read:
+
+- a pipe table is line-oriented, so **a line break inside a cell becomes a
+  space**;
+- **leading and trailing whitespace in a cell is lost**, because cell padding is
+  not content and every Markdown renderer strips it.
+
+Backslashes and pipes are escaped and round-trip exactly. The decoder is
+deliberately more forgiving than the encoder, because it has to read tables
+written by thirteen backends: outer pipes optional, alignment colons ignored,
+prose around the table skipped.
+
+## `csv`
+
+RFC 4180 via the standard library, so quoting, embedded delimiters, embedded
+newlines and doubled quotes are all handled. Emits **LF rather than RFC 4180's
+CRLF**, deliberately: every other encoder here emits LF and the token count is
+taken over the result, so a stray CR per row would be a real and misleading
+difference in the comparison.
+
+**Cheapest format on our fixture (216 bytes, −60% against JSON)** and, per
+`RESEARCH.md`, among the weakest on comprehension in one published test and
+better than JSON in another. Cheapest is not best.
+
+## `json`
+
+A compact array of objects — the shape everything else is compared against,
+because it is what an application already has.
+
+**Cannot carry the columns of an empty table.** An array of objects keeps its
+column names on the objects, so zero rows round-trips to zero columns. Format
+inherent; the alternative is a wrapper object on every table, which would add
+tokens to every row of every comparison to serve a case that carries no data.
+
+## `toon`
+
+**Implemented here rather than wrapped**, against the TOON specification
+(Working Draft 4.1, MIT, `github.com/toon-format/spec`, fetched 2026-08-24).
+Checked on that date:
+
+- `toon-format` 0.1.0 — the package under the format's own GitHub organisation
+  — **is a stub**: `encode()` and `decode()` both raise
+  `NotImplementedError("TOON encoder is not yet implemented")`;
+- `toon-py` 1.0.2 works and round-trips, but emits `users[2,]{...}` where the
+  specification's own example is `users[2]{...}`. §6 makes the delimiter
+  optional and comma the default, so the extra character is legal — and it is a
+  wasted character in every array header of a format whose entire claim is token
+  efficiency.
+
+**Implements:** the tabular form for uniform arrays (§9.3), string quoting and
+escaping (§7.1, §7.2), key encoding (§7.3), LF line endings and two-space
+indentation.
+
+**Refuses, rather than half-reading:** the list form, the keyed tabular form,
+nested field groups, non-comma delimiters, length markers, and strict-mode
+validation. A declared length that disagrees with the row count is an error, not
+something to guess past — it means the document was truncated.
+
+**Conformance to the reference implementation is unverified.** The reference is
+TypeScript and cannot be run here. What *is* verified: round-tripping over
+generated tables, and agreement with the specification's own worked examples.
+
+**240 bytes on our fixture, −56% against JSON.** `RESEARCH.md`'s framing is the
+one to use: the wins are real, narrow (uniform arrays only) and model-dependent,
+and independent work finds accuracy collapsing on non-aligned structures.
+
+## `keyvalue`
+
+One `key: value` line per field, blank-line-separated blocks. **The most
+expensive format on the page (456 bytes, +111% over CSV)** and it is here
+because of that: `RESEARCH.md` records it topping an eleven-format comprehension
+test at ~60.7%, about 16 points ahead of CSV. A comparison that only offered
+formats which win on tokens would be a machine for picking the cheapest one.
+
+## JSON, TOON and key-value refuse columns that cannot be keys
+
+All three key each row by column name, so a table with two columns called the
+same thing, or with unnamed columns, cannot be encoded without silently dropping
+data. They raise instead.
+
+This is not hypothetical: **MarkItDown emits `report.docx`'s table with an
+invented header row of three empty cells**, so the first table a user tries this
+on may well be one of these. `markdown` and `csv` are positional and encode it
+fine.

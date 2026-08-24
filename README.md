@@ -191,6 +191,36 @@ $ tokenmill tokens --list                    # what tokenizers are available
 $ tokenmill convert page.html --json         # machine-readable, counts null if unmeasured
 ```
 
+### Which backend, and what it costs
+
+A document and a repository have no before-count — nobody hands a model the
+bytes of a `.docx` — so the comparison that means something is between backends
+on the same input.
+
+```console
+$ tokenmill compare tests/fixtures/tables.pdf --tokenizer bytes
+
+backend     tokens  vs best  time    fidelity  components
+----------  ------  -------  ------  --------  ----------
+pdfplumber  599     +29%     102 ms  0.667     3 scored
+kreuzberg   466     base     31 ms   0.500     3 scored
+markitdown  769     +65%     844 ms  0.606     3 scored
+pypdf       481     +3%      60 ms   0.333     3 scored
+
+cheapest:      kreuzberg (466)
+most faithful: pdfplumber (0.667)
+The cheapest option is NOT the most faithful one.
+```
+
+Rows stay in preference order rather than being sorted by size, because sorting
+by tokens is a leaderboard and a leaderboard on this data rewards whichever
+converter destroyed the most.
+
+`--formats markdown,csv,toon,json,keyvalue` re-encodes the converted table in
+each serialisation, so you can measure which is cheapest **for your data**
+rather than take a benchmark's word for it. `--write DIR` puts every variant on
+disk to read.
+
 ### What the saving cost
 
 A token saving on its own is not a result: a converter that emits an empty

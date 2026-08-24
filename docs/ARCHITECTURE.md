@@ -528,12 +528,12 @@ the outcome does not depend on discovery order. Reserved ranges:
 
 | Range | Purpose | Phase 1 occupants |
 |---|---|---|
-| 0–99 | Structural repair, before anything reads the text | *(none yet)* |
-| 100–199 | Whitespace and normalisation | `normalize_whitespace` (100) |
-| 200–399 | Content reduction: links, images, boilerplate | `links` (200) |
-| 400–699 | Reformatting: tables, headings, serialisation | *(Phase 5)* |
-| 700–899 | Chunking | *(Phase 5)* |
-| 900–999 | Compression | *(Phase 6)* |
+| 0–99 | Structural repair, before anything reads the text | `strip_frontmatter` (50) |
+| 100–199 | Whitespace and normalisation | `normalize_whitespace` (100), `aggressive_whitespace` (150) |
+| 200–399 | Content reduction: links, images, boilerplate | `links` (200), `dedupe_blocks` (250) |
+| 400–699 | Reformatting: tables, headings, serialisation | `normalize_headings` (400) |
+| 700–899 | Chunking | `chunk` (700) |
+| 900–999 | Compression | `compress` (900) |
 
 An explicit `--post a,b,c` runs **in the order the user gave**, overriding
 declared order, because somebody naming a chain by hand means that sequence.
@@ -550,6 +550,22 @@ fenced code blocks entirely alone, and it preserves Markdown hard line breaks
 (two trailing spaces before another line of text) rather than stripping them.
 Stripping those would quietly change how a document renders, and a
 "non-destructive" step that quietly changes rendering is not one.
+
+Phase 5 made this flag load-bearing in a way it was not before. Phase 1 shipped
+one destructive post-processor; there are now six, and the default chain is
+still exactly `normalize_whitespace`. The risk is no longer that one of them is
+wrong — it is that the seventh forgets the flag and quietly joins the default
+chain, so the invariant is asserted **over the whole registry** rather than per
+processor.
+
+**`chunk` stretches the flag, and the stretch is deliberate.** It deletes
+nothing; it inserts chunk markers. It is marked destructive because that is the
+only mechanism keeping a post-processor out of the default chain, and a
+conversion that silently grew boundaries nobody asked for is exactly the
+surprise the flag exists to prevent. So the flag now carries two meanings — "can
+lose information" and "changes the document's shape" — and `PROGRESS.md` records
+that as a question for the owner rather than hiding it behind a convenient
+reading.
 
 ---
 
@@ -667,6 +683,65 @@ a backend that emits more code score as though it emitted more structure.
 **A pipe table needs its delimiter row.** A converter that flattens a table into
 prose sometimes leaves the pipes behind, and counting those as a surviving table
 would score the documented failure as a success.
+
+## Serialisation formats
+
+`src/tokenmill/formats/`. Markdown, CSV, JSON, TOON and key-value encoders for
+one thing: a table. `RESEARCH.md` Category 7 says the same data costs very
+different amounts depending on how it is serialised, and that the differences
+are large, narrow, and easy to overstate — so a user should be able to measure
+it **on their own data**, which is what `compare --formats` is for.
+
+### Cells are strings, and every encoder is exactly lossless
+
+A Markdown table lifted out of a PDF contains text: `9.99` in a price column is
+four characters a converter read off a page, not a float. An encoder that
+"helpfully" emitted it as a JSON number would not round-trip — `05` comes back
+as `5` and `1e-6` as `1e-06`.
+
+So a cell is written as a native number, boolean or null **exactly when doing so
+renders back to the identical string**, and as a quoted string otherwise. The
+test is not "does it look numeric" but "does rendering the parsed value
+reproduce the original characters", which is strictly stronger.
+
+That rule is also what keeps the comparison honest. Without it, JSON and TOON
+would quote every number that CSV writes bare, and CSV would win the comparison
+by two characters per numeric cell that no real application ever spends.
+
+### Where a format cannot represent something, it says so
+
+JSON, TOON and key-value key each row by column name, so a table with unnamed or
+repeated columns cannot be encoded without silently dropping a column. They
+raise. MarkItDown really does emit `report.docx`'s table with three unnamed
+columns, so this is the first table many users will try.
+
+Markdown's two losses — a line break in a cell, and leading or trailing
+whitespace — are GFM's limits, not this encoder's, and are documented rather
+than fixed with a non-standard escape that no other tool could read.
+
+## `compare`, and why it is not sorted by size
+
+`src/tokenmill/core/compare.py`. A document and a repository have no
+before-count, so `convert` correctly reports one number and a size. The
+comparison that means something for those inputs is between backends on the same
+input.
+
+**Rows stay in the registry's preference order.** Sorting by tokens is a
+leaderboard, and a leaderboard on this data rewards whichever converter
+destroyed the most — the one that emits an empty string wins by a distance. The
+cheapest and the most faithful rows are named underneath instead, and when they
+differ the report says so outright.
+
+**A fidelity score sits beside every token count.** Where no ground truth
+exists, the report says the comparison cannot say what any of these savings cost
+rather than leaving a blank that reads like a pass. Ground truth is detected
+only for a target that actually lives inside the corpus directory: matching on
+filename alone would score somebody's own `tables.pdf` against ours and produce
+a plausible number that means nothing.
+
+**Fallback is forced off.** A row headed `pypdf` that pdfplumber actually
+produced would make the whole table a lie. A backend that fails gets a row
+saying so, because a backend that cannot read the file is a result.
 
 ## Error taxonomy
 
@@ -799,9 +874,13 @@ Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
 - **Conditional or authenticated fetching.** No cookies, no headers beyond the
   user agent, no ETag or caching. A page behind a login is not fetchable, and
   saying so beats a half-implemented credential story.
-- **Formats beyond Markdown and text.** `OutputFormat` has two members. CSV,
-  TOON and JSON encoders are Phase 5.
+- ~~**Formats beyond Markdown and text.**~~ **Done in Phase 5** — see
+  "Serialisation formats" above. Note that `OutputFormat` still has two members:
+  the encoders re-serialise a *table*, which is what `RESEARCH.md`'s evidence is
+  about, rather than becoming whole-document output formats.
 - **Cost estimation.** The plan puts it in the token layer with user-supplied
   rates only. No rates, no estimate, so it is not here.
-- **Reference-style link handling.** `links` handles inline links and images and
-  leaves reference links intact rather than mangling them. Phase 5.
+- ~~**Reference-style link handling.**~~ **Done in Phase 5**: `--links
+  reference` moves targets into a definition list. Autolinks and bare URLs in
+  prose are still left alone, deliberately — deciding where a bare URL ends
+  differs between Markdown flavours and guessing wrong corrupts the sentence.

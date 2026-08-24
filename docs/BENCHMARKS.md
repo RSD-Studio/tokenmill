@@ -319,6 +319,138 @@ Measured by reading the file, not by trusting the flag. The emitted figure
 includes the truncation note, which is the part an earlier version got wrong —
 see `docs/BACKENDS.md`.
 
+## Post-processing — what each step saves, and what it costs
+
+**Measured 2026-08-24** on `tests/fixtures/structured.md`, `--tokenizer bytes`,
+each post-processor run alone and scored by `tokenmill fidelity` against the
+same file's ground truth.
+
+| Post-processor | Bytes | Change | Fidelity | What moved |
+|---|---|---|---|---|
+| *(source)* | 1,469 | — | 1.000 | — |
+| `normalize_whitespace` **(default)** | 1,466 | −0.2% | **1.000** | nothing measurable |
+| `strip_frontmatter` | 1,383 | −5.9% | 1.000 | see the caveat below |
+| `aggressive_whitespace` | 1,464 | −0.3% | 1.000 | hard breaks, padding |
+| `dedupe_blocks` | 1,302 | **−11.4%** | **1.000** | one genuinely repeated paragraph |
+| `normalize_headings` | 1,465 | −0.3% | **0.750** | every heading re-ranked |
+| `links --links reference` | 1,477 | **+0.5%** | 1.000 | targets moved to definitions |
+| `links --images alt --links strip` | 1,390 | −5.4% | 0.955 | 3 link targets gone |
+| **all destructive processors** | 1,128 | **−23.2%** | **0.705** | — |
+
+### Four things in that table worth reading twice
+
+**`dedupe_blocks` is the only large saving that costs nothing measurable.**
+−11.4% at fidelity 1.000, because the block it removed was a genuine verbatim
+repeat. It is still destructive and still off by default: a repeat can be
+deliberate, and no metric can tell the difference.
+
+**`links --links reference` makes the document bigger.** +0.5%, because no
+target in that fixture appears twice, so every URL still costs its full length
+*and* gains a `[n]` label. Reference mode saves only when a target repeats. It
+is in the toolkit because a user should be able to measure that on their own
+document, not because it is a win.
+
+**`normalize_headings` scores 0.750 while deleting nothing.** Every heading is
+still there; they are all one rank different from the source, and the ground
+truth records the source's levels. The score's detail line says so —
+`0 of 3 headings recovered at the expected level; 3 present as headings at a
+different level` — which is a different statement from three headings having
+vanished, and the scorer distinguishes them for exactly this case.
+
+**`strip_frontmatter` scores 1.000 and that is a limit of the metric, not a
+clean bill of health.** It removed a title, a tag list and a draft flag, and no
+component tracks front matter. A fidelity score of 1.000 means *nothing ground
+truth asked about was lost*, which is not the same as *nothing was lost*.
+
+### On real converter output, the whitespace processors do almost nothing
+
+| Fixture | Backend | Base | `aggressive_whitespace` | `dedupe_blocks` |
+|---|---|---|---|---|
+| `twocolumn.pdf` | `pdfplumber` | 4,050 | 4,050 (+0.0%) | 4,050 (+0.0%) |
+| `report.docx` | `markitdown` | 3,494 | 3,491 (−0.1%) | 3,205 (**−8.3%**) |
+| `boilerplate.html` | `markdownify_html` | 6,802 | 6,802 (+0.0%) | 6,802 (+0.0%) |
+
+This is reported because it is unflattering and because it is the useful
+finding. **`aggressive_whitespace` is close to worthless on this corpus**: the
+converters already emit tidy Markdown and `normalize_whitespace` runs before it,
+so there is almost no padding left to remove. It earns its place on
+hand-written or scraped input, not on output from the backends here — and the
+honest recommendation is to measure it on your own documents before enabling it.
+
+`dedupe_blocks` finds real redundancy where real redundancy exists
+(`report.docx` repeats a "detail" paragraph per section) and correctly finds
+none where there is none.
+
+## Serialisation formats — the same table, five ways
+
+**Measured 2026-08-24**, `--tokenizer bytes`, the 6×5 table from `tables.pdf` as
+recovered by `pdfplumber`. Every figure below equals `wc -c` on the file
+`tokenmill compare --write` produced, and a test asserts that equality.
+
+| Format | Bytes | vs cheapest | vs JSON |
+|---|---|---|---|
+| `csv` | **216** | base | **−60%** |
+| `toon` | 240 | +11% | **−56%** |
+| `markdown` | 332 | +54% | −39% |
+| `keyvalue` | 456 | +111% | −16% |
+| `json` | 543 | +151% | base |
+
+Reproduce with:
+
+```console
+$ tokenmill compare tests/fixtures/tables.pdf --backends pdfplumber \
+      --formats markdown,csv,toon,json,keyvalue --tokenizer bytes
+```
+
+### How these compare to the published figures
+
+`RESEARCH.md` Category 7 collects the defensible measurements. Ours land beside
+them, in bytes:
+
+| Claim | Source | Ours (bytes) |
+|---|---|---|
+| CSV uses ~56% fewer tokens than JSON | GetCrux, 10,000 tabular questions | **−60%** |
+| TOON uses 42.6% fewer tokens than JSON | the TOON repo's own benchmark | **−56%** |
+| TOON uses 22% fewer than JSON on aligned data | Matveev, arXiv:2603.03306 | −56% |
+
+**Do not read that as confirmation.** Three reasons, and all three matter:
+
+1. **These are bytes.** The published figures are model tokens. A byte
+   percentage is not a token percentage — see Units at the top of this page.
+2. **One 6×5 table is not a corpus.** TOON's advantage comes from declaring the
+   field names once instead of per row, so it *grows* with row count and
+   vanishes at one row. A wider or shallower table moves this number a lot.
+3. **The comparison is only fair because of a rule that had to be built.** A
+   cell is written as a bare number exactly when that renders back to the
+   identical string, so `9.99` is a number in JSON and TOON while `05` stays a
+   quoted string in both. Without that rule, JSON and TOON would quote what CSV
+   writes bare and CSV would have won on a technicality.
+
+### The trade-off these numbers do not show
+
+Cheapest is not best, and `RESEARCH.md` Category 7 is unusually clear about it:
+
+- **CSV is cheapest here and scored among the *weakest* on comprehension** in
+  ImprovingAgents' eleven-format test (~44.3%) — while GetCrux measured it as
+  both cheaper *and* more accurate than JSON. The two results disagree, and the
+  honest summary is that format effect is task- and model-dependent.
+- **Key-value is the most expensive format on this page and topped that same
+  eleven-format test** at ~60.7% accuracy, about 16 points ahead of CSV. It is
+  in the toolkit for that reason.
+- **TOON's wins are narrow.** Matveev (arXiv:2603.03306) finds that as structure
+  moves from aligned to non-aligned, *"TOON performance collapses"* — 0%
+  one-shot accuracy on a nested company case. tokenmill's encoder implements the
+  aligned tabular form only and refuses the rest, which is the shape the
+  evidence supports.
+- **Stripping structure entirely saves a little more and costs accuracy.** "LLMs
+  Understand Layout" (arXiv:2407.05750) measures **+8–33% F1** when layout is
+  preserved.
+
+**The rule this project follows, from `RESEARCH.md` Category 7: keep structure,
+strip boilerplate.** That is why the default post-processing chain is exactly
+one non-destructive step, why every format encoder is lossless, and why the
+cheapest option is never the recommended one on any page here.
+
 ## What is not measured yet, and why
 
 - **Model tokens for anything.** See "Units" above. CI-only until the egress
@@ -328,9 +460,11 @@ see `docs/BACKENDS.md`.
 - ~~**Fidelity as a score.**~~ **Done**, ahead of Phase 5 — see "Fidelity" above.
   What remains for Phase 10 is the harness around it: wall time, peak memory and
   committed raw result files.
-- **Serialisation formats.** CSV, TOON and JSON encoders are Phase 5, so there
-  is nothing to compare yet. `RESEARCH.md` Category 7's warning applies in
-  advance: format savings carry accuracy trade-offs, TOON's wins are narrow and
-  model-dependent, and structure-preserving beats maximal stripping for accuracy
-  (arXiv:2407.05750 measures +8–33% F1 when layout survives). tokenmill's default
-  post-processing is conservative for that reason.
+- ~~**Serialisation formats.**~~ **Done** — see "Serialisation formats" above.
+  What is still not measured is any of it **in model tokens**, which is the unit
+  the published comparisons use and the one this environment cannot produce.
+- **Accuracy.** Every trade-off named on this page is cited from
+  `RESEARCH.md`, not measured here. tokenmill measures cost and fidelity to
+  ground truth; whether a model answers better from CSV or from key-value is a
+  question this project does not have the apparatus to answer, and it should
+  not be read as though it did.

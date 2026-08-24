@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 5 — post-processing, formats, and measurement depth
+
+- **Five more post-processors**, every one destructive and off by default:
+  `strip_frontmatter` (50), `aggressive_whitespace` (150), `dedupe_blocks` (250),
+  `normalize_headings` (400), `chunk` (700). `links` gains `--links reference`.
+  **The default chain is still exactly `normalize_whitespace`**, asserted over
+  the whole registry rather than per processor.
+- **`tokenmill.formats`** — Markdown, CSV, JSON, TOON and key-value table
+  encoders, registered through a `tokenmill.formats` entry point group. Every
+  one round-trips losslessly, proven with property tests.
+- **TOON implemented against the specification** (Working Draft 4.1, MIT) rather
+  than wrapped: `toon-format` 0.1.0 on PyPI is a stub whose `encode()` raises
+  `NotImplementedError`, and `toon-py` 1.0.2 emits a redundant delimiter in
+  every array header. Conformance to the TypeScript reference is unverified.
+- **`tokenmill compare`** — one input, several backends or serialisations, with
+  tokens, timing and **fidelity** in the same row. Works on documents, web pages
+  and repositories. Rows stay in preference order; the cheapest and the most
+  faithful are both named, and when they differ the report says so.
+- **Chonkie chunking** behind a `chunk` extra, with sizes in the run's own unit.
+- **A reduction that happens inside a backend is now a stage** (defect D8):
+  `source → visible_text → convert` decomposes a web conversion's −77.1% into
+  markup removal and boilerplate removal, and a truncated repository pack shows
+  `packed → convert`.
+- **`tests/fixtures/structured.md`**, generated: front matter, skipped heading
+  levels, lists, a code fence, inline and reference links, an image, a duplicated
+  block and a table.
+- **hypothesis put to work for the first time** since Phase 0 declared it. It
+  found seven real bugs on its first outing, all fixed and each with a named
+  test.
+
+### Fixed
+
+- **Defect D9** — `convert --json` now carries `counts` and
+  `is_model_tokenizer`, so a consumer reading `"tokenizer": "bytes"` has a
+  machine-readable signal that these are not model tokens. The `web` object is
+  now **absent** for a non-web conversion rather than `null`: `null` means
+  "applies here, no value", an absent key means "does not apply". This changes
+  the shape of `convert --json` for a document.
+- **MarkItDown escapes Markdown syntax inside XLSX cell values**, so
+  `backend_count` comes back as `backend\_count` and a literal search fails.
+  Documented in `docs/BACKENDS.md` and asserted by a test.
+
 #### Fidelity scoring (a Phase 10 slice, brought forward ahead of Phase 5)
 
 - **`tokenmill.fidelity`** — scores converted text against a fixture's
