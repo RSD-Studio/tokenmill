@@ -187,6 +187,7 @@ class TestPostProcessorRegistry:
             "dedupe_blocks",
             "normalize_headings",
             "chunk",
+            "compress",
         }
 
     def test_the_chain_is_ordered_by_declared_order_not_discovery_order(self) -> None:
@@ -203,6 +204,7 @@ class TestPostProcessorRegistry:
             "dedupe_blocks",
             "normalize_headings",
             "chunk",
+            "compress",
         )
 
     def test_the_default_chain_excludes_destructive_processors(self) -> None:

@@ -168,8 +168,22 @@ repo = ["gitingest>=0.3"]
 # asked and chose the extra.
 chunk = ["chonkie>=1.0"]
 
-# Phase 6 — prompt compression (llmlingua, transformers). CPU-feasible.
-compress = []
+# Phase 6 — prompt compression.
+#
+# llmlingua is MIT, verified on 2026-08-24 from the wheel's own METADATA and the
+# LICENSE file it bundles (Microsoft Corporation) rather than from RESEARCH.md.
+# It was NOT installed to check: `pip install llmlingua` resolves to 63
+# packages including torch, triton and seventeen nvidia-* CUDA packages, about
+# 4.7 GB. The plan calls LLMLingua-2 "CPU-feasible", which is true of *running*
+# it and not of *installing* it on Linux, where an unpinned `torch` resolves to
+# the CUDA build.
+#
+# The CPU-only install is documented in docs/BACKENDS.md and is UNVERIFIED here:
+# download.pytorch.org is denied at this environment's egress proxy, so whether
+# the CPU wheel index avoids the CUDA stack could not be tested.
+#
+# Deliberately its own group, never reachable from core, and imported lazily.
+compress = ["llmlingua>=0.2.2"]
 
 # Phase 2/9 — OCR engines needing a system binary or downloaded models.
 ocr = []
@@ -251,6 +265,7 @@ links = "tokenmill.post.links:LinkHandler"
 dedupe_blocks = "tokenmill.post.dedupe:DuplicateBlockRemover"
 normalize_headings = "tokenmill.post.headings:HeadingNormalizer"
 chunk = "tokenmill.post.chunk:Chunker"
+compress = "tokenmill.post.compress:PromptCompressor"
 
 [project.entry-points."tokenmill.formats"]
 markdown = "tokenmill.formats.markdown_table:MarkdownTableEncoder"
@@ -395,6 +410,8 @@ module = [
     "crawl4ai.*",
     "gitingest.*",
     "loguru.*",
+    "llmlingua.*",
+    "chonkie.*",
 ]
 ignore_missing_imports = true
 

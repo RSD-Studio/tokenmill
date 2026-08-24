@@ -32,6 +32,11 @@ from tokenmill.post.links import LinkHandler
 #: that is a vocabulary download, and this sandbox cannot reach one.
 DEFAULTS = ConvertOptions(tokenizer="bytes")
 
+#: Post-processors that need an optional dependency or a model download, and
+#: so cannot be run in a whole-registry loop on a plain dev install. Their own
+#: files cover them: `test_chunk.py` and `test_compress.py`.
+NEEDS_A_DOWNLOAD = frozenset({"compress"})
+
 #: Every post-processor Phase 5 added or changed.
 PHASE_5_IDS = (
     "strip_frontmatter",
@@ -95,6 +100,8 @@ class TestTheDestructiveContract:
         # chain twice must not keep changing the document.
         options = DEFAULTS.with_(image_handling=ImageHandling.ALT, link_handling=LinkHandling.STRIP)
         for processor in default_post_registry():
+            if processor.id in NEEDS_A_DOWNLOAD:
+                continue
             once = processor.process(structured, options)
             assert processor.process(once, options) == once, processor.id
 
@@ -291,6 +298,8 @@ class TestTheProcessorsCompose:
         )
         text = structured
         for processor in default_post_registry():
+            if processor.id in NEEDS_A_DOWNLOAD:
+                continue
             text = processor.process(text, options)
         assert "| source | 16180 | - |" in text
         assert '    return f"| {cell} |"' in text
@@ -303,5 +312,7 @@ class TestTheProcessorsCompose:
         )
         text = structured
         for processor in default_post_registry():
+            if processor.id in NEEDS_A_DOWNLOAD:
+                continue
             text = processor.process(text, options)
         assert len(text) < len(structured)

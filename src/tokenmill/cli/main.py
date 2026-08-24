@@ -318,6 +318,19 @@ def convert(
     max_redirects: Annotated[
         int | None, typer.Option("--max-redirects", help="Redirects a URL fetch may follow.")
     ] = None,
+    compress_ratio: Annotated[
+        float | None,
+        typer.Option(
+            "--compress-ratio",
+            help="Fraction of the prompt LLMLingua-2 should keep, e.g. 0.5. "
+            "Implies --post ...,compress. Off unless given. Suits redundant "
+            "context; can degrade reasoning tasks — evaluate on your own task.",
+        ),
+    ] = None,
+    compress_model: Annotated[
+        str | None,
+        typer.Option("--compress-model", help="LLMLingua-2 model to compress with."),
+    ] = None,
     chunk_size: Annotated[
         int | None,
         typer.Option(
@@ -373,8 +386,16 @@ def convert(
         for key, value in (("chunk_size", chunk_size), ("chunk_overlap", chunk_overlap))
         if value is not None
     }
-    if chunking:
-        options = options.with_(extra={**dict(options.extra), **chunking})
+    compressing = {
+        key: value
+        for key, value in (
+            ("compress_ratio", compress_ratio),
+            ("compress_model", compress_model),
+        )
+        if value is not None
+    }
+    if chunking or compressing:
+        options = options.with_(extra={**dict(options.extra), **chunking, **compressing})
 
     # Asking for image or link handling, or for a chunk size, without naming a
     # chain implies wanting the post-processor that does it. Those processors
@@ -388,6 +409,8 @@ def convert(
         implied_ids.append("links")
     if chunking:
         implied_ids.append("chunk")
+    if compress_ratio is not None:
+        implied_ids.append("compress")
     if chain is None and implied_ids:
         registry = Pipeline().post_processors
         options = options.with_(
