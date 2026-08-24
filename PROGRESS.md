@@ -11,7 +11,7 @@ _Last updated: 2026-08-24 by Claude Code_
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
-| 5 | Post-processing, formats, measurement depth | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
+| 5 | Post-processing, formats, measurement depth | ✅ Complete | passed 2026-08-24 (local; CI cannot schedule runners) |
 | 6 | Prompt compression (optional tier) | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
 | 8 | GUI (FastAPI + NiceGUI) | ⬜ Not started | — |
@@ -1696,6 +1696,200 @@ the 828 the review recorded, and the reason is environmental rather than a
 regression: this container has no `crawl4ai`, `repomix` or `code2prompt`, so
 four tests that ran there skip here.
 
+### 2026-08-24 — Phase 5 exit gate
+
+**Acceptance criteria, one by one.**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Per-stage report arithmetically consistent, matching direct counts on each intermediate | ✅ **Observed.** Every stage's `tokens` equals a direct count of that stage's text; the web decomposition below adds two intermediate rows and the arithmetic still closes |
+| 2 | TOON/CSV encoders round-trip tabular data losslessly, property-based | ✅ **Observed.** `hypothesis`, 200 examples per format over cells including embedded delimiters, quotes, backslashes, `05`, `1e-6`, `true`, empty strings, control characters and emoji. **It found seven real bugs** — see below |
+| 3 | Every destructive post-processor declares it and is absent from the default chain, asserted for the whole registry | ✅ **Observed.** `TestTheDestructiveContract`; the default chain is still exactly `normalize_whitespace` with six processors registered |
+| 4 | Docs honest: structure-preserving beats maximal stripping, format savings carry trade-offs, cited, conservative defaults | ✅ `docs/BENCHMARKS.md` "Serialisation formats" and "Post-processing", with `RESEARCH.md` Category 7 sources and the three reasons our numbers are not confirmation of theirs |
+| 5 | *(gate)* `compare` correct against manual counts | ✅ **Verified by hand** — see below |
+| 6 | *(gate)* Round-trip property tests pass | ✅ 53 tests in `test_formats.py` |
+| 7 | *(gate)* Every new post-processor scored by the fidelity metric and published | ✅ `docs/BENCHMARKS.md`, table of seven processors with bytes and fidelity |
+
+**`compare` verified against `wc -c`.** Every number the command printed equals
+the byte length of the file it wrote:
+
+```
+$ tokenmill compare tests/fixtures/tables.pdf --tokenizer bytes \
+      --formats markdown,csv,toon,json,keyvalue --write ./variants
+
+backend     tokens  vs best  time    fidelity
+pdfplumber  599     +29%     102 ms  0.667
+kreuzberg   466     base     31 ms   0.500
+markitdown  769     +65%     844 ms  0.606
+pypdf       481     +3%      60 ms   0.333
+
+format    tokens  vs best  size
+markdown  332     +54%     332 characters
+csv       216     base     216 characters
+toon      240     +11%     240 characters
+json      543     +151%    543 characters
+keyvalue  456     +111%    456 characters
+
+$ for f in variants/*; do printf '%-18s %6d\n' "$(basename $f)" "$(wc -c < $f)"; done
+kreuzberg.md          466
+markitdown.md         769
+pdfplumber.md         599
+pypdf.md              481
+table.csv             216
+table.json            543
+table.keyvalue        456
+table.markdown        332
+table.toon            240
+```
+
+Nine for nine. `test_the_written_variants_match_the_reported_counts` asserts it
+so it stays true.
+
+**The result the command exists to produce:**
+
+```
+cheapest:      kreuzberg (466)
+most faithful: pdfplumber (0.667)
+The cheapest option is NOT the most faithful one. A token saving without a
+fidelity number is not a result.
+```
+
+Kreuzberg is 22% cheaper than pdfplumber on `tables.pdf` **because it destroys
+the table**. Sorted by tokens, this table recommends the wrong backend; that is
+why rows stay in preference order and why the verdict line exists.
+
+**Sandbox verification from `DEVELOPMENT_PLAN.md` §Phase 5**, translated from
+`tokenfold` to `tokenmill`:
+
+```
+$ tokenmill convert tests/fixtures/tables.pdf --format toon --show-stages
+Usage: tokenmill convert [OPTIONS] TARGET
+Error: Invalid value for '--format' / '-f': 'toon' is not one of 'markdown', 'text'.
+```
+
+**This one is a deliberate deviation from the plan and needs the owner's eye.**
+The plan's snippet assumes TOON is a whole-document output format. It is not,
+and cannot honestly be: TOON encodes the JSON data model, and a prose document
+is not that. The encoders re-serialise a **table**, which is the only shape
+`RESEARCH.md` Category 7's evidence is about. `OutputFormat` therefore still has
+two members and the equivalent command is:
+
+```
+$ tokenmill compare tests/fixtures/data.xlsx --formats markdown,csv,toon,json \
+      --backends markitdown --tokenizer bytes
+
+comparing 4 serialisation(s) of a 6x5 table from data.xlsx via markitdown
+counts in bytes
+
+format    tokens  vs best  size
+--------  ------  -------  --------------
+markdown  332     +54%     332 characters
+csv       216     base     216 characters
+toon      240     +11%     240 characters
+json      543     +151%    543 characters
+
+cheapest: csv (216)
+```
+
+```
+$ tokenmill compare tests/fixtures/report.docx --backends markitdown,docling,kreuzberg --tokenizer bytes
+
+backend     tokens  vs best  time     fidelity  components
+----------  ------  -------  -------  --------  --------------------------------
+markitdown  3,494   +1%      1040 ms  0.841     4 scored
+docling     failed  -        -        -         missing dependency: docling…
+kreuzberg   3,472   base     20 ms    0.614     4 scored
+
+cheapest:      kreuzberg (3,472)
+most faithful: markitdown (0.841)
+The cheapest option is NOT the most faithful one.
+```
+
+```
+$ pytest -q tests/unit/test_formats.py tests/unit/test_post.py \
+      tests/unit/test_post_phase5.py tests/unit/test_chunk.py tests/unit/test_compare.py
+173 passed in 6.99s
+```
+
+**Defect D8 closed.** A backend can now hand an intermediate text to the
+pipeline, which measures it. A web conversion decomposes:
+
+```
+stage                 chars   tokens  change
+--------------------  ------  ------  ------
+source                12,472  12,481  -
+visible_text          4,902   4,911   -60.7%
+convert               2,859   2,859   -41.8%
+normalize_whitespace  2,854   2,854   -0.2%
+```
+
+and a truncated repository pack shows what the budget removed:
+
+```
+stage                 chars  tokens  change
+packed                2,881  2,963   -
+convert               924    1,006   -66.0%
+normalize_whitespace  917    999     -0.7%
+```
+
+This does not breach "backends do not measure": the backend hands over text and
+the pipeline does every count. A backend stage also cannot become
+`tokens_before` — that stays the source stage or nothing — and a test asserts it.
+
+**Defect D9 closed.** `convert --json` now carries `counts` and
+`is_model_tokenizer`, so a consumer reading `"tokenizer": "bytes"` has a
+machine-readable signal that these are not model tokens. The `web` object is
+**absent** rather than `null` for a non-web conversion, under a written rule:
+`null` means "applies here, no value", an absent key means "does not apply".
+This changes `convert --json`'s shape for a document, and the test that asserted
+the old behaviour was updated rather than deleted.
+
+**hypothesis, used for the first time since Phase 0 declared it, found seven
+real bugs** — all in code that passed every example test I had written:
+
+1. `str.splitlines()` also breaks on U+0085, U+2028, U+2029, `\x0b` and `\x0c`,
+   so a cell containing any of them was torn across rows. Every decoder now
+   splits on LF only.
+2. `str.strip()` treats U+0085 as whitespace, so a TOON cell consisting of one
+   vanished when the decoder trimmed its line. TOON now quotes anything Python
+   considers edge-whitespace, which is more than §7.2 requires and less than
+   losing a cell.
+3. A quoted key containing a colon — a column literally named `:` — broke
+   key-value's line partitioning, producing a key of `"`.
+4. Key-value could not tell a table with no rows from one row of empty cells;
+   both decoded through the same path.
+5. Markdown's decoder stripped cells, so a cell of `" "` came back as `""`.
+   Documented as one of GFM's two inherent losses rather than fixed.
+6. Markdown cannot carry a line break in a cell — the other inherent loss.
+7. JSON's array-of-objects shape cannot carry the columns of an empty table.
+
+The last three are format-inherent and are documented on the encoders; the first
+four were fixed.
+
+**Two bugs came from reading output rather than from tests**, which is the
+pattern `docs/REVIEW_PHASES_0_4.md` §9 predicted:
+
+- `normalize_headings` read `draft: false` as a setext heading, because a YAML
+  block's closing `---` is indistinguishable from a setext underline. Front
+  matter is now passed through untouched.
+- Closing up skipped levels by remapping the distinct levels used is wrong. On a
+  document going `##`, `####`, `###` it emits `#`, `###`, `##` — still a skip.
+  It now walks the ancestor chain and emits `#`, `##`, `##`.
+
+**Toolchain, all green:**
+
+```
+$ uv run ruff check .                     All checks passed!
+$ uv run ruff format --check .            123 files already formatted
+$ uv run mypy                             Success: no issues found in 101 source files
+$ uv run pytest -q                        1047 passed, 53 skipped
+$ uv run python scripts/make_fixtures.py --check
+                                          OK: 24 files reproduced byte-for-byte
+```
+
+1,047 up from the 898 at the end of the fidelity slice: **149 new tests**,
+nothing broken.
+
 ### 2026-08-24 — Phase 10 fidelity slice: exit gate
 
 **What it is.** `src/tokenmill/fidelity/` — a scorer that takes converted text
@@ -2168,10 +2362,31 @@ to overstate:
 
 ### Post-processors
 
-| Id | Destructive | In default chain | Order | Wired | Tested |
+| Id | Destructive | In default chain | Order | Wired | Tested | Measured on `structured.md` |
+|---|---|---|---|---|---|---|
+| `strip_frontmatter` | yes | no (opt-in) | 50 | ✅ | ✅ | −5.9%, fidelity 1.000 |
+| `normalize_whitespace` | **no** | **yes** | 100 | ✅ | ✅ | −0.2%, fidelity 1.000 |
+| `aggressive_whitespace` | yes | no (opt-in) | 150 | ✅ | ✅ | −0.3%, fidelity 1.000 |
+| `links` | yes | no (opt-in) | 200 | ✅ | ✅ | −5.4% strip / **+0.5% reference**, fidelity 0.955 |
+| `dedupe_blocks` | yes | no (opt-in) | 250 | ✅ | ✅ | **−11.4%, fidelity 1.000** |
+| `normalize_headings` | yes | no (opt-in) | 400 | ✅ | ✅ | −0.3%, **fidelity 0.750** |
+| `chunk` | yes¹ | no (opt-in) | 700 | ✅ | ✅ | **+1.8%** on `long_context.md` |
+
+¹ `chunk` loses nothing; it is flagged so it stays out of the default chain. See
+Decisions and Open question 2.
+
+**The default chain is exactly `normalize_whitespace`**, and that is asserted
+over the whole registry rather than per processor.
+
+### Table formats
+
+| Id | Licence | Lossless | Wired | Tested | `tables.pdf` (bytes) |
 |---|---|---|---|---|---|
-| `normalize_whitespace` | no | yes | 100 | ✅ | ✅ |
-| `links` | yes | no (opt-in) | 200 | ✅ | ✅ |
+| `csv` | ours (stdlib `csv`) | ✅ | ✅ | ✅ | **216** |
+| `toon` | ours, per spec 4.1 (MIT) | ✅ | ✅ | ✅ | 240 |
+| `markdown` | ours | ⚠️ two GFM-inherent losses | ✅ | ✅ | 332 |
+| `keyvalue` | ours | ✅ | ✅ | ✅ | 456 |
+| `json` | ours (stdlib `json`) | ⚠️ empty table loses columns | ✅ | ✅ | 543 |
 
 ### Tokenizers
 
@@ -2182,6 +2397,93 @@ to overstate:
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
+
+### Phase 5 (2026-08-24)
+
+- **The format encoders re-serialise a table, not a whole document.** The plan's
+  verification snippet says `convert tables.pdf --format toon`, and that command
+  is deliberately not implemented. TOON encodes the JSON data model; a prose
+  document is not that, and a whole-document TOON would be a shape nobody can
+  read. `OutputFormat` still has two members. **Flagged for the owner** as a
+  departure from the plan's wording, though not from its intent —
+  `RESEARCH.md` Category 7's evidence is entirely about tabular data.
+
+- **TOON is implemented here rather than wrapped**, which is a departure from
+  "wrap best-in-class OSS tools" and needs its reasons on the record. All three
+  were checked on the day, not read out of `RESEARCH.md`:
+
+  1. `toon-format` 0.1.0 — the package under the format's own GitHub
+     organisation, shipping `py.typed` and a complete API surface — **is a
+     stub**. Both entry points raise
+     `NotImplementedError("TOON encoder is not yet implemented")`.
+  2. `toon-py` 1.0.2 works and round-trips, but emits `users[2,]{...}` where the
+     specification's own example is `users[2]{...}`. §6 makes the delimiter
+     optional and comma the default, so the extra character is legal — and a
+     wasted character in every array header of a format whose entire claim is
+     token efficiency is the wrong thing to inherit.
+  3. Lossless round-tripping is the acceptance criterion, and it can only be
+     guaranteed for an encoder and decoder written as a pair.
+
+  Also worth recording: **TOON is on PyPI more than twice.** `toon` 0.15.9 is an
+  unrelated project (it needs numpy and psutil), `pytoon` is a lip-sync library,
+  and `toon-py`, `python-toon` and `toon-encoder` are three separate
+  third-party ports. The handover said "twice"; it is worse than that.
+
+  Conformance to the TypeScript reference is **unverified** — it cannot be run
+  here. What is verified: round-tripping under property tests, and agreement
+  with the specification's own worked examples.
+
+- **Cells are strings, and a cell is written as a bare number only when that
+  renders back to the identical string.** The obvious alternative — always
+  strings — is exactly lossless and would have **rigged the comparison**: JSON
+  and TOON would quote every number that CSV writes bare, and CSV would win by
+  two characters per numeric cell that no real application spends. The other
+  alternative — type inference — is not lossless: `05` returns as `5` and
+  `1e-6` as `1e-06`. The rule adopted is strictly stronger than "looks numeric"
+  and keeps both properties.
+
+- **`compare` rows are in preference order, not sorted by size.** Sorting by
+  tokens is a leaderboard, and on this data a leaderboard rewards whichever
+  converter destroyed the most: on `tables.pdf` the cheapest backend is the one
+  that flattens the table. The cheapest and the most faithful are named
+  underneath and the report states outright when they differ. Where no ground
+  truth exists it says the comparison cannot answer the question rather than
+  leaving a blank that reads like a pass.
+
+- **`compare` detects ground truth only for a target inside the corpus
+  directory.** Matching on filename alone would score somebody's own
+  `tables.pdf` against ours and produce a plausible number that means nothing.
+  There is a test for the impostor case.
+
+- **A backend can now record an intermediate text as a stage (D8), and this
+  does not weaken "backends do not measure".** The backend hands over *text*;
+  the pipeline does every count. A backend still cannot report a number. The
+  text is transport only — the pipeline measures it and clears the field, so a
+  result never carries a second copy of the document — and a backend stage
+  cannot become `tokens_before`, which stays the source stage or nothing.
+
+- **Chonkie is in a `chunk` extra, not core.** The owner's call, asked with
+  measurements rather than adjectives: +10 packages, `lib/` 126 MB → 196 MB.
+  §1.6 lists it in core; so did it list gitingest, which Phase 4 moved out on
+  the same argument.
+
+- **`destructive` now carries two meanings, and that is a question for the
+  owner.** It was defined as "can lose information the user might have wanted".
+  `chunk` loses nothing — it inserts markers — but is marked destructive
+  because that flag is the only mechanism keeping a post-processor out of the
+  default chain, and a conversion that silently grew chunk boundaries would be
+  exactly the surprise the flag exists to prevent. A second flag
+  (`changes_shape`, or `default_chain = False`) would separate the two. I did
+  not add one, because growing the vocabulary per phase is the failure mode the
+  Phase 0–4 review was watching for. **Open question 2.**
+
+- **`aggressive_whitespace` is nearly worthless on this corpus and ships
+  anyway.** +0.0% on `twocolumn.pdf` and `boilerplate.html`, −0.1% on
+  `report.docx`, because the backends already emit tidy Markdown and
+  `normalize_whitespace` runs first. It is a Phase 5 deliverable and it is
+  genuinely useful on hand-written or scraped input, so it ships with the
+  measurement printed next to it in `docs/BENCHMARKS.md` rather than being
+  quietly dropped or quietly oversold.
 
 ### Fidelity slice (2026-08-24)
 
@@ -2577,6 +2879,34 @@ closed; these are the decisions and what changed.
 
 ## Deferred / future work
 
+### From Phase 5
+
+- **No format encoder for nested data.** The encoders take a `Table`, which is
+  by construction an array of uniform flat objects. That is deliberate — it is
+  the only shape `RESEARCH.md` finds TOON reliably winning on, and TOON's
+  accuracy is reported as collapsing on non-aligned structures — but it means
+  `compare --formats` cannot answer "how should I serialise this nested JSON".
+  A `nested.json` fixture and a documented failure case would be the honest way
+  to show the limit rather than only assert it.
+- **`--formats` re-encodes only the first table in the converted text.** A
+  document with three tables gets one compared. Fine for the fixtures; wrong for
+  a real report.
+- **Only the fidelity of a *table* is measured after re-encoding.** Nothing
+  scores whether CSV lost the heading structure around it, because the encoders
+  operate on an extracted table rather than on the document.
+- **The Markdown decoder is the same job `fidelity/markdown.py` does.** Two
+  small pipe-table parsers now exist, with slightly different tolerances — the
+  fidelity one requires a delimiter row for a stricter reason than the format
+  one does. They should probably be one module.
+- **`compare` has no wall-clock rigour.** `duration_s` is one run of one
+  pipeline, unrepeated and unwarmed, so the 20 ms / 1,040 ms gap between
+  kreuzberg and markitdown on `report.docx` is indicative and nothing more.
+  Repeats, warmup and peak memory are Phase 10's.
+- **`aggressive_whitespace` has no measured case where it helps.** Every fixture
+  in the corpus is either generated tidy or converted by a backend that emits
+  tidy Markdown. Its value is asserted from first principles and is not
+  demonstrated by anything here.
+
 ### From the fidelity slice
 
 - **This is not the Phase 10 harness.** No corpus-matrix runner, no wall time,
@@ -2811,6 +3141,41 @@ integration`), so only you can see the billing page.
 Until it is resolved, nothing is proven on Windows, macOS, Python 3.12/3.13, or
 against real tokenizer vocabularies. Local green on `e65337b` is recorded and is
 not the same claim.
+
+**2. `destructive` now means two things — do you want a second flag?**
+
+The flag was defined as "can lose information the user might have wanted", and
+`default_chain()` is built by excluding it. Phase 5's `chunk` post-processor
+loses nothing — it inserts chunk markers — but is marked destructive anyway,
+because that flag is the only mechanism that keeps a post-processor out of the
+default chain, and a conversion that silently grew chunk boundaries nobody asked
+for is exactly the surprise the flag exists to prevent.
+
+So the flag now carries "can lose information" **and** "changes the document's
+shape". Three options:
+
+- **Leave it.** One flag, one meaning in practice ("not in the default chain"),
+  and the docstrings explain the stretch. Cheapest, slightly dishonest naming.
+- **Add `changes_shape`.** Two flags, `default_chain()` excludes either.
+  Honest, and grows the vocabulary — which is the failure mode
+  `docs/REVIEW_PHASES_0_4.md` §4 was watching for.
+- **Rename the mechanism** to `in_default_chain: bool` and let `destructive`
+  become pure documentation. Clearest, and a breaking change to the Phase 1
+  post-processor contract, which needs your sign-off.
+
+I did not pick one. My recommendation is the third, at whatever point another
+non-destructive-but-reshaping processor appears; until then the first is fine
+and the code says so out loud.
+
+**3. Is `--format toon` supposed to exist?**
+
+`DEVELOPMENT_PLAN.md`'s Phase 5 verification snippet says
+`convert tests/fixtures/tables.pdf --format toon --show-stages`. That command is
+deliberately not implemented: TOON encodes the JSON data model and a prose
+document is not that, so a whole-document TOON would be a shape nobody can read.
+The encoders re-serialise a **table**, which is what all of `RESEARCH.md`
+Category 7's evidence is about, and `tokenmill compare --formats` is the
+equivalent. Say if you meant something else by that line.
 
 Two things remain *pending* rather than open, in the sense that they need an
 action rather than a decision:
