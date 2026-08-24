@@ -220,6 +220,12 @@ def note_web_metrics(
             from a markup converter's, which mean quite different things.
     """
     visible = visible_text(html)
+    # A row in `--show-stages`, so the two halves of a web conversion's saving
+    # are separable: source -> visible_text is the markup and scripts going
+    # away, visible_text -> convert is the page furniture going away. Reporting
+    # only the total is what lets a markup converter's 45% be mistaken for an
+    # extractor's 77% (docs/BENCHMARKS.md, "How to read that table").
+    context.stage("visible_text", visible)
     context.note("strips_boilerplate", strips_boilerplate)
     context.note("html_characters", len(html))
     context.note("visible_text_characters", len(visible))

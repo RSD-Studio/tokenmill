@@ -73,6 +73,7 @@ __all__ = [
     "TruncationReport",
     "apply_budget",
     "directory_totals",
+    "full_pack",
     "matches_any",
     "note_repo_metadata",
     "read_repo_options",
@@ -527,6 +528,24 @@ def render_truncation_note(report: TruncationReport, *, compact: bool = False) -
     return "\n".join(lines)
 
 
+def full_pack(preamble: str, sections: Sequence[PackedFile]) -> str:
+    """Reassemble a pack from its preamble and sections.
+
+    Named because two callers need exactly the same assembly and must not
+    disagree about it: :func:`apply_budget` measures it against the budget, and
+    a backend records it as the ``packed`` stage so that what the budget removed
+    is visible in ``--show-stages``.
+
+    Args:
+        preamble: The summary and directory tree.
+        sections: The per-file sections, in the tool's order.
+
+    Returns:
+        The untruncated pack.
+    """
+    return preamble + "".join(section.text for section in sections)
+
+
 def apply_budget(
     preamble: str,
     sections: Sequence[PackedFile],
@@ -568,7 +587,7 @@ def apply_budget(
         budget is ``None`` or ``count`` is ``None``, the text is unchanged and
         the report says the budget was not applied — never silently.
     """
-    joined = preamble + "".join(section.text for section in sections)
+    joined = full_pack(preamble, sections)
     if budget is None or count is None:
         return joined, TruncationReport(applied=False, budget=budget, unit=unit)
 
@@ -788,6 +807,7 @@ def note_repo_metadata(
     tool: str,
     sections: Sequence[PackedFile],
     report: TruncationReport,
+    full_text: str | None = None,
 ) -> None:
     """Record the structured facts every repository conversion should carry.
 
@@ -797,7 +817,14 @@ def note_repo_metadata(
         tool: Which engine produced the pack.
         sections: The per-file sections that were parsed out of it.
         report: What the budget did.
+        full_text: The pack before the budget truncated it. Recorded as a
+            ``packed`` stage **only when files were actually dropped**, so that
+            budget truncation appears as a row in ``--show-stages`` rather than
+            only in a warning (defect D8). Passing it unconditionally would put
+            a second copy of every pack in memory to report a saving of zero.
     """
+    if full_text is not None and report.dropped:
+        context.stage("packed", full_text)
     context.note("repository", root.name)
     context.note("pack_tool", tool)
     context.note("file_count", len(sections))

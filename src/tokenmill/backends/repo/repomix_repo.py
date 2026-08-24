@@ -49,6 +49,7 @@ from tokenmill.backends.repo._common import (
     RepoOptions,
     apply_budget,
     directory_totals,
+    full_pack,
     note_repo_metadata,
     read_repo_options,
     repo_workdir,
@@ -204,7 +205,12 @@ class RepomixConverter(BaseConverter):
                 text += f"\n\n---\n\n## Tokens by directory ({unit})\n\n{breakdown}\n"
 
         note_repo_metadata(
-            context, root=Path(source.name), tool="repomix", sections=sections, report=report
+            context,
+            root=Path(source.name),
+            tool="repomix",
+            sections=sections,
+            report=report,
+            full_text=full_pack(preamble, sections) if report.dropped else None,
         )
         return text
 

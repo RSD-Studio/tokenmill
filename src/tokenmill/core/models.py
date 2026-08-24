@@ -744,6 +744,7 @@ class ConversionResult:
     metadata: Mapping[str, Any] = field(default_factory=lambda: _EMPTY_METADATA)
     attempts: tuple[BackendAttempt, ...] = ()
     source_bytes: int | None = None
+    internal_stages: tuple[tuple[str, str], ...] = ()
 
     @property
     def token_delta(self) -> int | None:
