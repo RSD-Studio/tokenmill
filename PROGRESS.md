@@ -20,6 +20,15 @@ _Last updated: 2026-08-24 by Claude Code_
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
+## Re-evaluation: `docs/REVIEW_PHASES_0_6.md`
+
+Written at the end of this session, superseding `docs/REVIEW_PHASES_0_4.md`
+(which stays in the repository — its defect numbering is referenced everywhere,
+and a superseded review that disappears is one nobody can check). It carries the
+whole-corpus table with tokens beside fidelity, the status of every defect from
+the previous list, eight new ones, and a recommendation **against starting
+Phase 7 yet**.
+
 ## Current phase: the Phase 10 fidelity slice (complete), then 5, then 6
 
 Phases 3 and 4 are merged into `Main` (PRs #11 and #13). The fidelity-scoring
@@ -1695,6 +1704,37 @@ the resolution is the fact that matters. The plan calling LLMLingua-2
 the 828 the review recorded, and the reason is environmental rather than a
 regression: this container has no `crawl4ai`, `repomix` or `code2prompt`, so
 four tests that ran there skip here.
+
+### 2026-08-24 — Correction: I did add to the process-global-state count
+
+Recorded here rather than by editing the commit message it corrects.
+
+The Phase 6 commit (`b890ef8`) says the compressor *"adds nothing to the five
+pieces of process-global state ARCHITECTURE.md already records"*. That is true
+of the thing the sentence was about — no environment variable is set, because
+`local_files_only` rides in llmlingua's `model_config` rather than
+`HF_HUB_OFFLINE` — and **read plainly it overstates**.
+
+`post/compress.py` uses `warnings.catch_warnings` to keep transformers'
+import-time noise non-fatal under `-W error`. That is a **fourth** use of
+`catch_warnings`, where `docs/REVIEW_PHASES_0_4.md` §4 counted three:
+
+```
+$ grep -rn 'catch_warnings\|os.environ\|loguru' src/tokenmill/ --include='*.py'
+src/tokenmill/backends/_common.py                    catch_warnings
+src/tokenmill/backends/documents/docling_adapter.py  catch_warnings
+src/tokenmill/backends/repo/gitingest_repo.py        catch_warnings
+src/tokenmill/post/compress.py                       catch_warnings   <- added
+src/tokenmill/backends/repo/gitingest_repo.py        os.environ, root logger, loguru
+src/tokenmill/backends/_subprocess.py                os.environ
+src/tokenmill/core/config.py                         os.environ
+```
+
+The **kinds** of global state are unchanged, and the new use only executes when
+compression runs — off by default, behind an extra. But the count went up, the
+handover asked to be told before a sixth was added, and "I avoided the obvious
+one" is not the same as "I added none". Defect D2 stays open and this is part of
+its trajectory.
 
 ### 2026-08-24 — Phase 6: implemented, and what is and is not verified
 
