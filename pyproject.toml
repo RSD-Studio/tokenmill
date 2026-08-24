@@ -232,6 +232,13 @@ docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 normalize_whitespace = "tokenmill.post.whitespace:WhitespaceNormalizer"
 links = "tokenmill.post.links:LinkHandler"
 
+[project.entry-points."tokenmill.formats"]
+markdown = "tokenmill.formats.markdown_table:MarkdownTableEncoder"
+csv = "tokenmill.formats.csv_table:CsvTableEncoder"
+json = "tokenmill.formats.json_table:JsonTableEncoder"
+toon = "tokenmill.formats.toon_table:ToonTableEncoder"
+keyvalue = "tokenmill.formats.keyvalue_table:KeyValueTableEncoder"
+
 [project.entry-points."tokenmill.tokenizers"]
 tiktoken = "tokenmill.tokens.tiktoken_adapter:TiktokenProvider"
 hf = "tokenmill.tokens.hf_adapter:HuggingFaceProvider"
