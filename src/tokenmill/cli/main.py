@@ -1,8 +1,13 @@
 """The ``tokenmill`` command line.
 
-Four commands:
+Six commands:
 
 * ``tokenmill convert`` — convert a source and report the token change.
+* ``tokenmill compare`` — one input, several backends or several
+  serialisations, with tokens, timing and fidelity in the same table.
+* ``tokenmill fidelity`` — score converted text against a corpus fixture's
+  hand-labelled ground truth, so a token saving can be read next to what it
+  cost.
 * ``tokenmill repo`` — pack a repository into one file, with the repository
   options the plan's Phase 4 names: include and exclude globs, a token budget
   that genuinely truncates, and a per-directory breakdown.
@@ -32,12 +37,19 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, Final, NoReturn
 
 import typer
 
 from tokenmill import __version__
-from tokenmill.cli.format import format_result_report, format_table
+from tokenmill.cli.format import (
+    format_backend_comparison,
+    format_fidelity_report,
+    format_format_comparison,
+    format_result_report,
+    format_table,
+)
+from tokenmill.core.compare import compare_backends, compare_formats
 from tokenmill.core.config import load_config
 from tokenmill.core.errors import TokenmillError
 from tokenmill.core.models import (
@@ -51,6 +63,9 @@ from tokenmill.core.models import (
 )
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.core.registry import default_registry
+from tokenmill.fidelity import load_ground_truth, resolve_fixture
+from tokenmill.fidelity import score as score_fidelity
+from tokenmill.fidelity.models import FidelityScore
 from tokenmill.tokens.registry import default_tokenizer_registry
 
 __all__ = ["app", "main"]
@@ -122,10 +137,22 @@ def _make_source(target: str) -> Source:
 def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str, Any]:
     """Render a conversion result as JSON-serialisable data.
 
-    Token counts are ``null`` rather than absent when nothing could be measured,
-    so a consumer can tell "not measured" from "measured as zero". A binary
-    document reports ``tokens_before: null`` and a ``source_bytes`` figure: it
-    has no comparable before-count, only a file size.
+    Two rules govern the shape, and defect D9 is why they are written down:
+
+    **``null`` means "applies here, no value"; an absent key means "does not
+    apply".** Token counts are ``null`` rather than absent when nothing could be
+    measured, so a consumer can tell "not measured" from "measured as zero". A
+    binary document reports ``tokens_before: null`` and a ``source_bytes``
+    figure: it has no comparable before-count, only a file size. The ``web``
+    object, by contrast, is **absent** for a conversion that was not of a web
+    page, because there is no web measurement to have a value.
+
+    **The unit travels with the number.** ``counts`` and ``is_model_tokenizer``
+    say what the figures are in, so a consumer reading ``"tokenizer": "bytes"``
+    has a machine-readable signal that this is not a model token count. Without
+    it the only warning was a sentence on stderr, and the whole reason
+    ``docs/BENCHMARKS.md`` opens with a units section is that this distinction
+    gets lost.
 
     Args:
         result: The conversion to render.
@@ -134,19 +161,21 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
     Returns:
         The JSON-ready mapping.
     """
+    unit = _tokenizer_provenance(result.tokens_after.tokenizer_id if result.tokens_after else None)
     payload: dict[str, Any] = {
         "source": result.source_name,
         "backend": result.backend_id,
         "format": result.output_format.value,
         "duration_s": round(result.duration_s, 6),
         "tokenizer": (result.tokens_after.tokenizer_id if result.tokens_after else None),
+        "counts": unit[0],
+        "is_model_tokenizer": unit[1],
         "source_bytes": result.source_bytes,
         "tokens_before": result.tokens_before.value if result.tokens_before else None,
         "tokens_after": result.tokens_after.value if result.tokens_after else None,
         "token_delta": result.token_delta,
         "reduction_ratio": result.reduction_ratio,
         "post_processors": list(result.post_processors),
-        "web": _web_summary(result),
         "attempts": [
             {"backend": attempt.backend_id, "ok": attempt.ok, "error": attempt.error}
             for attempt in result.attempts
@@ -162,9 +191,34 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
             for stage in result.stages
         ],
     }
+    web = _web_summary(result)
+    if web is not None:
+        # Absent rather than null: a PDF conversion has no web measurement to
+        # report, which is different from having one whose value is unknown.
+        payload["web"] = web
     if include_text:
         payload["text"] = result.text
     return payload
+
+
+def _tokenizer_provenance(tokenizer_id: str | None) -> tuple[str | None, bool | None]:
+    """Describe what a tokenizer counts, for the JSON payloads.
+
+    Args:
+        tokenizer_id: The tokenizer that produced the counts, if any.
+
+    Returns:
+        What it counts in words, and whether those are a real model's tokens.
+        Both ``None`` when nothing was counted or the id cannot be resolved —
+        an unknown unit is reported as unknown rather than guessed.
+    """
+    if tokenizer_id is None:
+        return None, None
+    try:
+        info = default_tokenizer_registry().get(tokenizer_id).info
+    except TokenmillError:
+        return None, None
+    return info.counts, info.is_model_tokenizer
 
 
 #: Metadata keys a web backend records, surfaced as their own object in
@@ -264,6 +318,31 @@ def convert(
     max_redirects: Annotated[
         int | None, typer.Option("--max-redirects", help="Redirects a URL fetch may follow.")
     ] = None,
+    compress_ratio: Annotated[
+        float | None,
+        typer.Option(
+            "--compress-ratio",
+            help="Fraction of the prompt LLMLingua-2 should keep, e.g. 0.5. "
+            "Implies --post ...,compress. Off unless given. Suits redundant "
+            "context; can degrade reasoning tasks — evaluate on your own task.",
+        ),
+    ] = None,
+    compress_model: Annotated[
+        str | None,
+        typer.Option("--compress-model", help="LLMLingua-2 model to compress with."),
+    ] = None,
+    chunk_size: Annotated[
+        int | None,
+        typer.Option(
+            "--chunk-size",
+            help="Chunk size for the `chunk` post-processor, in the run's "
+            "tokenizer's unit. Implies --post ...,chunk.",
+        ),
+    ] = None,
+    chunk_overlap: Annotated[
+        int | None,
+        typer.Option("--chunk-overlap", help="Tokens of overlap between chunks."),
+    ] = None,
     show_stages: Annotated[
         bool, typer.Option("--show-stages", help="Show the per-stage token breakdown.")
     ] = False,
@@ -302,16 +381,41 @@ def convert(
         respect_robots=False if ignore_robots else None,
         allow_network=True if allow_network else None,
     )
-    # Asking for image or link handling without naming a chain implies wanting
-    # the `links` post-processor; it is destructive, so it is not in the default
-    # chain, and silently ignoring the flag would be worse than either option.
-    if chain is None and (
+    chunking = {
+        key: value
+        for key, value in (("chunk_size", chunk_size), ("chunk_overlap", chunk_overlap))
+        if value is not None
+    }
+    compressing = {
+        key: value
+        for key, value in (
+            ("compress_ratio", compress_ratio),
+            ("compress_model", compress_model),
+        )
+        if value is not None
+    }
+    if chunking or compressing:
+        options = options.with_(extra={**dict(options.extra), **chunking, **compressing})
+
+    # Asking for image or link handling, or for a chunk size, without naming a
+    # chain implies wanting the post-processor that does it. Those processors
+    # are destructive, so they are not in the default chain, and silently
+    # ignoring the flag would be worse than either option.
+    implied_ids = []
+    if (
         options.image_handling is not ImageHandling.KEEP
         or options.link_handling is not LinkHandling.KEEP
     ):
+        implied_ids.append("links")
+    if chunking:
+        implied_ids.append("chunk")
+    if compress_ratio is not None:
+        implied_ids.append("compress")
+    if chain is None and implied_ids:
         registry = Pipeline().post_processors
-        implied = (*[p.id for p in registry.default_chain()], "links")
-        options = options.with_(post_processors=implied)
+        options = options.with_(
+            post_processors=(*[p.id for p in registry.default_chain()], *implied_ids)
+        )
 
     try:
         result = Pipeline().run(source, options)
@@ -464,6 +568,422 @@ def _repo_source(target: str) -> Source:
             hint="pass the directory that contains it, or use `tokenmill convert` for one file",
         )
     return source
+
+
+#: Where the corpus lives in a development checkout. There is no packaged
+#: corpus — `ground_truth.json` ships in the sdist and not in the wheel — so an
+#: installed tokenmill scoring somebody else's corpus must be told where it is.
+DEFAULT_CORPUS: Final = Path("tests/fixtures")
+
+
+def _read_target(target: str) -> str:
+    """Read the text to be scored, from a file or from stdin.
+
+    Args:
+        target: A path, or ``-`` for standard input.
+
+    Returns:
+        The text.
+    """
+    if target == "-":
+        return sys.stdin.read()
+    path = Path(target)
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _fail(f"could not read {path}: {exc}")
+    except UnicodeDecodeError:
+        _fail(
+            f"{path} is not UTF-8 text",
+            hint="fidelity scores converted text; convert the source first, "
+            "e.g. `tokenmill convert FILE -o out.md`",
+        )
+
+
+def _fidelity_to_json(score: FidelityScore) -> dict[str, Any]:
+    """Render a fidelity score as JSON.
+
+    Args:
+        score: The score to serialise.
+
+    Returns:
+        The JSON-ready mapping. A component that did not apply carries a
+        ``null`` score rather than being omitted, so a consumer can tell
+        "not measured" from "measured as zero" without knowing which
+        components a fixture supports.
+    """
+    return {
+        "fixture": score.fixture,
+        "backend": score.backend_id,
+        "overall": score.overall,
+        "scored_components": list(score.scored_components),
+        "components": [
+            {
+                "component": component.component,
+                "score": component.score,
+                "expected": component.expected,
+                "found": component.found,
+                "detail": component.detail,
+                "missing": list(component.missing),
+            }
+            for component in score.components
+        ],
+    }
+
+
+@app.command()
+def fidelity(
+    target: Annotated[
+        str,
+        typer.Argument(help="Converted text to score, or `-` to read it from standard input."),
+    ],
+    against: Annotated[
+        str,
+        typer.Option(
+            "--against",
+            "-a",
+            help="The corpus fixture whose ground truth to score against, e.g. boilerplate.html.",
+        ),
+    ],
+    corpus: Annotated[
+        Path | None,
+        typer.Option(
+            "--corpus",
+            help="Directory holding ground_truth.json. Defaults to tests/fixtures.",
+        ),
+    ] = None,
+    backend: Annotated[
+        str | None,
+        typer.Option(
+            "--backend",
+            "-b",
+            help="Record which backend produced this text. Never inferred.",
+        ),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the score as JSON on stdout.")
+    ] = False,
+) -> None:
+    """Score converted text against a fixture's ground truth.
+
+    A token saving on its own is not a result: a converter that emits an empty
+    string scores a 100% reduction. This reports what the saving cost, as six
+    named components rather than one opaque number.
+
+    Pipes, so the two halves of the measurement can be produced together::
+
+        tokenmill convert tests/fixtures/boilerplate.html -q |
+            tokenmill fidelity - --against boilerplate.html
+    """
+    text = _read_target(target)
+    root = corpus if corpus is not None else DEFAULT_CORPUS
+    try:
+        fixtures = load_ground_truth(root)
+        name, truth = resolve_fixture(fixtures, against)
+    except TokenmillError as exc:
+        _fail(exc.message, exc.hint)
+
+    result = score_fidelity(text, truth, fixture=name, backend_id=backend)
+    if as_json:
+        print(json.dumps(_fidelity_to_json(result), indent=2))
+    else:
+        print(format_fidelity_report(result))
+
+
+@app.command()
+def compare(
+    target: Annotated[
+        str, typer.Argument(help="File, directory or http(s) URL to compare across backends.")
+    ],
+    backends_option: Annotated[
+        str | None,
+        typer.Option(
+            "--backends",
+            help="Comma-separated backend ids. Defaults to every installed "
+            "backend that claims this source.",
+        ),
+    ] = None,
+    formats_option: Annotated[
+        str | None,
+        typer.Option(
+            "--formats",
+            help="Comma-separated table formats to re-encode the converted "
+            "table in, e.g. markdown,csv,toon,json.",
+        ),
+    ] = None,
+    against: Annotated[
+        str | None,
+        typer.Option(
+            "--against",
+            "-a",
+            help="Score each result against this corpus fixture's ground truth. "
+            "Detected automatically for a file inside the corpus.",
+        ),
+    ] = None,
+    corpus: Annotated[
+        Path | None,
+        typer.Option("--corpus", help="Directory holding ground_truth.json."),
+    ] = None,
+    write: Annotated[
+        Path | None,
+        typer.Option("--write", help="Write each variant into this directory for eyeballing."),
+    ] = None,
+    tokenizer: Annotated[
+        str | None, typer.Option("--tokenizer", "-t", help="Tokenizer to measure with.")
+    ] = None,
+    post: Annotated[
+        str | None,
+        typer.Option("--post", help="Post-processor chain to apply to every backend equally."),
+    ] = None,
+    allow_network: Annotated[
+        bool,
+        typer.Option("--allow-network", help="Permit backends to make network calls."),
+    ] = False,
+    offline: Annotated[bool, typer.Option("--offline", help="Refuse to retrieve a URL.")] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the comparison as JSON on stdout.")
+    ] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
+) -> None:
+    """Compare backends, or serialisations, on one input.
+
+    A document and a repository have no before-count — nobody hands a model the
+    bytes of a `.docx` — so the comparison that means anything for them is
+    between backends on the same input.
+
+    Every row carries a fidelity score beside its token count wherever ground
+    truth exists. Without that this is a machine for recommending whichever
+    converter destroyed the most.
+    """
+    _configure_logging(verbose)
+
+    try:
+        config = load_config()
+    except TokenmillError as exc:
+        _fail(exc.message, exc.hint)
+
+    chain = tuple(part.strip() for part in post.split(",") if part.strip()) if post else None
+    options = config.to_options(
+        tokenizer=tokenizer,
+        post_processors=chain,
+        fetch=False if offline else None,
+        allow_network=True if allow_network else None,
+    )
+
+    path = Path(target)
+    source = _repo_source(target) if path.is_dir() else _make_source(target)
+    pipeline = Pipeline()
+
+    if backends_option:
+        wanted = [part.strip() for part in backends_option.split(",") if part.strip()]
+    else:
+        try:
+            wanted = [c.info.id for c in pipeline.backends.candidates(source)]
+        except TokenmillError as exc:
+            _fail(exc.message, exc.hint)
+
+    fixture_name, truth = _resolve_truth(target, against, corpus)
+    comparison = compare_backends(
+        source,
+        wanted,
+        options=options,
+        pipeline=pipeline,
+        truth=truth,
+        fixture=fixture_name,
+    )
+
+    formats = (
+        [part.strip() for part in formats_option.split(",") if part.strip()]
+        if formats_option
+        else []
+    )
+    format_comparison = None
+    if formats:
+        format_comparison = _compare_formats_for(comparison, formats, options)
+
+    if as_json:
+        payload: dict[str, Any] = {"backends": _comparison_to_json(comparison)}
+        if format_comparison is not None:
+            payload["formats"] = _format_comparison_to_json(format_comparison)
+        print(json.dumps(payload, indent=2))
+    else:
+        print(format_backend_comparison(comparison))
+        if format_comparison is not None:
+            print()
+            print(format_format_comparison(format_comparison))
+
+    if write is not None:
+        _write_variants(write, comparison, format_comparison)
+
+
+def _resolve_truth(
+    target: str, against: str | None, corpus: Path | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Find the ground truth to score a comparison against.
+
+    Auto-detection is deliberately narrow: it fires only when the target file
+    actually lives inside the corpus directory. Matching on filename alone would
+    score somebody's own `tables.pdf` against ours and produce a plausible
+    number that means nothing.
+
+    Args:
+        target: What is being compared.
+        against: The fixture the user named, if any.
+        corpus: Where the corpus lives, if the user said.
+
+    Returns:
+        The fixture name and its ground truth, or ``(None, None)`` when there
+        is none to use.
+    """
+    root = corpus if corpus is not None else DEFAULT_CORPUS
+    path = Path(target)
+    if against is None:
+        # A directory fixture counts too: `sample_repo` lives in the corpus and
+        # is keyed `sample_repo/` in the manifest.
+        inside = path.exists() and path.resolve().parent == root.resolve()
+        if not inside:
+            return None, None
+        against = path.name
+
+    try:
+        fixtures = load_ground_truth(root)
+        name, truth = resolve_fixture(fixtures, against)
+    except TokenmillError:
+        return None, None
+    return name, dict(truth)
+
+
+def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> Any:
+    """Re-encode the best available converted table in several formats.
+
+    Args:
+        comparison: The backend comparison, whose first successful row supplies
+            the table.
+        formats: The format ids to encode in.
+        options: The conversion options, for the tokenizer.
+
+    Returns:
+        The format comparison, or ``None`` when no backend produced a table.
+    """
+    from tokenmill.formats.base import TableError, default_format_registry
+
+    row = next((r for r in comparison.rows if r.ok and r.text), None)
+    if row is None:
+        return None
+
+    registry = default_tokenizer_registry()
+    try:
+        tokenizer = registry.get(options.tokenizer)
+        counter = tokenizer.count
+    except TokenmillError:
+        counter = None
+
+    try:
+        return compare_formats(
+            row.text,
+            formats,
+            registry=default_format_registry(),
+            count=counter,
+            tokenizer_id=options.tokenizer,
+            source_name=f"{comparison.source_name} via {row.backend_id}",
+        )
+    except TableError as exc:
+        _fail(
+            str(exc),
+            hint="--formats re-encodes a table; this conversion produced none. "
+            "Try a table-bearing source such as tests/fixtures/tables.pdf",
+        )
+    except KeyError as exc:
+        _fail(str(exc).strip("\"'"))
+
+
+def _comparison_to_json(comparison: Any) -> dict[str, Any]:
+    """Render a backend comparison as JSON.
+
+    Args:
+        comparison: The comparison.
+
+    Returns:
+        The JSON-ready mapping.
+    """
+    unit = _tokenizer_provenance(comparison.tokenizer_id)
+    return {
+        "source": comparison.source_name,
+        "tokenizer": comparison.tokenizer_id,
+        "counts": unit[0],
+        "is_model_tokenizer": unit[1],
+        "cheapest": comparison.cheapest.backend_id if comparison.cheapest else None,
+        "most_faithful": (
+            comparison.most_faithful.backend_id if comparison.most_faithful else None
+        ),
+        "cheapest_is_most_faithful": comparison.cheapest_is_most_faithful,
+        "rows": [
+            {
+                "backend": row.backend_id,
+                "tokens": row.tokens.value if row.tokens else None,
+                "characters": row.characters,
+                "duration_s": row.duration_s,
+                "fidelity": _fidelity_to_json(row.fidelity) if row.fidelity else None,
+                "error": row.error,
+                "warnings": list(row.warnings),
+            }
+            for row in comparison.rows
+        ],
+    }
+
+
+def _format_comparison_to_json(comparison: Any) -> dict[str, Any]:
+    """Render a format comparison as JSON.
+
+    Args:
+        comparison: The comparison.
+
+    Returns:
+        The JSON-ready mapping.
+    """
+    unit = _tokenizer_provenance(comparison.tokenizer_id)
+    return {
+        "source": comparison.source_name,
+        "tokenizer": comparison.tokenizer_id,
+        "counts": unit[0],
+        "is_model_tokenizer": unit[1],
+        "table_rows": len(comparison.table.rows),
+        "table_columns": len(comparison.table.headers),
+        "cheapest": comparison.cheapest.format_id if comparison.cheapest else None,
+        "rows": [
+            {
+                "format": row.format_id,
+                "tokens": row.tokens.value if row.tokens else None,
+                "characters": row.characters,
+                "error": row.error,
+            }
+            for row in comparison.rows
+        ],
+    }
+
+
+def _write_variants(directory: Path, comparison: Any, format_comparison: Any) -> None:
+    """Write every variant to disk so a person can read them side by side.
+
+    Args:
+        directory: Where to write.
+        comparison: The backend comparison.
+        format_comparison: The format comparison, or ``None``.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for row in comparison.rows:
+        if row.text is None:
+            continue
+        (directory / f"{row.backend_id}.md").write_text(row.text, encoding="utf-8")
+        written += 1
+    if format_comparison is not None:
+        for row in format_comparison.rows:
+            if row.text is None:
+                continue
+            (directory / f"table.{row.format_id}").write_text(row.text, encoding="utf-8")
+            written += 1
+    print(f"wrote {written} variant(s) to {directory}", file=sys.stderr)
 
 
 @app.command()

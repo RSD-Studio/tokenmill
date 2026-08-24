@@ -176,15 +176,36 @@ class TestLinkHandler:
 
 
 class TestPostProcessorRegistry:
-    def test_the_installed_entry_points_expose_both_post_processors(self) -> None:
+    def test_the_installed_entry_points_expose_every_post_processor(self) -> None:
         registry = PostProcessorRegistry()
 
-        assert set(registry.ids()) == {"normalize_whitespace", "links"}
+        assert set(registry.ids()) == {
+            "normalize_whitespace",
+            "links",
+            "strip_frontmatter",
+            "aggressive_whitespace",
+            "dedupe_blocks",
+            "normalize_headings",
+            "chunk",
+            "compress",
+        }
 
     def test_the_chain_is_ordered_by_declared_order_not_discovery_order(self) -> None:
         registry = PostProcessorRegistry()
 
-        assert registry.ids() == ("normalize_whitespace", "links")
+        # Ascending `order`, which is the reserved-band layout in
+        # docs/ARCHITECTURE.md: structural repair, whitespace, content
+        # reduction, then reformatting.
+        assert registry.ids() == (
+            "strip_frontmatter",
+            "normalize_whitespace",
+            "aggressive_whitespace",
+            "links",
+            "dedupe_blocks",
+            "normalize_headings",
+            "chunk",
+            "compress",
+        )
 
     def test_the_default_chain_excludes_destructive_processors(self) -> None:
         """The default pipeline must not be able to damage a document."""

@@ -112,6 +112,7 @@ class ConversionContext:
         """Initialise an empty context."""
         self.warnings: list[str] = []
         self.metadata: dict[str, Any] = {}
+        self.stages: list[tuple[str, str]] = []
 
     def warn(self, message: str) -> None:
         """Record a non-fatal problem for the user.
@@ -121,6 +122,31 @@ class ConversionContext:
         """
         _log.debug("conversion warning: %s", message)
         self.warnings.append(message)
+
+    def stage(self, name: str, text: str) -> None:
+        """Record an intermediate text so the pipeline can measure it.
+
+        This is the one way a backend can put a row into ``--show-stages``, and
+        it does **not** breach "backends do not measure": the backend hands over
+        text and the pipeline does every count, exactly as it does for the
+        converter's own output. A backend still cannot report a number.
+
+        It exists because the two most interesting reductions this project makes
+        happen *inside* a backend and were therefore invisible in the per-stage
+        report (defect D8). Extracting an article from a page is two distinct
+        savings — dropping the markup, then dropping the furniture — and a
+        repository pack that a token budget truncated shows only its final size.
+
+        Use it sparingly. The text is held until the pipeline has measured it
+        and is then dropped, so a stage costs memory for the length of one
+        conversion; recording every intermediate of a multi-pass converter would
+        be a real cost for a report nobody reads.
+
+        Args:
+            name: The stage's name, as it appears in the report.
+            text: The document as it left that stage.
+        """
+        self.stages.append((name, text))
 
     def note(self, key: str, value: Any) -> None:
         """Record a structured fact about the conversion.
@@ -255,6 +281,7 @@ class BaseConverter(ABC):
             duration_s=duration,
             warnings=tuple(context.warnings),
             metadata=freeze_metadata(context.metadata),
+            internal_stages=tuple(context.stages),
         )
 
     def _check_size(self, source: Source, options: ConvertOptions) -> None:

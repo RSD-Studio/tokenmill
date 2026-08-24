@@ -9,6 +9,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 6 — prompt compression (optional tier, off by default)
+
+> **The success path has never been executed anywhere.** The LLMLingua-2 model
+> lives on `huggingface.co`, which the development environment denies at the
+> egress proxy. No compression has been run by this code and no ratio has been
+> produced by it. The refusal, error, import-time and arithmetic paths are
+> tested; the happy path is **unverified**. This is the posture Phase 2 took
+> with docling's PDF path.
+
+- **`compress` post-processor** (order 900, destructive, off by default) wrapping
+  LLMLingua-2 behind a `compress` extra. MIT, verified from the wheel's own
+  METADATA and bundled LICENSE.
+- **Nothing downloads without `--allow-network`.** The model loads with
+  `local_files_only` and the refusal names the size, the cache path and the exact
+  command. **No environment variable is set** — the switch rides in llmlingua's
+  `model_config` — so this adds nothing to the five pieces of process-global
+  state `docs/ARCHITECTURE.md` records.
+- **`trust_remote_code` is off**, against llmlingua's default of on, which lets a
+  model repository execute arbitrary code on load.
+- **Nothing is imported at module load**: loading all eight post-processors pulls
+  in zero third-party modules.
+- **No bespoke ratio number.** The achieved ratio is the `compress` row in
+  `--show-stages`; the retention indicator is `tokenmill fidelity`.
+- **An empty result raises** rather than reporting a 100% saving.
+- **`--compress-ratio` and `--compress-model`** on `tokenmill convert`.
+- **Selective Context is deferred**, with the measurement: its 0.1.4 release pins
+  `click==8.0.4`, conflicting with the CLI, and a resolver silently backs down to
+  0.1.3.
+
+#### Phase 5 — post-processing, formats, and measurement depth
+
+- **Five more post-processors**, every one destructive and off by default:
+  `strip_frontmatter` (50), `aggressive_whitespace` (150), `dedupe_blocks` (250),
+  `normalize_headings` (400), `chunk` (700). `links` gains `--links reference`.
+  **The default chain is still exactly `normalize_whitespace`**, asserted over
+  the whole registry rather than per processor.
+- **`tokenmill.formats`** — Markdown, CSV, JSON, TOON and key-value table
+  encoders, registered through a `tokenmill.formats` entry point group. Every
+  one round-trips losslessly, proven with property tests.
+- **TOON implemented against the specification** (Working Draft 4.1, MIT) rather
+  than wrapped: `toon-format` 0.1.0 on PyPI is a stub whose `encode()` raises
+  `NotImplementedError`, and `toon-py` 1.0.2 emits a redundant delimiter in
+  every array header. Conformance to the TypeScript reference is unverified.
+- **`tokenmill compare`** — one input, several backends or serialisations, with
+  tokens, timing and **fidelity** in the same row. Works on documents, web pages
+  and repositories. Rows stay in preference order; the cheapest and the most
+  faithful are both named, and when they differ the report says so.
+- **Chonkie chunking** behind a `chunk` extra, with sizes in the run's own unit.
+- **A reduction that happens inside a backend is now a stage** (defect D8):
+  `source → visible_text → convert` decomposes a web conversion's −77.1% into
+  markup removal and boilerplate removal, and a truncated repository pack shows
+  `packed → convert`.
+- **`tests/fixtures/structured.md`**, generated: front matter, skipped heading
+  levels, lists, a code fence, inline and reference links, an image, a duplicated
+  block and a table.
+- **hypothesis put to work for the first time** since Phase 0 declared it. It
+  found seven real bugs on its first outing, all fixed and each with a named
+  test.
+
+### Fixed
+
+- **Defect D9** — `convert --json` now carries `counts` and
+  `is_model_tokenizer`, so a consumer reading `"tokenizer": "bytes"` has a
+  machine-readable signal that these are not model tokens. The `web` object is
+  now **absent** for a non-web conversion rather than `null`: `null` means
+  "applies here, no value", an absent key means "does not apply". This changes
+  the shape of `convert --json` for a document.
+- **MarkItDown escapes Markdown syntax inside XLSX cell values**, so
+  `backend_count` comes back as `backend\_count` and a literal search fails.
+  Documented in `docs/BACKENDS.md` and asserted by a test.
+
+#### Fidelity scoring (a Phase 10 slice, brought forward ahead of Phase 5)
+
+- **`tokenmill.fidelity`** — scores converted text against a fixture's
+  hand-labelled ground truth as six named components plus an unweighted overall
+  that names what composed it: heading recall, content recall, table integrity,
+  structure retention, boilerplate rejection and reading order.
+- **A component with no ground truth scores `None`, never zero and never one.**
+  `long_context.md` has no table, so scoring its table integrity either way
+  would be a false statement about a document with no table in it. Same rule
+  `ground_truth.json` already followed for `token_count`.
+- **An empty document scores zero on every component that applies**, including
+  boilerplate rejection. The arithmetic alone would score it 1.0 there — an
+  empty string genuinely contains no boilerplate — which is the failure
+  `benchmarks/README.md` names, reappearing inside the instrument built to
+  catch it.
+- **`tokenmill fidelity FILE --against FIXTURE`**, reading `-` for stdin so it
+  pipes from `convert`. `--json` carries `null` for a component that did not
+  apply, so a consumer can tell "not measured" from "measured as zero".
+- **Scorable ground truth for `jsrendered.html` and `scanned.pdf`**, added to
+  `scripts/make_fixtures.py` and regenerated. Neither could be scored before,
+  and `jsrendered.html` is the fixture the whole exercise is for: it produces
+  the largest reduction in the corpus, −90.7%, at a fidelity of **0.000**.
+- **A fidelity figure beside every token figure** in `docs/BENCHMARKS.md`,
+  covering every installed backend against every fixture it claims.
+- **Eight failure modes documented in `docs/BACKENDS.md` are now numbers** —
+  Kreuzberg flattening a PDF table reads as table integrity 0.00 against
+  pdfplumber's 1.00; pdfplumber interleaving two-column pages reads as reading
+  order 0.58 against pypdf's 1.00.
+
 #### Phase 4 — repository backends
 
 - **Three repository backends**, one set of options over three runtimes:

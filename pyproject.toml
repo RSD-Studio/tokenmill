@@ -156,8 +156,34 @@ crawl4ai = ["crawl4ai>=0.7"]
 # invoked as child processes, and a Python extra cannot install either.
 repo = ["gitingest>=0.3"]
 
-# Phase 6 — prompt compression (llmlingua, transformers). CPU-feasible.
-compress = []
+# Phase 5 — token-aware chunking.
+#
+# chonkie is MIT and genuinely light by the standards of this neighbourhood,
+# but it is NOT in core, which is a deliberate departure from the plan's 1.6.
+# Measured on 2026-08-24: it adds 10 packages and takes a core install from
+# 126 MB to 196 MB of `lib/`, almost all of it numpy. Defect D4 records that
+# core already grew 2.3x in Phase 3 without anyone deciding that was
+# acceptable, and a further 56% for a feature most users of a document
+# converter never touch would repeat the move that created D4. The owner was
+# asked and chose the extra.
+chunk = ["chonkie>=1.0"]
+
+# Phase 6 — prompt compression.
+#
+# llmlingua is MIT, verified on 2026-08-24 from the wheel's own METADATA and the
+# LICENSE file it bundles (Microsoft Corporation) rather than from RESEARCH.md.
+# It was NOT installed to check: `pip install llmlingua` resolves to 63
+# packages including torch, triton and seventeen nvidia-* CUDA packages, about
+# 4.7 GB. The plan calls LLMLingua-2 "CPU-feasible", which is true of *running*
+# it and not of *installing* it on Linux, where an unpinned `torch` resolves to
+# the CUDA build.
+#
+# The CPU-only install is documented in docs/BACKENDS.md and is UNVERIFIED here:
+# download.pytorch.org is denied at this environment's egress proxy, so whether
+# the CPU wheel index avoids the CUDA stack could not be tested.
+#
+# Deliberately its own group, never reachable from core, and imported lazily.
+compress = ["llmlingua>=0.2.2"]
 
 # Phase 2/9 — OCR engines needing a system binary or downloaded models.
 ocr = []
@@ -229,8 +255,24 @@ kreuzberg = "tokenmill.backends.documents.kreuzberg_adapter:KreuzbergConverter"
 docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 
 [project.entry-points."tokenmill.postprocessors"]
+# Exactly one of these is non-destructive, and that is the whole default chain.
+# `default_chain()` is built by excluding destructive processors, so the default
+# pipeline cannot damage a document by construction rather than by convention.
 normalize_whitespace = "tokenmill.post.whitespace:WhitespaceNormalizer"
+strip_frontmatter = "tokenmill.post.frontmatter:FrontMatterStripper"
+aggressive_whitespace = "tokenmill.post.aggressive_whitespace:AggressiveWhitespaceCleaner"
 links = "tokenmill.post.links:LinkHandler"
+dedupe_blocks = "tokenmill.post.dedupe:DuplicateBlockRemover"
+normalize_headings = "tokenmill.post.headings:HeadingNormalizer"
+chunk = "tokenmill.post.chunk:Chunker"
+compress = "tokenmill.post.compress:PromptCompressor"
+
+[project.entry-points."tokenmill.formats"]
+markdown = "tokenmill.formats.markdown_table:MarkdownTableEncoder"
+csv = "tokenmill.formats.csv_table:CsvTableEncoder"
+json = "tokenmill.formats.json_table:JsonTableEncoder"
+toon = "tokenmill.formats.toon_table:ToonTableEncoder"
+keyvalue = "tokenmill.formats.keyvalue_table:KeyValueTableEncoder"
 
 [project.entry-points."tokenmill.tokenizers"]
 tiktoken = "tokenmill.tokens.tiktoken_adapter:TiktokenProvider"
@@ -368,6 +410,8 @@ module = [
     "crawl4ai.*",
     "gitingest.*",
     "loguru.*",
+    "llmlingua.*",
+    "chonkie.*",
 ]
 ignore_missing_imports = true
 

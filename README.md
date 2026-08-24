@@ -191,6 +191,70 @@ $ tokenmill tokens --list                    # what tokenizers are available
 $ tokenmill convert page.html --json         # machine-readable, counts null if unmeasured
 ```
 
+### Which backend, and what it costs
+
+A document and a repository have no before-count — nobody hands a model the
+bytes of a `.docx` — so the comparison that means something is between backends
+on the same input.
+
+```console
+$ tokenmill compare tests/fixtures/tables.pdf --tokenizer bytes
+
+backend     tokens  vs best  time    fidelity  components
+----------  ------  -------  ------  --------  ----------
+pdfplumber  599     +29%     102 ms  0.667     3 scored
+kreuzberg   466     base     31 ms   0.500     3 scored
+markitdown  769     +65%     844 ms  0.606     3 scored
+pypdf       481     +3%      60 ms   0.333     3 scored
+
+cheapest:      kreuzberg (466)
+most faithful: pdfplumber (0.667)
+The cheapest option is NOT the most faithful one.
+```
+
+Rows stay in preference order rather than being sorted by size, because sorting
+by tokens is a leaderboard and a leaderboard on this data rewards whichever
+converter destroyed the most.
+
+`--formats markdown,csv,toon,json,keyvalue` re-encodes the converted table in
+each serialisation, so you can measure which is cheapest **for your data**
+rather than take a benchmark's word for it. `--write DIR` puts every variant on
+disk to read.
+
+### What the saving cost
+
+A token saving on its own is not a result: a converter that emits an empty
+string scores a 100% reduction. `tokenmill fidelity` scores converted text
+against the corpus's hand-labelled ground truth, so the two halves of the
+measurement can be produced together.
+
+```console
+$ tokenmill convert tests/fixtures/boilerplate.html -q |
+      tokenmill fidelity - --against boilerplate.html
+
+component              score  count  detail
+---------------------  -----  -----  ----------------------------------------
+heading_recall         1.000  6/6    6 of 6 headings recovered as headings
+content_recall         1.000  3/3    3 of 3 required passages present
+table_integrity        1.000  35/35  35 of 35 expected cells came back ...
+structure_retention    n/a    -      ... names no list items, links or fences
+boilerplate_rejection  1.000  6/6    6 of 6 markers that must be absent are
+reading_order          n/a    -      ... carries no order sentinels
+
+overall: 1.000 (unweighted mean of heading_recall, content_recall,
+                table_integrity, boilerplate_rejection)
+```
+
+Six named components rather than one opaque number, because a score you cannot
+decompose is a score you cannot act on. **`n/a` is never zero**: a component
+with no ground truth for that fixture did not apply, which is a different
+statement from scoring badly.
+
+The measurement it exists for: `jsrendered.html` is a page whose article is
+inserted by a script. Every parser-based backend reports a **−90.7% reduction**
+on it and scores **0.000 fidelity**, because it saved those bytes by losing all
+of the content. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
 From Python:
 
 ```python
@@ -205,6 +269,33 @@ print(result.tokens_before, "->", result.tokens_after)
 on an air-gapped machine, for instance, where a BPE vocabulary cannot be
 downloaded. The conversion still succeeds and a warning says why. **tokenmill
 never substitutes an estimate for a measurement.**
+
+## Prompt compression (off by default, and it should stay off until you measure it)
+
+> Prompt compression suits **redundant RAG context**. It is not universally safe
+> and **can degrade reasoning-heavy prompts** — `docs/research/RESEARCH.md`
+> Category 6 is explicit about it, and the published figures are measured on
+> their benchmarks, not on your task. Evaluate it on yours.
+>
+> **The success path of tokenmill's LLMLingua-2 adapter has never been run.**
+> The model host is unreachable from the environment it was written in, so no
+> compression has been performed by this code and no ratio has been produced by
+> it. It is implemented, its refusal and error paths are tested, and its happy
+> path is unverified. See [`docs/BACKENDS.md`](docs/BACKENDS.md).
+
+```console
+$ pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU-only, unverified
+$ pip install "tokenmill[compress]"
+$ tokenmill convert notes.md --compress-ratio 0.5 --allow-network --show-stages
+```
+
+Nothing downloads without `--allow-network`; the refusal names the model, the
+cache path and the command. Once cached it runs offline. `pip install llmlingua`
+resolves to 63 packages and about 4.7 GB including the CUDA stack, which is why
+it is behind its own extra and why the CPU-only index is the recommended route.
+
+The achieved ratio is the `compress` row in `--show-stages`; what it cost is
+`tokenmill fidelity`. There is no third number.
 
 ## Backends
 
@@ -360,7 +451,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 | [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
 | [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, and the audits actually run |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results *(partial; the full harness is Phase 10)* |
-| [`docs/REVIEW_PHASES_0_4.md`](docs/REVIEW_PHASES_0_4.md) | A full re-evaluation after Phase 4: every acceptance criterion with its evidence, the whole corpus end to end, and an honest defects list |
+| [`docs/CI_BILLING_CHECK.md`](docs/CI_BILLING_CHECK.md) | Why CI stopped scheduling runners and how to check the Actions billing page, written for a novice |
+| [`docs/REVIEW_PHASES_0_6.md`](docs/REVIEW_PHASES_0_6.md) | A full re-evaluation after Phase 6: every acceptance criterion with its evidence, the whole corpus with tokens beside fidelity, and an honest defects list including the ones it introduced |
 
 ## Non-goals
 

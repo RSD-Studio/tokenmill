@@ -528,12 +528,12 @@ the outcome does not depend on discovery order. Reserved ranges:
 
 | Range | Purpose | Phase 1 occupants |
 |---|---|---|
-| 0–99 | Structural repair, before anything reads the text | *(none yet)* |
-| 100–199 | Whitespace and normalisation | `normalize_whitespace` (100) |
-| 200–399 | Content reduction: links, images, boilerplate | `links` (200) |
-| 400–699 | Reformatting: tables, headings, serialisation | *(Phase 5)* |
-| 700–899 | Chunking | *(Phase 5)* |
-| 900–999 | Compression | *(Phase 6)* |
+| 0–99 | Structural repair, before anything reads the text | `strip_frontmatter` (50) |
+| 100–199 | Whitespace and normalisation | `normalize_whitespace` (100), `aggressive_whitespace` (150) |
+| 200–399 | Content reduction: links, images, boilerplate | `links` (200), `dedupe_blocks` (250) |
+| 400–699 | Reformatting: tables, headings, serialisation | `normalize_headings` (400) |
+| 700–899 | Chunking | `chunk` (700) |
+| 900–999 | Compression | `compress` (900) |
 
 An explicit `--post a,b,c` runs **in the order the user gave**, overriding
 declared order, because somebody naming a chain by hand means that sequence.
@@ -550,6 +550,22 @@ fenced code blocks entirely alone, and it preserves Markdown hard line breaks
 (two trailing spaces before another line of text) rather than stripping them.
 Stripping those would quietly change how a document renders, and a
 "non-destructive" step that quietly changes rendering is not one.
+
+Phase 5 made this flag load-bearing in a way it was not before. Phase 1 shipped
+one destructive post-processor; there are now six, and the default chain is
+still exactly `normalize_whitespace`. The risk is no longer that one of them is
+wrong — it is that the seventh forgets the flag and quietly joins the default
+chain, so the invariant is asserted **over the whole registry** rather than per
+processor.
+
+**`chunk` stretches the flag, and the stretch is deliberate.** It deletes
+nothing; it inserts chunk markers. It is marked destructive because that is the
+only mechanism keeping a post-processor out of the default chain, and a
+conversion that silently grew boundaries nobody asked for is exactly the
+surprise the flag exists to prevent. So the flag now carries two meanings — "can
+lose information" and "changes the document's shape" — and `PROGRESS.md` records
+that as a question for the owner rather than hiding it behind a convenient
+reading.
 
 ---
 
@@ -587,6 +603,145 @@ Use it to see whether a conversion or a post-processor made the text smaller.
 Do not use it to predict what a model will charge.
 
 ---
+
+## Fidelity: the other half of every measurement
+
+`src/tokenmill/fidelity/`. Brought forward from Phase 10 ahead of Phase 5,
+because Phase 5 adds post-processors that each strip something and Phase 6 adds
+a compressor that strips a great deal. Every one of them can be measured as a
+win in tokens, and the cost is invisible unless something goes looking.
+
+The package is deliberately *outside* the pipeline. It takes text and ground
+truth and returns a score; it never runs a conversion, never consults a
+tokenizer, and nothing in `core/` imports it. That keeps the rule in "Backends
+do not measure" intact in both directions — the pipeline measures cost, the
+fidelity package measures loss, and neither can quietly become the other.
+
+### Why never one number
+
+A `FidelityScore` is six named components plus an unweighted mean that carries
+the names of the components it was built from. Three decisions, each of which
+had an obvious alternative:
+
+**Decomposable, because a score you cannot decompose is a score you cannot act
+on.** "0.62" tells nobody whether to change backend, change post-processors or
+accept the loss. "Headings 1.00, tables 0.00" tells them exactly.
+
+**Unweighted, because a weighting would encode an opinion this project does not
+have.** Whether a lost table matters more than a lost heading depends on the
+document and the task. The user with the document owns that judgement.
+
+**The overall names its components, because an overall built from two of them is
+not comparable with one built from five** — and a reader who cannot see which is
+which will compare them anyway.
+
+### `None` is not zero, and this is where it matters most
+
+A component whose ground truth does not exist for a fixture scores `None`.
+`long_context.md` has no table: scoring its table integrity 0.0 claims a table
+was destroyed, and 1.0 claims one survived. Both are false statements about a
+document with no table in it.
+
+This is the same rule `ground_truth.json` set in Phase 0 by recording
+`token_count: null` rather than a characters-over-four guess, and the same one
+`TokenMeter` follows when no tokenizer loads. It matters more here because a
+fidelity score is a *judgement*, and a judgement invented from absent evidence
+is worse than a missing one.
+
+### The empty document, which is why the package exists
+
+`benchmarks/README.md` states the failure: *a converter that emits an empty
+string scores a 100% reduction*. The arithmetic reproduces it one level up. An
+empty string contains no boilerplate, so `boilerplate_rejection` scores it
+**1.0** — the instrument built to catch a destroyed document credits it with
+perfect extraction.
+
+So a document with no non-whitespace content scores 0.0 on every component that
+has ground truth, and says so in the detail. It is an explicit special case
+rather than an emergent property, because it needed to be: no arrangement of
+fractions produces it on its own.
+
+The general form of the same trap is handled by reporting, not by arithmetic.
+**Recall and rejection are a pair**, always reported together. `markdownify_html`
+keeps the whole page and scores high recall with zero rejection; a converter
+that emitted only the cookie banner would score the reverse. Neither number
+alone says extraction worked.
+
+### Reading structure back out of Markdown
+
+`fidelity/markdown.py` is a small strict reader, not a CommonMark parser: ATX
+and setext headings, GFM pipe tables, list markers, fenced code blocks and both
+link forms. A full parser would be a dependency in the core install, and rule 1
+is not worth spending on a measurement module.
+
+Two rules in it are load-bearing:
+
+**Fenced code blocks are opaque.** A `#` inside a fence is a comment in
+somebody's shell script and a `|` is a pipe operator. Counting either would make
+a backend that emits more code score as though it emitted more structure.
+
+**A pipe table needs its delimiter row.** A converter that flattens a table into
+prose sometimes leaves the pipes behind, and counting those as a surviving table
+would score the documented failure as a success.
+
+## Serialisation formats
+
+`src/tokenmill/formats/`. Markdown, CSV, JSON, TOON and key-value encoders for
+one thing: a table. `RESEARCH.md` Category 7 says the same data costs very
+different amounts depending on how it is serialised, and that the differences
+are large, narrow, and easy to overstate — so a user should be able to measure
+it **on their own data**, which is what `compare --formats` is for.
+
+### Cells are strings, and every encoder is exactly lossless
+
+A Markdown table lifted out of a PDF contains text: `9.99` in a price column is
+four characters a converter read off a page, not a float. An encoder that
+"helpfully" emitted it as a JSON number would not round-trip — `05` comes back
+as `5` and `1e-6` as `1e-06`.
+
+So a cell is written as a native number, boolean or null **exactly when doing so
+renders back to the identical string**, and as a quoted string otherwise. The
+test is not "does it look numeric" but "does rendering the parsed value
+reproduce the original characters", which is strictly stronger.
+
+That rule is also what keeps the comparison honest. Without it, JSON and TOON
+would quote every number that CSV writes bare, and CSV would win the comparison
+by two characters per numeric cell that no real application ever spends.
+
+### Where a format cannot represent something, it says so
+
+JSON, TOON and key-value key each row by column name, so a table with unnamed or
+repeated columns cannot be encoded without silently dropping a column. They
+raise. MarkItDown really does emit `report.docx`'s table with three unnamed
+columns, so this is the first table many users will try.
+
+Markdown's two losses — a line break in a cell, and leading or trailing
+whitespace — are GFM's limits, not this encoder's, and are documented rather
+than fixed with a non-standard escape that no other tool could read.
+
+## `compare`, and why it is not sorted by size
+
+`src/tokenmill/core/compare.py`. A document and a repository have no
+before-count, so `convert` correctly reports one number and a size. The
+comparison that means something for those inputs is between backends on the same
+input.
+
+**Rows stay in the registry's preference order.** Sorting by tokens is a
+leaderboard, and a leaderboard on this data rewards whichever converter
+destroyed the most — the one that emits an empty string wins by a distance. The
+cheapest and the most faithful rows are named underneath instead, and when they
+differ the report says so outright.
+
+**A fidelity score sits beside every token count.** Where no ground truth
+exists, the report says the comparison cannot say what any of these savings cost
+rather than leaving a blank that reads like a pass. Ground truth is detected
+only for a target that actually lives inside the corpus directory: matching on
+filename alone would score somebody's own `tables.pdf` against ours and produce
+a plausible number that means nothing.
+
+**Fallback is forced off.** A row headed `pypdf` that pdfplumber actually
+produced would make the whole table a lie. A backend that fails gets a row
+saying so, because a backend that cannot read the file is a result.
 
 ## Error taxonomy
 
@@ -642,6 +797,34 @@ construction as a list (never `shell=True`), timeout and kill, temp-file
 lifecycle, and stderr capture.
 
 ---
+
+## Compression, and the state it does not add
+
+`src/tokenmill/post/compress.py`. Last in the chain at order 900, because
+compressing and then stripping would spend model time on text about to be
+deleted.
+
+Two decisions here are about *not* doing the obvious thing.
+
+**The offline switch is not an environment variable.** The natural way to make
+`transformers` work from cache only is `HF_HUB_OFFLINE=1`. That would have been
+a **sixth** piece of process-global state manipulated during a conversion, on
+top of the five this document already records — and the trajectory of that
+count is defect D2. llmlingua passes `model_config` straight through to
+`from_pretrained`, so `local_files_only` rides in the call instead. A test
+asserts the environment is unchanged.
+
+**`trust_remote_code` is off.** llmlingua defaults it to true. On a downloaded
+model that means executing code from a model repository, which is not something
+a document converter should do by default for a token classifier that does not
+need it.
+
+**A post-processor has no channel for warnings or metadata.** `process(text,
+options) -> str` is the whole contract — unlike a backend, which gets a
+`ConversionContext`. So the compressor logs rather than warning, and reports its
+ratio through the per-stage measurement the pipeline already does rather than
+attaching it to the result. That is a real gap and `PROGRESS.md` records it:
+Phase 8's GUI will want a post-processor to be able to say something.
 
 ## Security posture
 
@@ -719,9 +902,13 @@ Left out rather than stubbed, per `CONTRIBUTING.md` rule 6:
 - **Conditional or authenticated fetching.** No cookies, no headers beyond the
   user agent, no ETag or caching. A page behind a login is not fetchable, and
   saying so beats a half-implemented credential story.
-- **Formats beyond Markdown and text.** `OutputFormat` has two members. CSV,
-  TOON and JSON encoders are Phase 5.
+- ~~**Formats beyond Markdown and text.**~~ **Done in Phase 5** — see
+  "Serialisation formats" above. Note that `OutputFormat` still has two members:
+  the encoders re-serialise a *table*, which is what `RESEARCH.md`'s evidence is
+  about, rather than becoming whole-document output formats.
 - **Cost estimation.** The plan puts it in the token layer with user-supplied
   rates only. No rates, no estimate, so it is not here.
-- **Reference-style link handling.** `links` handles inline links and images and
-  leaves reference links intact rather than mangling them. Phase 5.
+- ~~**Reference-style link handling.**~~ **Done in Phase 5**: `--links
+  reference` moves targets into a definition list. Autolinks and bare URLs in
+  prose are still left alone, deliberately — deciding where a bare URL ends
+  differs between Markdown flavours and guessing wrong corrupts the sentence.

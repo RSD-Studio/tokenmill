@@ -318,6 +318,20 @@ one above the real one. The real header is now a data row.
 the parent numbering, where the source has it one level down. docling restarts
 it as a nested `1.`.
 
+**Markdown syntax inside XLSX cell values is escaped.** `data.xlsx` has a
+totals row labelled `backend_count`. MarkItDown emits it as:
+
+```
+| backend\_count | 6.0 |
+```
+
+The backslash is defensible — a bare underscore can open emphasis in Markdown —
+but the cell no longer contains its own value as written, so a literal search of
+the output for `backend_count` fails. Kreuzberg emits it unescaped. Measured as
+content recall **0.667 against kreuzberg's 1.000** on that fixture; found by the
+fidelity scorer rather than by reading, because the two outputs look identical
+until you search them.
+
 **Images and audio need external binaries.** MarkItDown shells out to
 `exiftool` (images) and `exiftool` + `ffmpeg` (audio). Without them it returns
 an **empty string and no error at all** — a silent success producing nothing.
@@ -1062,3 +1076,364 @@ turns the chain off entirely.
 | pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |
 | tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |
 | marker, mineru, olmocr, surya, deepseek-ocr | GPU tier, out of process | 9 |
+
+---
+
+# Post-processors
+
+Same standard as the backends above: **what each one destroys, stated plainly,
+with a test asserting it.** A post-processor that quietly damages a document is
+worse than none, and every claim below is held by
+`tests/unit/test_post_phase5.py` or `tests/unit/test_chunk.py`.
+
+One number governs the whole list: **the default chain is exactly
+`normalize_whitespace`.** Everything else here is destructive and off unless
+asked for. That is enforced over the whole registry rather than per processor,
+because the failure mode is the *next* post-processor forgetting the flag.
+
+## `normalize_whitespace` — the only one that runs by default
+
+**Destroys:** nothing. Its non-destructive claim is meant literally: fenced code
+blocks are passed through untouched and Markdown hard line breaks are preserved
+as exactly two spaces, because stripping them would silently change how the
+document renders.
+
+**Measured:** −0.2% on `structured.md`, fidelity 1.000.
+
+## `strip_frontmatter`
+
+**Destroys:** the document's metadata — its title, author, tags, canonical URL,
+whatever the front matter carried. Once removed the document cannot say where it
+came from.
+
+**Does not destroy:** a `---` in the middle of the document, which is a thematic
+break. Only a block at the very start is removed, and an *unterminated* block is
+left alone rather than eating the file.
+
+**A limit of the fidelity score, not a clean bill of health:** it scores 1.000
+because no component tracks front matter. 1.000 means "nothing ground truth
+asked about was lost", which is not "nothing was lost".
+
+**Measured:** −5.9% on `structured.md`.
+
+## `aggressive_whitespace`
+
+**Destroys:** Markdown hard line breaks (the two-trailing-space kind), runs of
+spaces inside a line, and paragraph indentation. Aligned text and ASCII layout
+lose their alignment.
+
+**Does not destroy:** fenced code, indented code blocks, list nesting, or the
+spacing inside an inline code span.
+
+**Worth knowing before you enable it:** on this project's own corpus it is close
+to worthless — `+0.0%` on `twocolumn.pdf` and `boilerplate.html`, `−0.1%` on
+`report.docx` — because the backends already emit tidy Markdown and
+`normalize_whitespace` runs first. It earns its place on hand-written or scraped
+input. Measure it on your own documents rather than assuming.
+
+## `links`
+
+**Destroys:** URLs, under `--links strip`; image targets, under `--images strip`;
+image markup, under `--images alt`, which keeps only the alt text.
+
+**Does not destroy:** anything under the defaults — both settings are `keep` and
+the processor returns the text unchanged, so having it in a chain costs nothing.
+URLs inside fenced code blocks and inline code spans are never touched: a URL in
+a code sample is content.
+
+**`--links reference` is not a saving unless a target repeats.** It moves every
+target into a definition list and leaves `[text][n]` behind, so a document whose
+URLs are all distinct gets *larger*: **+0.5%** on `structured.md`. It saves
+exactly when the same URL appears more than once.
+
+**Not handled:** autolinks (`<https://example.com>`) and bare URLs in prose.
+Rewriting a bare URL means deciding where it ends, and the answer differs
+between Markdown flavours; guessing wrong corrupts the sentence around it.
+
+**Measured:** −5.4% at fidelity 0.955 on `structured.md` with both set to
+`strip` — the missing 0.045 is three link targets, counted by
+`structure_retention`.
+
+## `dedupe_blocks`
+
+**Destroys:** the second and later copies of any block that repeats verbatim.
+A repeat can be deliberate and no metric can tell the difference.
+
+**Does not destroy:** fenced code blocks, which are never removed and never
+merged — two identical code samples in a tutorial are two examples. Nor blocks
+shorter than 80 characters after whitespace collapsing, which is what stops a
+document with two `### Notes` sections losing the second heading. The floor is
+overridable through `extra['dedupe_min_chars']`.
+
+**Measured:** the largest saving in the toolkit that costs nothing measurable —
+**−11.4% at fidelity 1.000** on `structured.md`, and **−8.3%** on `report.docx`,
+which repeats a "detail" paragraph per section. It correctly finds nothing to
+remove in `boilerplate.html` and `twocolumn.pdf`.
+
+## `normalize_headings`
+
+**Destroys:** the document's original heading levels. It promotes the shallowest
+heading to `#` and closes up skipped levels, and afterwards the source's ranks
+are not recoverable. A specification with deliberately deep numbering comes out
+saying something different.
+
+**Does not destroy:** a `#` inside a fenced code block, and it passes a leading
+front-matter block through untouched — a YAML block's closing `---` is
+indistinguishable from a setext underline, and without that guard `draft: false`
+became a heading.
+
+**Depth comes from the ancestor chain, not from a remap of the levels used.**
+On a document going `##`, `####`, `###`, remapping the distinct levels emits
+`#`, `###`, `##` — which still skips. Walking the chain emits `#`, `##`, `##`.
+
+**Measured:** −0.3% at **fidelity 0.750** on `structured.md`. It deletes
+nothing; every heading is present at a different rank, and the score's detail
+says which of those two things happened.
+
+## `chunk`
+
+**Destroys:** nothing. It inserts `<!-- tokenmill:chunk n/total -->` markers
+between chunks.
+
+**Costs tokens rather than saving them.** The markers are not free:
+`long_context.md` at a 2,048-byte chunk size grows **+1.8%**, and the per-stage
+report shows it as a rise. That is the opposite of what a token-reduction
+toolkit reads like it should do, and there is a test asserting it.
+
+**Needs `pip install "tokenmill[chunk]"`.** Without Chonkie it raises an
+actionable error rather than returning the text unchanged, because a flag that
+silently does nothing is worse than no flag.
+
+**The chunk size is in the run's own unit.** Chonkie's `ByteTokenizer` was
+checked against tokenmill's `bytes` counter on multibyte text and emoji and
+agrees exactly. Under a real model tokenizer the id is handed to Chonkie, which
+needs that tokenizer's vocabulary download; where that is unavailable the error
+names `--tokenizer bytes` as the way round it.
+
+**Marked destructive, which is a stretch.** It loses nothing; the flag is the
+only mechanism that keeps a post-processor out of the default chain. Recorded in
+`PROGRESS.md` as an open question rather than papered over.
+
+## `compress` — LLMLingua-2
+
+> **Read this before enabling it.** Prompt compression suits **redundant RAG
+> context**. It is not universally safe and **can degrade reasoning-heavy
+> prompts**. `RESEARCH.md` Category 6 is explicit about this, and Microsoft's
+> published figures are measured on their benchmarks, not on your task.
+> **Evaluate it on your own task** — `tokenmill fidelity` and `tokenmill
+> compare` exist for that. It is off by default and it should stay off until
+> you have measured it.
+
+> ### ⚠️ The success path of this adapter has never been run
+>
+> The model lives on `huggingface.co`, which the environment this was written in
+> denies at the egress proxy. **No compression has ever been performed by this
+> code and no ratio has ever been produced by it.** Every figure below is either
+> from `RESEARCH.md` (and attributed) or is about the install rather than the
+> compression. If you run it, the numbers you get are the first ones that exist.
+
+**Destroys:** words, on a model's judgement. More literally destructive than
+anything else in the toolkit.
+
+**Licence:** MIT, verified 2026-08-24 from the wheel's own `METADATA` and the
+`LICENSE` file it bundles (Microsoft Corporation) — not from `RESEARCH.md`. The
+package was deliberately *not* installed to check; see the install cost below.
+
+### The install is not what "CPU-feasible" suggests
+
+```console
+$ uv pip install --dry-run llmlingua
+63 packages, including:
+  torch==2.13.0  triton==3.7.1  transformers==5.15.1
+  nvidia-cublas  nvidia-cuda-cupti  nvidia-cuda-nvrtc  nvidia-cuda-runtime
+  nvidia-cudnn-cu13  nvidia-cufft  nvidia-cufile  nvidia-curand
+  nvidia-cusolver  nvidia-cusparse  nvidia-cusparselt-cu13  nvidia-nccl-cu13
+  nvidia-nvjitlink  nvidia-nvshmem-cu13  nvidia-nvtx
+```
+
+About **4.7 GB**. `DEVELOPMENT_PLAN.md` §1.6 calls LLMLingua-2 "CPU-feasible",
+which is true of *running* it and false of *installing* it on Linux, where an
+unpinned `torch` resolves to the CUDA build.
+
+**The CPU-only install, and it is UNVERIFIED:**
+
+```console
+$ pip install torch --index-url https://download.pytorch.org/whl/cpu
+$ pip install "tokenmill[compress]"
+```
+
+On a normal machine that installs the CPU-only PyTorch wheels and avoids the
+CUDA packages entirely. **This could not be tested here**:
+`download.pytorch.org` is also denied at this environment's proxy. Treat it as
+the documented recommendation, not as a measured result.
+
+### The model download is explicit, and refused by default
+
+Nothing is fetched unless the run carries `--allow-network`. Without it:
+
+```
+error: the LLMLingua-2 model 'microsoft/llmlingua-2-xlm-roberta-large-meetingbank'
+       is not in the HuggingFace cache, and this run may not download it
+hint:  compression models are large — hundreds of megabytes to a few gigabytes.
+       Re-run with --allow-network to fetch it (the download resumes if
+       interrupted), set extra['compress_cache_dir'] to choose where it lands, or
+       use the smaller 'microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank'.
+       Once cached, compression runs entirely offline.
+```
+
+**The exact model sizes are unverified** — `huggingface.co` is unreachable from
+here, so they are not stated as numbers.
+
+The mechanism is `local_files_only`, passed through llmlingua's `model_config`
+to `from_pretrained`. **No environment variable is set**, deliberately: this
+adapter adds nothing to the five pieces of process-global state
+`docs/ARCHITECTURE.md` records.
+
+### `trust_remote_code` is off, and llmlingua's default is on
+
+llmlingua defaults `trust_remote_code` to **true**, which permits a model
+repository to execute arbitrary code when the model loads. LLMLingua-2's own
+models are token classifiers that need nothing of the kind. This adapter sets it
+false.
+
+### What it reports
+
+Nothing bespoke. The **achieved ratio** is the `compress` row in
+`--show-stages`, measured by the pipeline like every other stage. The
+**retention indicator** is `tokenmill fidelity`. Inventing a third number when
+two already exist would have been the wrong answer to
+`benchmarks/README.md`'s rule.
+
+Structure is protected — newlines, pipes and hashes are passed as
+`force_tokens` — and digits via `force_reserve_digit`, because identifiers,
+versions and measurements are exactly what a low-information filter discards and
+a reader most needs kept.
+
+**An empty result is an error, not a 100% saving.** A compressor that returned
+nothing has destroyed the document, and the adapter raises rather than
+celebrating the ratio.
+
+### Selective Context is not implemented
+
+`DEVELOPMENT_PLAN.md` lists it as optional. Deferred, with the reason measured
+rather than asserted: `selective-context` 0.1.4 pins `click==8.0.4`, which
+conflicts with the CLI's own click, and a resolver silently backs down to
+**0.1.3** to satisfy both. It also needs `spacy` and a model download, and its
+happy path is exactly as unrunnable here as LLMLingua-2's. Adding it would have
+doubled the unverified surface for no verifiable gain.
+
+### Does `compress` coexist with `docling`?
+
+`DEVELOPMENT_PLAN.md` §Phase 6 and `RESEARCH.md` both flag a transformers
+version conflict between them, which is why they are separate extras. **Checked
+2026-08-24: they resolve together today** — 126 packages, `transformers 5.15.1`,
+`torch 2.13.0`, no conflict reported.
+
+**Resolving is not working.** Neither was installed and neither was run
+together, so this closes nothing; it only records that the resolver no longer
+refuses. They stay separate extras regardless, because 4.7 GB and 5.2 GB in one
+install is not a thing to do by accident.
+
+---
+
+# Table formats
+
+`tokenmill compare --formats` re-encodes a converted table. Every encoder here
+**round-trips losslessly**, proven by property tests over generated tables that
+include embedded delimiters, quotes, backslashes, leading zeros, exponents,
+`true`, empty strings, control characters and emoji.
+
+Cells are strings, and are written as a bare number, boolean or null **exactly
+when that renders back to the identical string**. So `9.99` is a number and
+`05`, `+1` and `1e-6` stay quoted strings. Without that rule JSON and TOON would
+quote what CSV writes bare, and the comparison would flatter CSV by two
+characters per numeric cell.
+
+## `markdown`
+
+**The only lossy encoder here, in two ways, both of them GFM's limits rather
+than ours** — and both documented instead of papered over with a non-standard
+escape that no other tool could read:
+
+- a pipe table is line-oriented, so **a line break inside a cell becomes a
+  space**;
+- **leading and trailing whitespace in a cell is lost**, because cell padding is
+  not content and every Markdown renderer strips it.
+
+Backslashes and pipes are escaped and round-trip exactly. The decoder is
+deliberately more forgiving than the encoder, because it has to read tables
+written by thirteen backends: outer pipes optional, alignment colons ignored,
+prose around the table skipped.
+
+## `csv`
+
+RFC 4180 via the standard library, so quoting, embedded delimiters, embedded
+newlines and doubled quotes are all handled. Emits **LF rather than RFC 4180's
+CRLF**, deliberately: every other encoder here emits LF and the token count is
+taken over the result, so a stray CR per row would be a real and misleading
+difference in the comparison.
+
+**Cheapest format on our fixture (216 bytes, −60% against JSON)** and, per
+`RESEARCH.md`, among the weakest on comprehension in one published test and
+better than JSON in another. Cheapest is not best.
+
+## `json`
+
+A compact array of objects — the shape everything else is compared against,
+because it is what an application already has.
+
+**Cannot carry the columns of an empty table.** An array of objects keeps its
+column names on the objects, so zero rows round-trips to zero columns. Format
+inherent; the alternative is a wrapper object on every table, which would add
+tokens to every row of every comparison to serve a case that carries no data.
+
+## `toon`
+
+**Implemented here rather than wrapped**, against the TOON specification
+(Working Draft 4.1, MIT, `github.com/toon-format/spec`, fetched 2026-08-24).
+Checked on that date:
+
+- `toon-format` 0.1.0 — the package under the format's own GitHub organisation
+  — **is a stub**: `encode()` and `decode()` both raise
+  `NotImplementedError("TOON encoder is not yet implemented")`;
+- `toon-py` 1.0.2 works and round-trips, but emits `users[2,]{...}` where the
+  specification's own example is `users[2]{...}`. §6 makes the delimiter
+  optional and comma the default, so the extra character is legal — and it is a
+  wasted character in every array header of a format whose entire claim is token
+  efficiency.
+
+**Implements:** the tabular form for uniform arrays (§9.3), string quoting and
+escaping (§7.1, §7.2), key encoding (§7.3), LF line endings and two-space
+indentation.
+
+**Refuses, rather than half-reading:** the list form, the keyed tabular form,
+nested field groups, non-comma delimiters, length markers, and strict-mode
+validation. A declared length that disagrees with the row count is an error, not
+something to guess past — it means the document was truncated.
+
+**Conformance to the reference implementation is unverified.** The reference is
+TypeScript and cannot be run here. What *is* verified: round-tripping over
+generated tables, and agreement with the specification's own worked examples.
+
+**240 bytes on our fixture, −56% against JSON.** `RESEARCH.md`'s framing is the
+one to use: the wins are real, narrow (uniform arrays only) and model-dependent,
+and independent work finds accuracy collapsing on non-aligned structures.
+
+## `keyvalue`
+
+One `key: value` line per field, blank-line-separated blocks. **The most
+expensive format on the page (456 bytes, +111% over CSV)** and it is here
+because of that: `RESEARCH.md` records it topping an eleven-format comprehension
+test at ~60.7%, about 16 points ahead of CSV. A comparison that only offered
+formats which win on tokens would be a machine for picking the cheapest one.
+
+## JSON, TOON and key-value refuse columns that cannot be keys
+
+All three key each row by column name, so a table with two columns called the
+same thing, or with unnamed columns, cannot be encoded without silently dropping
+data. They raise instead.
+
+This is not hypothetical: **MarkItDown emits `report.docx`'s table with an
+invented header row of three empty cells**, so the first table a user tries this
+on may well be one of these. `markdown` and `csv` are positional and encode it
+fine.

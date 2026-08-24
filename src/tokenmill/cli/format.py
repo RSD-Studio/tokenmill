@@ -11,10 +11,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from tokenmill.core.compare import BackendComparison, FormatComparison
 from tokenmill.core.models import BackendAttempt, ConversionResult, StageCount, TokenCount
+from tokenmill.fidelity.models import FidelityScore
 
 __all__ = [
+    "format_backend_comparison",
     "format_bytes",
+    "format_fidelity_report",
+    "format_format_comparison",
     "format_result_report",
     "format_stage_table",
     "format_table",
@@ -281,3 +286,219 @@ def format_result_report(result: ConversionResult, *, show_stages: bool) -> str:
         lines.append("")
         lines.extend(f"warning:  {warning}" for warning in result.warnings)
     return "\n".join(lines)
+
+
+def format_score(score: float | None) -> str:
+    """Render one component score.
+
+    Args:
+        score: The fraction, or ``None`` when the component did not apply.
+
+    Returns:
+        The score to three decimal places, or ``n/a``. Never ``0.000`` for a
+        component that was not measured — that is the distinction the whole
+        fidelity package exists to preserve, and it must survive being printed.
+    """
+    return "n/a" if score is None else f"{score:.3f}"
+
+
+def format_fidelity_report(score: FidelityScore) -> str:
+    """Render a fidelity score as a table a person can act on.
+
+    Args:
+        score: The score to render.
+
+    Returns:
+        The report: one row per component with its score, what it counted and
+        one sentence of detail, then the overall and the components it was
+        composed of.
+    """
+    rows = [
+        [
+            component.component,
+            format_score(component.score),
+            ("-" if component.expected is None else f"{component.found}/{component.expected}"),
+            component.detail,
+        ]
+        for component in score.components
+    ]
+    out = [
+        f"fidelity: {score.fixture}" + (f" via {score.backend_id}" if score.backend_id else ""),
+        "",
+        format_table(["component", "score", "count", "detail"], rows),
+        "",
+    ]
+
+    if score.overall is None:
+        out.append(
+            "overall: n/a — this fixture's ground truth supported no component, so "
+            "the text was not assessed. That is not the same as scoring zero."
+        )
+    else:
+        out.append(
+            f"overall: {score.overall:.3f} "
+            f"(unweighted mean of {', '.join(score.scored_components)})"
+        )
+
+    named = [c for c in score.components if c.missing]
+    if named:
+        out.append("")
+        out.append("what is missing:")
+        out.extend(
+            f"  {component.component}: {item}" for component in named for item in component.missing
+        )
+    return "\n".join(out)
+
+
+def _clip(text: str, limit: int) -> str:
+    """Shorten a message for a table cell, saying that it was shortened.
+
+    Args:
+        text: The message.
+        limit: How many characters to keep.
+
+    Returns:
+        The message, with an ellipsis when it was cut. A silently truncated
+        error reads as a badly-worded one.
+    """
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1].rstrip() + "\u2026"
+
+
+def _relative(value: int | None, best: int | None) -> str:
+    """Render one row's size relative to the cheapest.
+
+    Args:
+        value: This row's count.
+        best: The cheapest count.
+
+    Returns:
+        ``base`` for the cheapest row, a percentage above it otherwise, or a
+        dash when either number is missing.
+    """
+    if value is None or best is None or best == 0:
+        return "-"
+    if value == best:
+        return "base"
+    return f"+{(value - best) / best * 100:.0f}%"
+
+
+def format_backend_comparison(comparison: BackendComparison) -> str:
+    """Render a backend comparison as a table.
+
+    Rows stay in the registry's preference order rather than being sorted by
+    size. Sorting by tokens is a leaderboard, and a leaderboard on this data
+    rewards whichever converter destroyed the most — the one that emits nothing
+    wins by a distance. The cheapest and the most faithful are named underneath
+    instead, and when they differ that is said outright.
+
+    Args:
+        comparison: The comparison to render.
+
+    Returns:
+        The report.
+    """
+    cheapest = comparison.cheapest
+    best_tokens = cheapest.tokens.value if cheapest and cheapest.tokens else None
+
+    rows = []
+    for row in comparison.rows:
+        if not row.ok:
+            rows.append([row.backend_id, "failed", "-", "-", "-", _clip(row.error or "", 60)])
+            continue
+        overall = row.fidelity.overall if row.fidelity else None
+        components = (
+            f"{len(row.fidelity.scored_components)} scored"
+            if row.fidelity and row.fidelity.scored_components
+            else "no ground truth"
+        )
+        rows.append(
+            [
+                row.backend_id,
+                format_tokens(row.tokens),
+                _relative(row.tokens.value if row.tokens else None, best_tokens),
+                f"{row.duration_s * 1000:.0f} ms" if row.duration_s is not None else "-",
+                format_score(overall),
+                components,
+            ]
+        )
+
+    out = [
+        f"comparing {comparison.source_name} across {len(comparison.rows)} backend(s)",
+        f"counts in {comparison.tokenizer_id}",
+        "",
+        format_table(["backend", "tokens", "vs best", "time", "fidelity", "components"], rows),
+        "",
+    ]
+
+    best = comparison.most_faithful
+    if cheapest is not None:
+        out.append(f"cheapest:      {cheapest.backend_id} ({format_tokens(cheapest.tokens)})")
+    if best is not None:
+        out.append(
+            f"most faithful: {best.backend_id} "
+            f"({format_score(best.fidelity.overall if best.fidelity else None)})"
+        )
+
+    verdict = comparison.cheapest_is_most_faithful
+    if verdict is None:
+        out.append(
+            "No fidelity ground truth for this input, so this table cannot say what "
+            "any of these savings cost. Pass --against to score against a corpus "
+            "fixture; without it, the cheapest row is only the smallest one."
+        )
+    elif verdict:
+        out.append("The cheapest option is also the most faithful one here.")
+    else:
+        out.append(
+            "The cheapest option is NOT the most faithful one. A token saving "
+            "without a fidelity number is not a result."
+        )
+    return "\n".join(out)
+
+
+def format_format_comparison(comparison: FormatComparison) -> str:
+    """Render a format comparison as a table.
+
+    Args:
+        comparison: The comparison to render.
+
+    Returns:
+        The report.
+    """
+    cheapest = comparison.cheapest
+    best_tokens = cheapest.tokens.value if cheapest and cheapest.tokens else None
+
+    rows = []
+    for row in comparison.rows:
+        if not row.ok:
+            rows.append([row.format_id, "n/a", "-", _clip(row.error or "", 60)])
+            continue
+        rows.append(
+            [
+                row.format_id,
+                format_tokens(row.tokens),
+                _relative(row.tokens.value if row.tokens else None, best_tokens),
+                f"{row.characters:,} characters" if row.characters is not None else "-",
+            ]
+        )
+
+    table = comparison.table
+    out = [
+        f"comparing {len(comparison.rows)} serialisation(s) of a "
+        f"{len(table.rows)}x{len(table.headers)} table from {comparison.source_name}",
+        f"counts in {comparison.tokenizer_id}",
+        "",
+        format_table(["format", "tokens", "vs best", "size"], rows),
+        "",
+    ]
+    if cheapest is not None:
+        out.append(f"cheapest: {cheapest.format_id} ({format_tokens(cheapest.tokens)})")
+    out.append(
+        "Format savings carry accuracy trade-offs and are model-dependent. See "
+        "docs/BENCHMARKS.md; TOON's wins are narrow (uniform arrays) and CSV "
+        "scores among the weakest on comprehension in one published test."
+    )
+    return "\n".join(out)

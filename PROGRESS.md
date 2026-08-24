@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-22 by Claude Code_
+_Last updated: 2026-08-24 by Claude Code_
 
 ## Status at a glance
 
@@ -11,20 +11,35 @@ _Last updated: 2026-08-22 by Claude Code_
 | 2 | Document backends (light tier) | ✅ Complete, merged to `Main` | passed 2026-08-21 |
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
-| 5 | Post-processing, formats, measurement depth | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
-| 6 | Prompt compression (optional tier) | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
+| 5 | Post-processing, formats, measurement depth | ✅ Complete | passed 2026-08-24 (local; CI cannot schedule runners) |
+| 6 | Prompt compression (optional tier) | 🟨 **Implemented; success path unverified** | ⚠️ gate NOT passed — see 2026-08-24 entry |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
 | 8 | GUI (FastAPI + NiceGUI) | ⬜ Not started | — |
 | 9 | Heavy backends (GPU tier, install-docs-only) | ⬜ Not started | — |
-| 10 | Benchmark harness | ⬜ Not started — **the fidelity-scoring slice is pulled forward** ahead of Phase 5, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
+| 10 | Benchmark harness | 🟨 **Fidelity-scoring slice complete** (2026-08-24); the harness itself not started | slice gate passed 2026-08-24 |
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
-## Current phase: 4 — Repository backends (complete)
+## Re-evaluation: `docs/REVIEW_PHASES_0_6.md`
 
-Phases 3 and 4 are both complete and verified locally; CI has not run since
-2026-08-22 08:50 UTC. `docs/REVIEW_PHASES_0_4.md` re-evaluates everything built
-so far and recommends starting Phase 5.
+Written at the end of this session, superseding `docs/REVIEW_PHASES_0_4.md`
+(which stays in the repository — its defect numbering is referenced everywhere,
+and a superseded review that disappears is one nobody can check). It carries the
+whole-corpus table with tokens beside fidelity, the status of every defect from
+the previous list, eight new ones, and a recommendation **against starting
+Phase 7 yet**.
+
+## Current phase: the Phase 10 fidelity slice (complete), then 5, then 6
+
+Phases 3 and 4 are merged into `Main` (PRs #11 and #13). The fidelity-scoring
+slice of Phase 10 was built first, ahead of Phase 5, on the owner's instruction
+and for the reason `docs/REVIEW_PHASES_0_4.md` §8 gives: Phase 5's
+post-processors can each be measured as a win in tokens and a loss in fidelity,
+and without a fidelity metric its defaults would be argued rather than measured.
+
+**CI has still never scheduled a runner since run 24.** Re-checked at the start
+of this session — see the verification log entry for 2026-08-24. Everything
+below is local green, which is not the same claim.
 
 ## Previous phase: 2 — Document backends (complete)
 
@@ -1620,6 +1635,626 @@ Everything in Phases 3 and 4 is therefore **local green only**. Nothing is prove
 on Windows, on macOS, on Python 3.12 or 3.13, or against a real tokenizer
 vocabulary. Recorded as such throughout; see the review's §2.
 
+### 2026-08-24 — Start-of-session probes: CI, blocked hosts, dependency weights
+
+Run before any code was written, because three of the four answers change what
+the work should be.
+
+**CI is still dead, and it is the same failure.** Run 65 fired today on `Main`:
+
+```
+run 65  CI  completed  failure  Main  619a25c0  push  2026-08-24T06:14:33Z
+  24 jobs created, correct expanded matrix names
+  "Docling (weekly and on demand)"  ->  skipped   (its `if:` evaluated correctly)
+  every other job: conclusion=failure, runner_id=0, runner_name="", no steps
+  e.g. "Clean core install (py3.12 / ubuntu-latest)"
+       created_at 06:14:33  started_at 06:14:33  completed_at 06:15:36
+       runner_id: 0, runner_name: ""
+```
+
+That is the signature `docs/REVIEW_PHASES_0_4.md` recorded for runs 25-28,
+unchanged, now spanning **runs 25 through 65 and more than two days**. The
+workflow parses, the matrix expands, expressions evaluate; no runner is ever
+assigned. Still consistent with exhausted Actions minutes or a spending limit,
+and still only the owner can see that page. **Open question 1 stands.**
+
+**Blocked hosts: all three still denied at the proxy.**
+
+```
+openaipublic.blob.core.windows.net   curl: (56) CONNECT tunnel failed, response 403
+huggingface.co                       curl: (56) CONNECT tunnel failed, response 403
+download.pytorch.org                 curl: (56) CONNECT tunnel failed, response 403
+pypi.org                             200
+```
+
+So: no real BPE token count in this sandbox, no model download for Phase 6, and
+no way to test whether the CPU-only PyTorch wheel index avoids the CUDA stack.
+
+**Dependency weights, measured rather than restated from the handover.**
+
+```
+$ uv pip install --dry-run "tokenmill@." chonkie
+  40 packages  ->  50 packages
+  chonkie==1.7.0  chonkie-core==0.10.2  tokie==0.1.4  numpy==2.4.6  httpx==0.28.1
+
+$ du -sm .../lib
+  core            126 MB   40 packages
+  core + chonkie  196 MB   50 packages
+```
+
+Chonkie costs **+10 packages and +70 MB** on top of core, mostly numpy. The
+handover's standalone figure of 13 packages / 72 MB is consistent with this.
+
+```
+$ uv pip install --dry-run llmlingua
+  63 packages, including:
+  torch==2.13.0  triton==3.7.1  transformers==5.15.1
+  nvidia-cublas  nvidia-cuda-cupti  nvidia-cuda-nvrtc  nvidia-cuda-runtime
+  nvidia-cudnn-cu13  nvidia-cufft  nvidia-cufile  nvidia-curand
+  nvidia-cusolver  nvidia-cusparse  nvidia-cusparselt-cu13  nvidia-nccl-cu13
+  nvidia-nvjitlink  nvidia-nvshmem-cu13  nvidia-nvtx
+```
+
+**The handover's §6 trap 2 is confirmed independently**: `llmlingua` pulls the
+entire CUDA stack. Not downloaded — 4.7 GB against a fixed disk allowance, and
+the resolution is the fact that matters. The plan calling LLMLingua-2
+"CPU-feasible" is true of *running* it and not of *installing* it.
+
+**Baseline before any change:** `824 passed, 53 skipped`. Four fewer passes than
+the 828 the review recorded, and the reason is environmental rather than a
+regression: this container has no `crawl4ai`, `repomix` or `code2prompt`, so
+four tests that ran there skip here.
+
+### 2026-08-24 — Correction: I did add to the process-global-state count
+
+Recorded here rather than by editing the commit message it corrects.
+
+The Phase 6 commit (`b890ef8`) says the compressor *"adds nothing to the five
+pieces of process-global state ARCHITECTURE.md already records"*. That is true
+of the thing the sentence was about — no environment variable is set, because
+`local_files_only` rides in llmlingua's `model_config` rather than
+`HF_HUB_OFFLINE` — and **read plainly it overstates**.
+
+`post/compress.py` uses `warnings.catch_warnings` to keep transformers'
+import-time noise non-fatal under `-W error`. That is a **fourth** use of
+`catch_warnings`, where `docs/REVIEW_PHASES_0_4.md` §4 counted three:
+
+```
+$ grep -rn 'catch_warnings\|os.environ\|loguru' src/tokenmill/ --include='*.py'
+src/tokenmill/backends/_common.py                    catch_warnings
+src/tokenmill/backends/documents/docling_adapter.py  catch_warnings
+src/tokenmill/backends/repo/gitingest_repo.py        catch_warnings
+src/tokenmill/post/compress.py                       catch_warnings   <- added
+src/tokenmill/backends/repo/gitingest_repo.py        os.environ, root logger, loguru
+src/tokenmill/backends/_subprocess.py                os.environ
+src/tokenmill/core/config.py                         os.environ
+```
+
+The **kinds** of global state are unchanged, and the new use only executes when
+compression runs — off by default, behind an extra. But the count went up, the
+handover asked to be told before a sixth was added, and "I avoided the obvious
+one" is not the same as "I added none". Defect D2 stays open and this is part of
+its trajectory.
+
+### 2026-08-24 — Phase 6: implemented, and what is and is not verified
+
+**The headline, stated first so nobody has to look for it: the success path of
+the compressor has never been executed, here or anywhere.** The LLMLingua-2
+model lives on `huggingface.co`, denied at this environment's egress proxy
+(re-probed at the start of this session, still `403`). No compression has been
+performed by this code and **no ratio has ever been produced by it**. The owner
+chose this option — implement fully, mark the success path unverified — over
+implementing less.
+
+**Acceptance criteria, honestly:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Achieves a measurable ratio on `long_context.md` and reports it accurately | ❌ **NOT VERIFIED — not verifiable here.** Needs the model. The reporting path is tested against a stub; the ratio itself has never existed |
+| 2 | First-run download explicit, resumable, skippable; nothing downloads silently at import | ✅ **Verified**, in three parts: nothing downloads without `--allow-network` (tested); the refusal names the size, cache path and command (tested); loading all eight post-processors imports **zero** third-party modules (checked in a clean interpreter) |
+| 3 | Fully offline once cached | ⚠️ **Partly.** The mechanism is `local_files_only`, and a test proves a cached model loads with it set and an uncached one refuses. **There is no cache here to demonstrate it against**, so the end-to-end claim is unverified |
+| 4 | *(gate)* Ratio verified against direct token counts | ❌ **NOT VERIFIED.** Same cause |
+| 5 | *(gate)* Offline-after-cache proven | ❌ **NOT PROVEN.** Same cause |
+
+**Phase 6's exit gate is therefore not passed**, and the phase table says
+🟨 rather than ✅. What exists is a complete implementation whose failure paths
+are tested and whose success path is waiting on a host this environment cannot
+reach.
+
+**What *was* verified, and how.**
+
+Licence, from the wheel's own metadata rather than from `RESEARCH.md`. The
+package was deliberately not installed — see the install cost below — so the
+artefact's own `METADATA` and bundled `LICENSE` are the source:
+
+```
+$ python -m pip download --no-deps llmlingua -d .
+llmlingua-0.2.2-py3-none-any.whl   (30 KB)
+
+Name: llmlingua
+Version: 0.2.2
+License: MIT License
+Home-page: https://github.com/microsoft/LLMLingua
+Requires-Dist: transformers >=4.26.0, accelerate, torch, tiktoken, nltk, numpy
+
+llmlingua-0.2.2.dist-info/LICENSE:
+    MIT License
+    Copyright (c) Microsoft Corporation.
+```
+
+The install cost, confirming the handover's §6 trap 2 independently:
+
+```
+$ uv pip install --dry-run llmlingua
+Resolved 63 packages, including:
+  torch==2.13.0  triton==3.7.1  transformers==5.15.1
+  nvidia-cublas  nvidia-cuda-cupti  nvidia-cuda-nvrtc  nvidia-cuda-runtime
+  nvidia-cudnn-cu13  nvidia-cufft  nvidia-cufile  nvidia-curand
+  nvidia-cusolver  nvidia-cusparse  nvidia-cusparselt-cu13  nvidia-nccl-cu13
+  nvidia-nvjitlink  nvidia-nvshmem-cu13  nvidia-nvtx
+```
+
+**The CPU-only install is documented and unverified.**
+`download.pytorch.org` is denied here too, so whether
+`--index-url https://download.pytorch.org/whl/cpu` avoids the CUDA stack could
+not be tested. It is recorded in `docs/BACKENDS.md` as the recommendation, marked
+unverified.
+
+The refusal path, run:
+
+```
+$ tokenmill convert tests/fixtures/long_context.md --compress-ratio 0.5 --tokenizer bytes
+error: prompt compression needs LLMLingua, which is not installed
+hint:  install it with `pip install "tokenmill[compress]"` — note that it
+       resolves to 63 packages including PyTorch and the CUDA stack; see
+       docs/BACKENDS.md for the CPU-only install
+```
+
+The import-time guarantee, in a clean interpreter:
+
+```
+$ python -c "import tokenmill; from tokenmill.post.base import default_post_registry; \
+             default_post_registry().ids(); ..."
+post-processors loaded: ('strip_frontmatter', 'normalize_whitespace',
+  'aggressive_whitespace', 'links', 'dedupe_blocks', 'normalize_headings',
+  'chunk', 'compress')
+heavy modules imported as a side effect: NONE
+third-party modules after loading every post-processor: []
+```
+
+**Three design decisions worth the owner's eye.**
+
+**No sixth piece of process-global state.** The obvious way to force
+`transformers` to load from cache only is `HF_HUB_OFFLINE=1`. That would have
+been a sixth global — on top of the five `docs/ARCHITECTURE.md` records, whose
+*trajectory* is defect D2 — for the duration of a conversion. llmlingua passes
+`model_config` straight through to `from_pretrained`, so `local_files_only`
+rides in the call instead. A test asserts `os.environ` is unchanged across a
+compression. **The handover asked to be told before a sixth was added; none
+was.**
+
+**`trust_remote_code` is off, against llmlingua's default of on.** Reading its
+source out of the wheel showed `trust_remote_code = model_config.get(...,
+True)` — so by default a model repository can execute arbitrary code when the
+model loads. LLMLingua-2's own models are token classifiers that need nothing of
+the kind.
+
+**No bespoke ratio number.** The handover asked for the retention indicator to
+be the fidelity score rather than something new. It also turns out the
+*achieved ratio* needs nothing new either: the pipeline already measures the
+`compress` stage, so `--show-stages` reports it. Two numbers that already exist,
+zero invented.
+
+**A gap this exposed.** `PostProcessor.process(text, options) -> str` is the
+whole contract — a post-processor has **no channel for warnings or metadata**,
+unlike a backend with its `ConversionContext`. So the compressor logs instead of
+warning, and cannot attach its own ratio to the result. Phase 8's GUI will want
+this. Recorded under Deferred work.
+
+**Selective Context: deferred, with the reason measured.**
+
+```
+$ uv pip install --dry-run "tokenmill@." selective-context
+Resolved 106 packages in 501ms
+ + selective-context==0.1.3      <- not 0.1.4
+ + click==8.4.2
+ + spacy==3.8.15
+```
+
+Its current release (0.1.4) pins `click==8.0.4`, which conflicts with the CLI's
+click, so the resolver silently backs down to **0.1.3**. It also brings spacy and
+needs its own model download, and its happy path is exactly as unrunnable here as
+LLMLingua-2's. The plan lists it as optional; adding it would have doubled the
+unverified surface for no verifiable gain.
+
+**`compress` and `docling` resolve together — which closes nothing.**
+
+```
+$ uv pip install --dry-run llmlingua docling
+Resolved 126 packages, transformers==5.15.1, torch==2.13.0
+```
+
+`DEVELOPMENT_PLAN.md` and `RESEARCH.md` both flag a transformers conflict between
+them. Today's resolver finds a solution. **Neither was installed and they were
+never run together**, so this records only that the resolver no longer refuses.
+They stay separate extras regardless: 4.7 GB and 5.2 GB in one install is not
+something to do by accident.
+
+**Toolchain, all green:**
+
+```
+$ uv run ruff check .                     All checks passed!
+$ uv run ruff format --check .            123 files already formatted
+$ uv run mypy                             Success: no issues found in 103 source files
+$ uv run pytest -q                        1073 passed, 53 skipped
+$ uv run python scripts/make_fixtures.py --check
+                                          OK: 24 files reproduced byte-for-byte
+```
+
+### 2026-08-24 — Phase 5 exit gate
+
+**Acceptance criteria, one by one.**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Per-stage report arithmetically consistent, matching direct counts on each intermediate | ✅ **Observed.** Every stage's `tokens` equals a direct count of that stage's text; the web decomposition below adds two intermediate rows and the arithmetic still closes |
+| 2 | TOON/CSV encoders round-trip tabular data losslessly, property-based | ✅ **Observed.** `hypothesis`, 200 examples per format over cells including embedded delimiters, quotes, backslashes, `05`, `1e-6`, `true`, empty strings, control characters and emoji. **It found seven real bugs** — see below |
+| 3 | Every destructive post-processor declares it and is absent from the default chain, asserted for the whole registry | ✅ **Observed.** `TestTheDestructiveContract`; the default chain is still exactly `normalize_whitespace` with six processors registered |
+| 4 | Docs honest: structure-preserving beats maximal stripping, format savings carry trade-offs, cited, conservative defaults | ✅ `docs/BENCHMARKS.md` "Serialisation formats" and "Post-processing", with `RESEARCH.md` Category 7 sources and the three reasons our numbers are not confirmation of theirs |
+| 5 | *(gate)* `compare` correct against manual counts | ✅ **Verified by hand** — see below |
+| 6 | *(gate)* Round-trip property tests pass | ✅ 53 tests in `test_formats.py` |
+| 7 | *(gate)* Every new post-processor scored by the fidelity metric and published | ✅ `docs/BENCHMARKS.md`, table of seven processors with bytes and fidelity |
+
+**`compare` verified against `wc -c`.** Every number the command printed equals
+the byte length of the file it wrote:
+
+```
+$ tokenmill compare tests/fixtures/tables.pdf --tokenizer bytes \
+      --formats markdown,csv,toon,json,keyvalue --write ./variants
+
+backend     tokens  vs best  time    fidelity
+pdfplumber  599     +29%     102 ms  0.667
+kreuzberg   466     base     31 ms   0.500
+markitdown  769     +65%     844 ms  0.606
+pypdf       481     +3%      60 ms   0.333
+
+format    tokens  vs best  size
+markdown  332     +54%     332 characters
+csv       216     base     216 characters
+toon      240     +11%     240 characters
+json      543     +151%    543 characters
+keyvalue  456     +111%    456 characters
+
+$ for f in variants/*; do printf '%-18s %6d\n' "$(basename $f)" "$(wc -c < $f)"; done
+kreuzberg.md          466
+markitdown.md         769
+pdfplumber.md         599
+pypdf.md              481
+table.csv             216
+table.json            543
+table.keyvalue        456
+table.markdown        332
+table.toon            240
+```
+
+Nine for nine. `test_the_written_variants_match_the_reported_counts` asserts it
+so it stays true.
+
+**The result the command exists to produce:**
+
+```
+cheapest:      kreuzberg (466)
+most faithful: pdfplumber (0.667)
+The cheapest option is NOT the most faithful one. A token saving without a
+fidelity number is not a result.
+```
+
+Kreuzberg is 22% cheaper than pdfplumber on `tables.pdf` **because it destroys
+the table**. Sorted by tokens, this table recommends the wrong backend; that is
+why rows stay in preference order and why the verdict line exists.
+
+**Sandbox verification from `DEVELOPMENT_PLAN.md` §Phase 5**, translated from
+`tokenfold` to `tokenmill`:
+
+```
+$ tokenmill convert tests/fixtures/tables.pdf --format toon --show-stages
+Usage: tokenmill convert [OPTIONS] TARGET
+Error: Invalid value for '--format' / '-f': 'toon' is not one of 'markdown', 'text'.
+```
+
+**This one is a deliberate deviation from the plan and needs the owner's eye.**
+The plan's snippet assumes TOON is a whole-document output format. It is not,
+and cannot honestly be: TOON encodes the JSON data model, and a prose document
+is not that. The encoders re-serialise a **table**, which is the only shape
+`RESEARCH.md` Category 7's evidence is about. `OutputFormat` therefore still has
+two members and the equivalent command is:
+
+```
+$ tokenmill compare tests/fixtures/data.xlsx --formats markdown,csv,toon,json \
+      --backends markitdown --tokenizer bytes
+
+comparing 4 serialisation(s) of a 6x5 table from data.xlsx via markitdown
+counts in bytes
+
+format    tokens  vs best  size
+--------  ------  -------  --------------
+markdown  332     +54%     332 characters
+csv       216     base     216 characters
+toon      240     +11%     240 characters
+json      543     +151%    543 characters
+
+cheapest: csv (216)
+```
+
+```
+$ tokenmill compare tests/fixtures/report.docx --backends markitdown,docling,kreuzberg --tokenizer bytes
+
+backend     tokens  vs best  time     fidelity  components
+----------  ------  -------  -------  --------  --------------------------------
+markitdown  3,494   +1%      1040 ms  0.841     4 scored
+docling     failed  -        -        -         missing dependency: docling…
+kreuzberg   3,472   base     20 ms    0.614     4 scored
+
+cheapest:      kreuzberg (3,472)
+most faithful: markitdown (0.841)
+The cheapest option is NOT the most faithful one.
+```
+
+```
+$ pytest -q tests/unit/test_formats.py tests/unit/test_post.py \
+      tests/unit/test_post_phase5.py tests/unit/test_chunk.py tests/unit/test_compare.py
+173 passed in 6.99s
+```
+
+**Defect D8 closed.** A backend can now hand an intermediate text to the
+pipeline, which measures it. A web conversion decomposes:
+
+```
+stage                 chars   tokens  change
+--------------------  ------  ------  ------
+source                12,472  12,481  -
+visible_text          4,902   4,911   -60.7%
+convert               2,859   2,859   -41.8%
+normalize_whitespace  2,854   2,854   -0.2%
+```
+
+and a truncated repository pack shows what the budget removed:
+
+```
+stage                 chars  tokens  change
+packed                2,881  2,963   -
+convert               924    1,006   -66.0%
+normalize_whitespace  917    999     -0.7%
+```
+
+This does not breach "backends do not measure": the backend hands over text and
+the pipeline does every count. A backend stage also cannot become
+`tokens_before` — that stays the source stage or nothing — and a test asserts it.
+
+**Defect D9 closed.** `convert --json` now carries `counts` and
+`is_model_tokenizer`, so a consumer reading `"tokenizer": "bytes"` has a
+machine-readable signal that these are not model tokens. The `web` object is
+**absent** rather than `null` for a non-web conversion, under a written rule:
+`null` means "applies here, no value", an absent key means "does not apply".
+This changes `convert --json`'s shape for a document, and the test that asserted
+the old behaviour was updated rather than deleted.
+
+**hypothesis, used for the first time since Phase 0 declared it, found seven
+real bugs** — all in code that passed every example test I had written:
+
+1. `str.splitlines()` also breaks on U+0085, U+2028, U+2029, `\x0b` and `\x0c`,
+   so a cell containing any of them was torn across rows. Every decoder now
+   splits on LF only.
+2. `str.strip()` treats U+0085 as whitespace, so a TOON cell consisting of one
+   vanished when the decoder trimmed its line. TOON now quotes anything Python
+   considers edge-whitespace, which is more than §7.2 requires and less than
+   losing a cell.
+3. A quoted key containing a colon — a column literally named `:` — broke
+   key-value's line partitioning, producing a key of `"`.
+4. Key-value could not tell a table with no rows from one row of empty cells;
+   both decoded through the same path.
+5. Markdown's decoder stripped cells, so a cell of `" "` came back as `""`.
+   Documented as one of GFM's two inherent losses rather than fixed.
+6. Markdown cannot carry a line break in a cell — the other inherent loss.
+7. JSON's array-of-objects shape cannot carry the columns of an empty table.
+
+The last three are format-inherent and are documented on the encoders; the first
+four were fixed.
+
+**Two bugs came from reading output rather than from tests**, which is the
+pattern `docs/REVIEW_PHASES_0_4.md` §9 predicted:
+
+- `normalize_headings` read `draft: false` as a setext heading, because a YAML
+  block's closing `---` is indistinguishable from a setext underline. Front
+  matter is now passed through untouched.
+- Closing up skipped levels by remapping the distinct levels used is wrong. On a
+  document going `##`, `####`, `###` it emits `#`, `###`, `##` — still a skip.
+  It now walks the ancestor chain and emits `#`, `##`, `##`.
+
+**Toolchain, all green:**
+
+```
+$ uv run ruff check .                     All checks passed!
+$ uv run ruff format --check .            123 files already formatted
+$ uv run mypy                             Success: no issues found in 101 source files
+$ uv run pytest -q                        1047 passed, 53 skipped
+$ uv run python scripts/make_fixtures.py --check
+                                          OK: 24 files reproduced byte-for-byte
+```
+
+1,047 up from the 898 at the end of the fidelity slice: **149 new tests**,
+nothing broken.
+
+### 2026-08-24 — Phase 10 fidelity slice: exit gate
+
+**What it is.** `src/tokenmill/fidelity/` — a scorer that takes converted text
+and a fixture's ground truth and returns six named components plus an
+unweighted overall that names what composed it. Not the Phase 10 harness: no
+corpus matrix runner, no wall time, no peak memory, no committed result files.
+
+**Acceptance criteria, one by one.**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | markdownify on `boilerplate.html`: high content and heading recall, near-zero boilerplate rejection | ✅ **Measured.** content 1.000, headings 1.000, boilerplate rejection **0.000** |
+| 2 | trafilatura on the same: high recall, boilerplate rejection 1.0 | ✅ **Measured.** content 1.000, headings 1.000, rejection **1.000** |
+| 3 | kreuzberg's table integrity on `tables.pdf` well below pdfplumber's | ✅ **Measured.** **0.000 vs 1.000** |
+| 4 | An empty string scores near zero on everything | ✅ **Measured**, and it needed an explicit rule — see Decisions |
+| 5 | A component with no ground truth returns `None`; the overall says what it is made of | ✅ Both, at the API, the CLI and in `--json` |
+| 6 | *(gate)* A backend × fixture table in `docs/BENCHMARKS.md` beside the token figures | ✅ Written, 38 rows |
+
+**The result the slice exists for.** Run over the whole corpus:
+
+```
+fixture             backend             bytes    change   fidelity
+jsrendered.html     trafilatura         140      -90.7%   0.000
+jsrendered.html     markitdown          140      -90.7%   0.000
+jsrendered.html     markdownify_html    165      -89.1%   0.000
+jsrendered.html     readability         167      -89.0%   0.000
+jsrendered.html     kreuzberg           180      -88.1%   0.000
+boilerplate.html    trafilatura         2854     -77.1%   1.000
+boilerplate.html    readability         2864     -77.1%   1.000
+boilerplate.html    kreuzberg           6120     -51.0%   0.750
+boilerplate.html    markitdown          6713     -46.2%   0.750
+boilerplate.html    markdownify_html    6802     -45.5%   0.750
+```
+
+**The largest reduction in the corpus is now paired with the worst fidelity in
+the corpus.** Defect D1 added a warning for this last phase; a warning is not a
+number, and `docs/BENCHMARKS.md` is made of numbers.
+
+**The full matrix**, every installed backend against every fixture it claims,
+`--tokenizer bytes`, output read:
+
+```
+article.html       trafilatura        2854     -19.8%   1.000
+article.html       readability        2864     -19.6%   1.000
+article.html       markdownify_html   2916     -18.1%   1.000
+article.html       markitdown         2864     -19.6%   1.000
+article.html       kreuzberg          3063     -14.0%   1.000
+corrupt.pdf        pdfplumber         FAIL              could not be parsed: Pdfmine...
+corrupt.pdf        kreuzberg          FAIL              could not be parsed: Parsing...
+corrupt.pdf        markitdown         FAIL              could not be parsed: FileCon...
+corrupt.pdf        pypdf              FAIL              could not be parsed: PdfStre...
+data.xlsx          markitdown         675               0.667
+data.xlsx          kreuzberg          664               1.000
+deck.pptx          markitdown         753               1.000
+deck.pptx          kreuzberg          398               1.000
+long_context.md    plaintext          79255    +0.0%    n/a
+report.docx        markitdown         3494              0.841
+report.docx        kreuzberg          3472              0.614
+sample_repo        gitingest          2944              1.000
+sample_repo        repomix            FAIL              repomix is not installed...
+scanned.pdf        pdfplumber         0                 0.000
+scanned.pdf        kreuzberg          0                 0.000
+scanned.pdf        markitdown         0                 0.000
+scanned.pdf        pypdf              0                 0.000
+simple.pdf         pdfplumber         2370              0.500
+simple.pdf         kreuzberg          2371              0.900
+simple.pdf         markitdown         2377              0.500
+simple.pdf         pypdf              2371              0.500
+tables.pdf         pdfplumber         599               0.667
+tables.pdf         kreuzberg          466               0.500
+tables.pdf         markitdown         769               0.606
+tables.pdf         pypdf              481               0.333
+twocolumn.pdf      pdfplumber         4050              0.528
+twocolumn.pdf      kreuzberg          4061              0.667
+twocolumn.pdf      markitdown         4062              0.528
+twocolumn.pdf      pypdf              4050              0.667
+unicode.docx       markitdown         1312              0.955
+unicode.docx       kreuzberg          1314              1.000
+```
+
+**Eight claims in `docs/BACKENDS.md` are now numbers rather than sentences.**
+Kreuzberg flattening `tables.pdf` reads 0.00 against pdfplumber's 1.00;
+pdfplumber interleaving two-column pages reads 0.58 against pypdf's 1.00;
+kreuzberg inferring PDF headings reads 0.80 on `simple.pdf` where every other
+backend reads 0.00; kreuzberg dropping DOCX lists reads structure retention
+0.00 against markitdown's 1.00.
+
+**Two things the score found that were not in `BACKENDS.md`:**
+
+- MarkItDown emits `report.docx`'s table with an **invented blank header row**
+  and the real header demoted to a body row:
+
+  ```
+  |  |  |  |
+  | --- | --- | --- |
+  | Stage | Tokens | Delta |
+  | source | 16180 | - |
+  ```
+
+  Found because the first version of the scorer counted 15 cells where ground
+  truth expects 12 and capped the score at 1.0. Blank cells are now excluded
+  from recovery, so it reads 12 of 12 real cells — the defect is in the shape,
+  not in the data.
+- **MarkItDown recovers 2 of 3 required passages from `data.xlsx`** (content
+  recall 0.667) where kreuzberg recovers all three.
+
+**The CLI, run end to end:**
+
+```
+$ tokenmill convert tests/fixtures/boilerplate.html --backend trafilatura -q |
+      tokenmill fidelity - --against boilerplate.html --backend trafilatura
+
+fidelity: boilerplate.html via trafilatura
+
+component              score  count  detail
+---------------------  -----  -----  -------------------------------------------
+heading_recall         1.000  6/6    6 of 6 headings recovered as headings
+content_recall         1.000  3/3    3 of 3 required passages present
+table_integrity        1.000  35/35  35 of 35 expected cells came back inside 1
+                                     parsed table(s); ground truth records no
+                                     cell values, so this is a shape check
+structure_retention    n/a    -      this fixture's ground truth names no list
+                                     items, links or code fences
+boilerplate_rejection  1.000  6/6    6 of 6 markers that must be absent are absent
+reading_order          n/a    -      this fixture's ground truth carries no
+                                     order sentinels
+
+overall: 1.000 (unweighted mean of heading_recall, content_recall,
+                table_integrity, boilerplate_rejection)
+```
+
+```
+$ echo hi | tokenmill fidelity - --against nope.pdf
+error: no ground truth for 'nope.pdf'
+hint:  known fixtures: article.html, boilerplate.html, corrupt.pdf, data.xlsx,
+       deck.pptx, jsrendered.html, long_context.md, report.docx, sample_repo/,
+       scanned.pdf, simple.pdf, tables.pdf, twocolumn.pdf, unicode.docx
+exit=1
+```
+
+**Corpus changes.** Two fixtures gained scorable ground truth, added to
+`scripts/make_fixtures.py` and regenerated — never hand-edited. **No fixture
+bytes changed**; only `ground_truth.json` differs:
+
+```
+$ uv run python scripts/make_fixtures.py && git status --short tests/fixtures/
+ M tests/fixtures/ground_truth.json
+
+$ uv run python scripts/make_fixtures.py --check
+OK: 23 files reproduced byte-for-byte
+```
+
+(`generate` prints `Done: 24 files` because it counts the deliberately
+uncommitted `secrets.env`; `--check` compares the 23 committed ones. Both
+pre-existing, and the code says so.)
+
+**Toolchain, all green:**
+
+```
+$ uv run ruff check .                          All checks passed!
+$ uv run ruff format --check .                 102 files already formatted
+$ uv run mypy                                  Success: no issues found in 83 source files
+$ uv run pytest -q                             898 passed, 53 skipped in 43.75s
+$ uv run pytest --cov (core+tokens)            95%   (gate: 85%)
+$ uv run python scripts/make_fixtures.py --check
+                                               OK: 23 files reproduced byte-for-byte
+```
+
+898 up from the 824 baseline: **74 new tests**, nothing broken.
+
 ### 2026-08-22 — Phase 4 exit gate
 
 From a venv synced with `--extra dev --extra fixtures --extra documents --extra
@@ -1914,7 +2549,7 @@ to overstate:
 | gitingest | repo | MIT **(verified 0.3.1)** | repo | ✅ | ✅ | The default for a repository: needs no external runtime. **Reconfigures the host's stdlib logging on import**; the adapter undoes it |
 | repomix | repo | MIT **(verified 1.18.0)** | subprocess | ✅ | ✅ | The most complete pack (8 files vs 7). Needs Node; `npx` downloads it per run, so it requires `--allow-network` without a local install |
 | code2prompt | repo | MIT **(verified 4.3.0)** | subprocess | ✅ | ✅ | **Fastest: 103 ms vs 564 and 1,082.** No wheel — `cargo install` compiles it |
-| llmlingua2 | compress | MIT | compress | ❌ | ❌ | Phase 6; off by default |
+| llmlingua2 | compress | MIT **(verified 0.2.2, from the wheel's METADATA and bundled LICENSE)** | compress | ✅ | ⚠️ | Phase 6, off by default. **Success path never run anywhere** — needs `huggingface.co`. Refusal, error, import-time and arithmetic paths tested. 63 packages / ~4.7 GB including the CUDA stack |
 | pymupdf4llm | documents | **AGPL-3.0** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | pandoc | documents | **GPL-2.0+** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | libreoffice | documents | MPL-2.0 | isolated | ❌ | ❌ | Phase 7; subprocess |
@@ -1922,10 +2557,36 @@ to overstate:
 
 ### Post-processors
 
-| Id | Destructive | In default chain | Order | Wired | Tested |
+| Id | Destructive | In default chain | Order | Wired | Tested | Measured on `structured.md` |
+|---|---|---|---|---|---|---|
+| `strip_frontmatter` | yes | no (opt-in) | 50 | ✅ | ✅ | −5.9%, fidelity 1.000 |
+| `normalize_whitespace` | **no** | **yes** | 100 | ✅ | ✅ | −0.2%, fidelity 1.000 |
+| `aggressive_whitespace` | yes | no (opt-in) | 150 | ✅ | ✅ | −0.3%, fidelity 1.000 |
+| `links` | yes | no (opt-in) | 200 | ✅ | ✅ | −5.4% strip / **+0.5% reference**, fidelity 0.955 |
+| `dedupe_blocks` | yes | no (opt-in) | 250 | ✅ | ✅ | **−11.4%, fidelity 1.000** |
+| `normalize_headings` | yes | no (opt-in) | 400 | ✅ | ✅ | −0.3%, **fidelity 0.750** |
+| `chunk` | yes¹ | no (opt-in) | 700 | ✅ | ✅ | **+1.8%** on `long_context.md` |
+| `compress` | yes | no (opt-in) | 900 | ✅ | ⚠️² | **never run — no ratio exists** |
+
+¹ `chunk` loses nothing; it is flagged so it stays out of the default chain. See
+Decisions and Open question 2.
+
+² `compress`'s refusal, error, import-time and arithmetic paths are tested; its
+success path has never been executed anywhere, because the model host is denied
+at this environment's egress proxy.
+
+**The default chain is exactly `normalize_whitespace`**, and that is asserted
+over the whole registry rather than per processor.
+
+### Table formats
+
+| Id | Licence | Lossless | Wired | Tested | `tables.pdf` (bytes) |
 |---|---|---|---|---|---|
-| `normalize_whitespace` | no | yes | 100 | ✅ | ✅ |
-| `links` | yes | no (opt-in) | 200 | ✅ | ✅ |
+| `csv` | ours (stdlib `csv`) | ✅ | ✅ | ✅ | **216** |
+| `toon` | ours, per spec 4.1 (MIT) | ✅ | ✅ | ✅ | 240 |
+| `markdown` | ours | ⚠️ two GFM-inherent losses | ✅ | ✅ | 332 |
+| `keyvalue` | ours | ✅ | ✅ | ✅ | 456 |
+| `json` | ours (stdlib `json`) | ⚠️ empty table loses columns | ✅ | ✅ | 543 |
 
 ### Tokenizers
 
@@ -1936,6 +2597,179 @@ to overstate:
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
+
+### Phase 5 (2026-08-24)
+
+- **The format encoders re-serialise a table, not a whole document.** The plan's
+  verification snippet says `convert tables.pdf --format toon`, and that command
+  is deliberately not implemented. TOON encodes the JSON data model; a prose
+  document is not that, and a whole-document TOON would be a shape nobody can
+  read. `OutputFormat` still has two members. **Flagged for the owner** as a
+  departure from the plan's wording, though not from its intent —
+  `RESEARCH.md` Category 7's evidence is entirely about tabular data.
+
+- **TOON is implemented here rather than wrapped**, which is a departure from
+  "wrap best-in-class OSS tools" and needs its reasons on the record. All three
+  were checked on the day, not read out of `RESEARCH.md`:
+
+  1. `toon-format` 0.1.0 — the package under the format's own GitHub
+     organisation, shipping `py.typed` and a complete API surface — **is a
+     stub**. Both entry points raise
+     `NotImplementedError("TOON encoder is not yet implemented")`.
+  2. `toon-py` 1.0.2 works and round-trips, but emits `users[2,]{...}` where the
+     specification's own example is `users[2]{...}`. §6 makes the delimiter
+     optional and comma the default, so the extra character is legal — and a
+     wasted character in every array header of a format whose entire claim is
+     token efficiency is the wrong thing to inherit.
+  3. Lossless round-tripping is the acceptance criterion, and it can only be
+     guaranteed for an encoder and decoder written as a pair.
+
+  Also worth recording: **TOON is on PyPI more than twice.** `toon` 0.15.9 is an
+  unrelated project (it needs numpy and psutil), `pytoon` is a lip-sync library,
+  and `toon-py`, `python-toon` and `toon-encoder` are three separate
+  third-party ports. The handover said "twice"; it is worse than that.
+
+  Conformance to the TypeScript reference is **unverified** — it cannot be run
+  here. What is verified: round-tripping under property tests, and agreement
+  with the specification's own worked examples.
+
+- **Cells are strings, and a cell is written as a bare number only when that
+  renders back to the identical string.** The obvious alternative — always
+  strings — is exactly lossless and would have **rigged the comparison**: JSON
+  and TOON would quote every number that CSV writes bare, and CSV would win by
+  two characters per numeric cell that no real application spends. The other
+  alternative — type inference — is not lossless: `05` returns as `5` and
+  `1e-6` as `1e-06`. The rule adopted is strictly stronger than "looks numeric"
+  and keeps both properties.
+
+- **`compare` rows are in preference order, not sorted by size.** Sorting by
+  tokens is a leaderboard, and on this data a leaderboard rewards whichever
+  converter destroyed the most: on `tables.pdf` the cheapest backend is the one
+  that flattens the table. The cheapest and the most faithful are named
+  underneath and the report states outright when they differ. Where no ground
+  truth exists it says the comparison cannot answer the question rather than
+  leaving a blank that reads like a pass.
+
+- **`compare` detects ground truth only for a target inside the corpus
+  directory.** Matching on filename alone would score somebody's own
+  `tables.pdf` against ours and produce a plausible number that means nothing.
+  There is a test for the impostor case.
+
+- **A backend can now record an intermediate text as a stage (D8), and this
+  does not weaken "backends do not measure".** The backend hands over *text*;
+  the pipeline does every count. A backend still cannot report a number. The
+  text is transport only — the pipeline measures it and clears the field, so a
+  result never carries a second copy of the document — and a backend stage
+  cannot become `tokens_before`, which stays the source stage or nothing.
+
+- **Chonkie is in a `chunk` extra, not core.** The owner's call, asked with
+  measurements rather than adjectives: +10 packages, `lib/` 126 MB → 196 MB.
+  §1.6 lists it in core; so did it list gitingest, which Phase 4 moved out on
+  the same argument.
+
+- **`destructive` now carries two meanings, and that is a question for the
+  owner.** It was defined as "can lose information the user might have wanted".
+  `chunk` loses nothing — it inserts markers — but is marked destructive
+  because that flag is the only mechanism keeping a post-processor out of the
+  default chain, and a conversion that silently grew chunk boundaries would be
+  exactly the surprise the flag exists to prevent. A second flag
+  (`changes_shape`, or `default_chain = False`) would separate the two. I did
+  not add one, because growing the vocabulary per phase is the failure mode the
+  Phase 0–4 review was watching for. **Open question 2.**
+
+- **`aggressive_whitespace` is nearly worthless on this corpus and ships
+  anyway.** +0.0% on `twocolumn.pdf` and `boilerplate.html`, −0.1% on
+  `report.docx`, because the backends already emit tidy Markdown and
+  `normalize_whitespace` runs first. It is a Phase 5 deliverable and it is
+  genuinely useful on hand-written or scraped input, so it ships with the
+  measurement printed next to it in `docs/BENCHMARKS.md` rather than being
+  quietly dropped or quietly oversold.
+
+### Fidelity slice (2026-08-24)
+
+- **The module lives in `src/tokenmill/fidelity/`, outside the pipeline.** The
+  owner suggested the location and I agree with it. What is worth recording is
+  that it takes text and ground truth and returns a score — it never runs a
+  conversion and never consults a tokenizer, and nothing in `core/` imports it.
+  That keeps "backends do not measure" intact in both directions: the pipeline
+  measures cost, this measures loss, and neither can quietly become the other.
+  Phase 10's harness absorbs it by calling it, not by moving it.
+
+- **A command, not a flag on `convert`.** The owner left this to me. Three
+  reasons, in order of weight:
+
+  1. **A flag would need `--against` anyway.** `convert` runs on arbitrary
+     input and ground truth exists only for corpus fixtures, so
+     `convert x.html --fidelity` cannot know what to score against. Inferring
+     it from the filename is the bad version: it would score a document against
+     whichever fixture shares its name.
+  2. **The two halves compose better as two commands.**
+     `tokenmill convert … -q | tokenmill fidelity - --against …` works because
+     `convert` already puts text on stdout and its report on stderr. Reading
+     `-` from stdin was the whole cost of that.
+  3. **Phase 5's `compare` and Phase 10's harness both want a scoring function
+     they call on text they already have**, not a conversion flag. A command is
+     the thin surface over that function; a flag would have been a second one.
+
+  The cost, stated plainly: scoring `convert`'s output takes two commands
+  instead of one flag. `compare` will show fidelity inline, which is where the
+  one-step version actually belongs.
+
+- **The overall is an unweighted mean, and it carries the names of its
+  components.** Any weighting encodes an opinion about whether a lost table
+  matters more than a lost heading, and that opinion belongs to the user with
+  the document. Naming the components is not decoration: an overall built from
+  two of them is not comparable with one built from five, and a reader who
+  cannot see which is which will compare them anyway. `boilerplate.html` scores
+  from four components and `tables.pdf` from three.
+
+- **An empty document is an explicit special case, not an emergent property.**
+  This is the one design decision I would defend hardest. The arithmetic scores
+  an empty string **1.0** on boilerplate rejection, because an empty string
+  genuinely contains no boilerplate — the instrument built to catch a destroyed
+  document credits it with perfect extraction. That is
+  `benchmarks/README.md`'s own failure, one level up. So a document with no
+  non-whitespace content scores 0.0 on every component that has ground truth
+  and says why in the detail. No arrangement of fractions produces that on its
+  own; it had to be written down.
+
+  The general form of the same trap is handled by reporting rather than
+  arithmetic: recall and rejection are always reported together, because
+  neither says extraction worked on its own.
+
+- **`None` beats zero, and beats one.** A component whose ground truth does not
+  exist for a fixture scores `None` everywhere — API, table (`n/a`) and JSON
+  (`null`). `long_context.md` has no table: 0.0 claims one was destroyed and
+  1.0 claims one survived. Same rule Phase 0 set with `token_count: null`.
+
+- **A heading that came back as plain text does not count as recovered.** The
+  words survived; the heading did not. `pdfplumber` emits `tables.pdf`'s
+  section titles as ordinary lines and `kreuzberg` emits one of them as `#`, and
+  a scorer that counted text would call those equal. The count that survived as
+  text is reported in the detail, because that is the actionable half.
+
+- **A pipe table needs its delimiter row to count as a table**, and blank cells
+  do not count as recovered cells. Both rules were forced by real output: a
+  flattened table sometimes leaves pipes behind, and MarkItDown invents a blank
+  header row for `report.docx`.
+
+- **Two fixtures gained ground truth rather than two new fixtures being added.**
+  `jsrendered.html` and `scanned.pdf` were both unscorable, and the first is the
+  fixture the whole slice is for. Adding `must_contain`, `expected_headings` and
+  `must_not_contain` to the generator made both scorable without changing a
+  byte of any fixture.
+
+  One near-miss worth recording: the obvious `must_contain` phrase for
+  `jsrendered.html` was "inserted by a script", which also appears in the
+  *placeholder*. A backend that recovered nothing scored 0.5 for finding it. The
+  phrase is now "present in no response body", which appears only in the text
+  the script inserts. A ground-truth string that the failure case also satisfies
+  is worse than no ground truth.
+
+- **`scanned.pdf` now scores 0.000 rather than staying silent.** Ground truth
+  describes the document, not what our converters manage. The page really does
+  carry those headings; this tier cannot read them, and 0.0 is the honest
+  measurement of "no OCR here". Phase 9 has a regression target that moves it.
 
 ### Phase 2 follow-ups — the owner's answers (2026-08-22)
 
@@ -2245,6 +3079,85 @@ closed; these are the decisions and what changed.
 
 ## Deferred / future work
 
+### From Phase 6
+
+- **The compressor's success path.** Not deferred by choice — deferred by an
+  egress policy. Everything needed to run it is written; it wants
+  `huggingface.co` and about 4.7 GB of install. The first person who runs it
+  produces the first ratio this project has ever had.
+- **Selective Context.** Deferred with the measurement: 0.1.4 pins
+  `click==8.0.4` against our CLI's click and a resolver silently drops to 0.1.3.
+- **A post-processor cannot warn or attach metadata.**
+  `process(text, options) -> str` is the whole contract, where a backend gets a
+  `ConversionContext` that collects warnings and structured facts. So the
+  compressor logs instead of warning, and reports its ratio only through the
+  pipeline's per-stage measurement. Phase 8's GUI will want a post-processor to
+  be able to say something; the fix is a context parameter, which is a breaking
+  change to the Phase 1 contract and needs the owner's sign-off.
+- **The exact model download size is unstated** because `huggingface.co` cannot
+  be reached to measure it. The docs say "hundreds of megabytes to a few
+  gigabytes" and name both model options rather than inventing a figure.
+- **The CPU-only PyTorch install is unverified.** `download.pytorch.org` is
+  denied here, so whether the CPU wheel index avoids the CUDA stack could not be
+  tested. Documented as the recommendation, marked unverified.
+- **`compress` and `docling` have never been installed together**, only
+  resolved together. A resolver finding a solution is not the same as the two
+  working in one process.
+
+### From Phase 5
+
+- **No format encoder for nested data.** The encoders take a `Table`, which is
+  by construction an array of uniform flat objects. That is deliberate — it is
+  the only shape `RESEARCH.md` finds TOON reliably winning on, and TOON's
+  accuracy is reported as collapsing on non-aligned structures — but it means
+  `compare --formats` cannot answer "how should I serialise this nested JSON".
+  A `nested.json` fixture and a documented failure case would be the honest way
+  to show the limit rather than only assert it.
+- **`--formats` re-encodes only the first table in the converted text.** A
+  document with three tables gets one compared. Fine for the fixtures; wrong for
+  a real report.
+- **Only the fidelity of a *table* is measured after re-encoding.** Nothing
+  scores whether CSV lost the heading structure around it, because the encoders
+  operate on an extracted table rather than on the document.
+- **The Markdown decoder is the same job `fidelity/markdown.py` does.** Two
+  small pipe-table parsers now exist, with slightly different tolerances — the
+  fidelity one requires a delimiter row for a stricter reason than the format
+  one does. They should probably be one module.
+- **`compare` has no wall-clock rigour.** `duration_s` is one run of one
+  pipeline, unrepeated and unwarmed, so the 20 ms / 1,040 ms gap between
+  kreuzberg and markitdown on `report.docx` is indicative and nothing more.
+  Repeats, warmup and peak memory are Phase 10's.
+- **`aggressive_whitespace` has no measured case where it helps.** Every fixture
+  in the corpus is either generated tidy or converted by a backend that emits
+  tidy Markdown. Its value is asserted from first principles and is not
+  demonstrated by anything here.
+
+### From the fidelity slice
+
+- **This is not the Phase 10 harness.** No corpus-matrix runner, no wall time,
+  no peak memory, no committed result files under `benchmarks/results/<date>/`.
+  The table in `docs/BENCHMARKS.md` was produced by running conversions and
+  scoring them, and its key rows are asserted by
+  `tests/integration/test_fidelity_backends.py` — which is the weaker guarantee
+  `docs/BENCHMARKS.md` already says it is operating under until the harness
+  lands.
+- **`structure_retention` has thin coverage.** Only `report.docx` names list
+  items today; no fixture names link targets or code fences, so the component
+  reads `n/a` for all but one fixture. Phase 5 needs a structure-rich fixture
+  for its own post-processors (front matter, images, reference links, duplicate
+  blocks) and that fixture will cover this too.
+- **No fidelity score for a repository beyond content recall.** `sample_repo`
+  has `must_contain` and `must_not_contain` and nothing structural. Whether a
+  pack preserved a directory tree is a real fidelity question and is not asked.
+- **Heading level mapping assumes ground-truth level *n* is Markdown `#`×(n+1).**
+  True for `report.docx`, the only fixture that records levels. A fixture whose
+  ground truth started at level 1 would need the mapping to be explicit.
+- **The scorer does not diff.** It answers "did this survive", not "what changed",
+  so a converter that silently *added* text is invisible to it unless the
+  addition happens to be a boilerplate marker. `markdownify_html` adding 38.7%
+  to the page's visible text is recorded in `docs/BENCHMARKS.md` and is not a
+  fidelity component.
+
 ### From Phase 4
 
 - **`SubprocessConverter` is still Phase 7's, and this is what it owes.**
@@ -2440,6 +3353,7 @@ implemented; see Decisions for each, and the table below. One new question has
 opened since, and it needs owner-level access rather than a decision.
 
 **1. CI cannot schedule runners — please check the Actions billing state.**
+**Step-by-step instructions: [`docs/CI_BILLING_CHECK.md`](docs/CI_BILLING_CHECK.md).**
 Runs 25 through 28 all failed within seconds, every job at `runner_id: 0`, no
 steps, no logs, across all three runner labels. Run 24 on `Main` succeeded 2h20m
 earlier. The evidence that this is not our workflow file is in the verification
@@ -2453,6 +3367,41 @@ integration`), so only you can see the billing page.
 Until it is resolved, nothing is proven on Windows, macOS, Python 3.12/3.13, or
 against real tokenizer vocabularies. Local green on `e65337b` is recorded and is
 not the same claim.
+
+**2. `destructive` now means two things — do you want a second flag?**
+
+The flag was defined as "can lose information the user might have wanted", and
+`default_chain()` is built by excluding it. Phase 5's `chunk` post-processor
+loses nothing — it inserts chunk markers — but is marked destructive anyway,
+because that flag is the only mechanism that keeps a post-processor out of the
+default chain, and a conversion that silently grew chunk boundaries nobody asked
+for is exactly the surprise the flag exists to prevent.
+
+So the flag now carries "can lose information" **and** "changes the document's
+shape". Three options:
+
+- **Leave it.** One flag, one meaning in practice ("not in the default chain"),
+  and the docstrings explain the stretch. Cheapest, slightly dishonest naming.
+- **Add `changes_shape`.** Two flags, `default_chain()` excludes either.
+  Honest, and grows the vocabulary — which is the failure mode
+  `docs/REVIEW_PHASES_0_4.md` §4 was watching for.
+- **Rename the mechanism** to `in_default_chain: bool` and let `destructive`
+  become pure documentation. Clearest, and a breaking change to the Phase 1
+  post-processor contract, which needs your sign-off.
+
+I did not pick one. My recommendation is the third, at whatever point another
+non-destructive-but-reshaping processor appears; until then the first is fine
+and the code says so out loud.
+
+**3. Is `--format toon` supposed to exist?**
+
+`DEVELOPMENT_PLAN.md`'s Phase 5 verification snippet says
+`convert tests/fixtures/tables.pdf --format toon --show-stages`. That command is
+deliberately not implemented: TOON encodes the JSON data model and a prose
+document is not that, so a whole-document TOON would be a shape nobody can read.
+The encoders re-serialise a **table**, which is what all of `RESEARCH.md`
+Category 7's evidence is about, and `tokenmill compare --formats` is the
+equivalent. Say if you meant something else by that line.
 
 Two things remain *pending* rather than open, in the sense that they need an
 action rather than a decision:

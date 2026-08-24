@@ -19,11 +19,12 @@ from tests.doubles import (
     StaticProvider,
     UnavailableTokenizer,
     WordPieceTokenizer,
+    make_info,
 )
 from tokenmill.core.errors import BackendUnavailable, ConversionError, UnsupportedFormat
 from tokenmill.core.models import Availability, ConvertOptions, Source
 from tokenmill.core.pipeline import CONVERT_STAGE, SOURCE_STAGE, Pipeline, convert
-from tokenmill.core.protocol import BaseConverter
+from tokenmill.core.protocol import BaseConverter, ConversionContext
 from tokenmill.core.registry import Registry
 from tokenmill.post.base import PostProcessorRegistry
 from tokenmill.tokens.registry import TokenizerRegistry
@@ -439,3 +440,116 @@ class TestConvenienceEntryPoint:
         result = convert(source_file(tmp_path, "raw"), pipeline=pipeline)
 
         assert result.text
+
+
+class StagedConverter(BaseConverter):
+    """A backend that records an intermediate text before returning its output."""
+
+    def __init__(
+        self,
+        backend_id: str = "staged",
+        *,
+        stage_name: str = "halfway",
+        stage_text: str = "middle text",
+        output: str = "final",
+        **info_overrides: object,
+    ) -> None:
+        """Initialise the backend.
+
+        Args:
+            backend_id: The backend's id.
+            stage_name: The name to record the intermediate under.
+            stage_text: The intermediate text.
+            output: What to return as the conversion's result.
+            **info_overrides: Fields to override on the ``BackendInfo``.
+        """
+        super().__init__()
+        self.info = make_info(backend_id, **info_overrides)
+        self._stage_name = stage_name
+        self._stage_text = stage_text
+        self._output = output
+
+    def _probe(self) -> Availability:
+        """Report that this backend can always run."""
+        return Availability.present()
+
+    def _convert(
+        self,
+        source: Source,  # noqa: ARG002
+        options: ConvertOptions,  # noqa: ARG002
+        context: ConversionContext,
+    ) -> str:
+        """Record the intermediate and return the output."""
+        context.stage(self._stage_name, self._stage_text)
+        return self._output
+
+
+class TestBackendRecordedStages:
+    """Defect D8: the two most interesting reductions happen inside a backend.
+
+    Boilerplate removal happens inside a web converter and budget truncation
+    inside a repository backend, so neither appeared in `--show-stages` — the
+    numbers were in warnings and metadata, which is not where a reader looking
+    for "where did the tokens go" looks.
+
+    A backend now hands intermediate *text* to the pipeline, which measures it
+    like any other stage. That does not breach "backends do not measure": the
+    backend still cannot report a number.
+    """
+
+    def test_a_backend_stage_appears_between_source_and_convert(
+        self, tmp_path: Path, tokenizers: TokenizerRegistry
+    ) -> None:
+        pipeline = build(StagedConverter(), tokenizers)
+        result = pipeline.run(source_file(tmp_path, "original text"), OPTS)
+
+        assert [stage.stage for stage in result.stages] == [
+            SOURCE_STAGE,
+            "halfway",
+            CONVERT_STAGE,
+            "normalize_whitespace",
+        ]
+
+    def test_a_backend_stage_is_measured_by_the_pipeline_not_the_backend(
+        self, tmp_path: Path, tokenizers: TokenizerRegistry
+    ) -> None:
+        pipeline = build(StagedConverter(stage_text="0123456789"), tokenizers)
+        result = pipeline.run(source_file(tmp_path, "x" * 20), OPTS)
+
+        halfway = next(s for s in result.stages if s.stage == "halfway")
+        assert halfway.characters == 10
+        assert halfway.tokens is not None
+
+    def test_a_backend_stage_never_becomes_the_before_count(
+        self, tokenizers: TokenizerRegistry
+    ) -> None:
+        # `tokens_before` is the source stage or nothing at all. A backend stage
+        # sitting between source and convert must not be able to claim it for a
+        # source that has no readable text of its own.
+        pipeline = build(StagedConverter(input_formats=("bin",)), tokenizers)
+        result = pipeline.run(Source.from_bytes(b"\xff\xfe\x00bin", name="x.bin"), OPTS)
+
+        assert result.tokens_before is None
+        assert any(stage.stage == "halfway" for stage in result.stages)
+
+    def test_the_intermediate_text_is_dropped_from_the_result(
+        self, tmp_path: Path, tokenizers: TokenizerRegistry
+    ) -> None:
+        # Transport only: a result handed to a caller must not carry a second
+        # copy of the document.
+        pipeline = build(StagedConverter(stage_text="a" * 5000), tokenizers)
+        result = pipeline.run(source_file(tmp_path, "in"), OPTS)
+
+        assert result.internal_stages == ()
+
+    def test_a_backend_that_records_nothing_is_unaffected(
+        self, tmp_path: Path, tokenizers: TokenizerRegistry
+    ) -> None:
+        pipeline = build(EchoConverter(), tokenizers)
+        result = pipeline.run(source_file(tmp_path, "hello"), OPTS)
+
+        assert [stage.stage for stage in result.stages] == [
+            SOURCE_STAGE,
+            CONVERT_STAGE,
+            "normalize_whitespace",
+        ]

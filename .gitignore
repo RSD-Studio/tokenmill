@@ -32,3 +32,6 @@ benchmarks/scratch/
 # committed; its .git directory is recreated on demand by
 # scripts/make_fixtures.py so a clone gets the files, not an empty gitlink.
 tests/fixtures/sample_repo/.git/
+
+# Hypothesis keeps a local database of falsifying examples.
+.hypothesis/

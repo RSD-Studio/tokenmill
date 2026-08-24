@@ -147,6 +147,11 @@ class Pipeline:
 
         source_stage, source_bytes = self._source_stage(source, meter, warnings)
         stages: list[StageCount] = [source_stage] if source_stage is not None else []
+        # Stages the backend recorded internally, before its own output. This is
+        # what makes a reduction that happened *inside* a converter visible:
+        # extracting an article is two savings, not one, and a repository pack
+        # that a budget truncated would otherwise show only its final size.
+        stages.extend(_measure(name, text, meter) for name, text in result.internal_stages)
         stages.append(_measure(CONVERT_STAGE, result.text, meter))
 
         text = result.text
@@ -168,7 +173,9 @@ class Pipeline:
         # first — but *only* when there is a source stage to be first. A binary
         # document has none, and falling through to the converter's own output
         # would quietly redefine "before" as "after conversion", which is a
-        # worse lie than reporting nothing.
+        # worse lie than reporting nothing. The identity check against
+        # `source_stage` is what keeps a backend's internal stage from becoming
+        # "before" now that internal stages sit between source and convert.
         measured = [stage for stage in stages if stage.tokens is not None]
         tokens_after = measured[-1].tokens if measured else None
         tokens_before = None
@@ -191,6 +198,9 @@ class Pipeline:
             warnings=tuple(warnings),
             attempts=attempts,
             source_bytes=source_bytes,
+            # Measured into `stages` above; dropped so a result never carries a
+            # second copy of the document.
+            internal_stages=(),
         )
 
     def _fetch_if_needed(
