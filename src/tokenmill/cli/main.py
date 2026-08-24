@@ -137,10 +137,22 @@ def _make_source(target: str) -> Source:
 def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str, Any]:
     """Render a conversion result as JSON-serialisable data.
 
-    Token counts are ``null`` rather than absent when nothing could be measured,
-    so a consumer can tell "not measured" from "measured as zero". A binary
-    document reports ``tokens_before: null`` and a ``source_bytes`` figure: it
-    has no comparable before-count, only a file size.
+    Two rules govern the shape, and defect D9 is why they are written down:
+
+    **``null`` means "applies here, no value"; an absent key means "does not
+    apply".** Token counts are ``null`` rather than absent when nothing could be
+    measured, so a consumer can tell "not measured" from "measured as zero". A
+    binary document reports ``tokens_before: null`` and a ``source_bytes``
+    figure: it has no comparable before-count, only a file size. The ``web``
+    object, by contrast, is **absent** for a conversion that was not of a web
+    page, because there is no web measurement to have a value.
+
+    **The unit travels with the number.** ``counts`` and ``is_model_tokenizer``
+    say what the figures are in, so a consumer reading ``"tokenizer": "bytes"``
+    has a machine-readable signal that this is not a model token count. Without
+    it the only warning was a sentence on stderr, and the whole reason
+    ``docs/BENCHMARKS.md`` opens with a units section is that this distinction
+    gets lost.
 
     Args:
         result: The conversion to render.
@@ -149,19 +161,21 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
     Returns:
         The JSON-ready mapping.
     """
+    unit = _tokenizer_provenance(result.tokens_after.tokenizer_id if result.tokens_after else None)
     payload: dict[str, Any] = {
         "source": result.source_name,
         "backend": result.backend_id,
         "format": result.output_format.value,
         "duration_s": round(result.duration_s, 6),
         "tokenizer": (result.tokens_after.tokenizer_id if result.tokens_after else None),
+        "counts": unit[0],
+        "is_model_tokenizer": unit[1],
         "source_bytes": result.source_bytes,
         "tokens_before": result.tokens_before.value if result.tokens_before else None,
         "tokens_after": result.tokens_after.value if result.tokens_after else None,
         "token_delta": result.token_delta,
         "reduction_ratio": result.reduction_ratio,
         "post_processors": list(result.post_processors),
-        "web": _web_summary(result),
         "attempts": [
             {"backend": attempt.backend_id, "ok": attempt.ok, "error": attempt.error}
             for attempt in result.attempts
@@ -177,9 +191,34 @@ def _result_to_json(result: ConversionResult, *, include_text: bool) -> dict[str
             for stage in result.stages
         ],
     }
+    web = _web_summary(result)
+    if web is not None:
+        # Absent rather than null: a PDF conversion has no web measurement to
+        # report, which is different from having one whose value is unknown.
+        payload["web"] = web
     if include_text:
         payload["text"] = result.text
     return payload
+
+
+def _tokenizer_provenance(tokenizer_id: str | None) -> tuple[str | None, bool | None]:
+    """Describe what a tokenizer counts, for the JSON payloads.
+
+    Args:
+        tokenizer_id: The tokenizer that produced the counts, if any.
+
+    Returns:
+        What it counts in words, and whether those are a real model's tokens.
+        Both ``None`` when nothing was counted or the id cannot be resolved —
+        an unknown unit is reported as unknown rather than guessed.
+    """
+    if tokenizer_id is None:
+        return None, None
+    try:
+        info = default_tokenizer_registry().get(tokenizer_id).info
+    except TokenmillError:
+        return None, None
+    return info.counts, info.is_model_tokenizer
 
 
 #: Metadata keys a web backend records, surfaced as their own object in
@@ -844,9 +883,12 @@ def _comparison_to_json(comparison: Any) -> dict[str, Any]:
     Returns:
         The JSON-ready mapping.
     """
+    unit = _tokenizer_provenance(comparison.tokenizer_id)
     return {
         "source": comparison.source_name,
         "tokenizer": comparison.tokenizer_id,
+        "counts": unit[0],
+        "is_model_tokenizer": unit[1],
         "cheapest": comparison.cheapest.backend_id if comparison.cheapest else None,
         "most_faithful": (
             comparison.most_faithful.backend_id if comparison.most_faithful else None
@@ -876,9 +918,12 @@ def _format_comparison_to_json(comparison: Any) -> dict[str, Any]:
     Returns:
         The JSON-ready mapping.
     """
+    unit = _tokenizer_provenance(comparison.tokenizer_id)
     return {
         "source": comparison.source_name,
         "tokenizer": comparison.tokenizer_id,
+        "counts": unit[0],
+        "is_model_tokenizer": unit[1],
         "table_rows": len(comparison.table.rows),
         "table_columns": len(comparison.table.headers),
         "cheapest": comparison.cheapest.format_id if comparison.cheapest else None,

@@ -222,14 +222,20 @@ class TestTheDefaultBackendForAWebPage:
         assert payload["web"]["visible_text_characters"] > 0
 
     def test_a_document_conversion_carries_no_web_object(self, fixture_dir: Path) -> None:
-        """`null` rather than a fabricated zero: a PDF has no visible-text ratio."""
+        """Absent rather than null, and never a fabricated zero.
+
+        Phase 5 changed this from `"web": null` to the key being absent, closing
+        defect D9. The rule the payload now follows: `null` means "applies here,
+        no value" and an absent key means "does not apply". A PDF has no
+        visible-text ratio to have a value.
+        """
         result = runner.invoke(
             app, ["convert", str(fixture_dir / "tables.pdf"), *OFFLINE, "--json"]
         )
 
         payload = json.loads(result.stdout)
 
-        assert payload["web"] is None
+        assert "web" not in payload
 
 
 class TestTheFetchFlags:
@@ -776,3 +782,55 @@ class TestFidelity:
         )
         assert result.exit_code == 1
         assert "convert" in result.output
+
+
+class TestJsonProvenance:
+    """Defect D9: the JSON was inconsistent in two ways a consumer would trip on."""
+
+    def test_the_unit_travels_with_the_number(self, fixture_dir: Path) -> None:
+        # Without this, a consumer reading `"tokenizer": "bytes"` has no
+        # machine-readable signal that these are not model tokens, and the only
+        # warning was a sentence on stderr.
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "tables.pdf"), "--json", *OFFLINE]
+        )
+        payload = json.loads(result.output)
+        assert payload["counts"] == "UTF-8 bytes"
+        assert payload["is_model_tokenizer"] is False
+
+    def test_the_web_object_is_absent_rather_than_null_for_a_document(
+        self, fixture_dir: Path
+    ) -> None:
+        # `null` means "applies here, no value"; an absent key means "does not
+        # apply". A PDF has no web measurement to have a value.
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "tables.pdf"), "--json", *OFFLINE]
+        )
+        assert "web" not in json.loads(result.output)
+
+    def test_the_web_object_is_present_for_a_page(self, fixture_dir: Path) -> None:
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "boilerplate.html"), "--json", *OFFLINE]
+        )
+        payload = json.loads(result.output)
+        assert "web" in payload
+        assert payload["web"]["strips_boilerplate"] is True
+
+    def test_token_counts_stay_null_rather_than_absent(self, fixture_dir: Path) -> None:
+        # The other half of the rule: a binary document has no comparable
+        # before-count, and null is how that is said.
+        result = runner.invoke(
+            app, ["convert", str(fixture_dir / "tables.pdf"), "--json", *OFFLINE]
+        )
+        payload = json.loads(result.output)
+        assert "tokens_before" in payload
+        assert payload["tokens_before"] is None
+        assert payload["source_bytes"] is not None
+
+    def test_compare_json_carries_the_same_provenance(self, fixture_dir: Path) -> None:
+        result = runner.invoke(
+            app, ["compare", str(fixture_dir / "tables.pdf"), "--json", *OFFLINE]
+        )
+        payload = json.loads(result.output)
+        assert payload["backends"]["counts"] == "UTF-8 bytes"
+        assert payload["backends"]["is_model_tokenizer"] is False

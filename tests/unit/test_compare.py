@@ -35,22 +35,6 @@ runner = CliRunner()
 OFFLINE = ["--tokenizer", "bytes"]
 
 
-def _json_part(output: str) -> str:
-    """Return just the JSON from mixed stdout and stderr.
-
-    tokenmill writes machine output to stdout and everything else to stderr, but
-    Click 8.4's test runner merges the two, so `--write`'s "wrote N variants"
-    note lands after the JSON document.
-
-    Args:
-        output: The captured output.
-
-    Returns:
-        The JSON document.
-    """
-    return output[: output.rindex("}") + 1]
-
-
 def _row(
     backend_id: str, tokens: int | None, fidelity: float | None, *, ok: bool = True
 ) -> ComparisonRow:
@@ -342,7 +326,7 @@ class TestTheCommand:
             ],
         )
         assert result.exit_code == 0, result.output
-        payload = json.loads(_json_part(result.output))
+        payload = json.loads(result.stdout)
         for row in payload["backends"]["rows"]:
             if row["tokens"] is None:
                 continue
@@ -361,7 +345,7 @@ class TestTheCommand:
                 *OFFLINE,
             ],
         )
-        payload = json.loads(_json_part(result.output))
+        payload = json.loads(result.stdout)
         assert payload["backends"]["cheapest"] == "kreuzberg"
         assert payload["backends"]["most_faithful"] == "pdfplumber"
         assert payload["backends"]["cheapest_is_most_faithful"] is False
