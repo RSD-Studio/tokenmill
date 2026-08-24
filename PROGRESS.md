@@ -12,7 +12,7 @@ _Last updated: 2026-08-24 by Claude Code_
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 5 | Post-processing, formats, measurement depth | ✅ Complete | passed 2026-08-24 (local; CI cannot schedule runners) |
-| 6 | Prompt compression (optional tier) | ⬜ Not started — assigned, see `docs/prompts/PHASE_5_6_AND_FIDELITY.md` | — |
+| 6 | Prompt compression (optional tier) | 🟨 **Implemented; success path unverified** | ⚠️ gate NOT passed — see 2026-08-24 entry |
 | 7 | Isolation layer and license enforcement | ⬜ Not started | — |
 | 8 | GUI (FastAPI + NiceGUI) | ⬜ Not started | — |
 | 9 | Heavy backends (GPU tier, install-docs-only) | ⬜ Not started | — |
@@ -1696,6 +1696,161 @@ the 828 the review recorded, and the reason is environmental rather than a
 regression: this container has no `crawl4ai`, `repomix` or `code2prompt`, so
 four tests that ran there skip here.
 
+### 2026-08-24 — Phase 6: implemented, and what is and is not verified
+
+**The headline, stated first so nobody has to look for it: the success path of
+the compressor has never been executed, here or anywhere.** The LLMLingua-2
+model lives on `huggingface.co`, denied at this environment's egress proxy
+(re-probed at the start of this session, still `403`). No compression has been
+performed by this code and **no ratio has ever been produced by it**. The owner
+chose this option — implement fully, mark the success path unverified — over
+implementing less.
+
+**Acceptance criteria, honestly:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Achieves a measurable ratio on `long_context.md` and reports it accurately | ❌ **NOT VERIFIED — not verifiable here.** Needs the model. The reporting path is tested against a stub; the ratio itself has never existed |
+| 2 | First-run download explicit, resumable, skippable; nothing downloads silently at import | ✅ **Verified**, in three parts: nothing downloads without `--allow-network` (tested); the refusal names the size, cache path and command (tested); loading all eight post-processors imports **zero** third-party modules (checked in a clean interpreter) |
+| 3 | Fully offline once cached | ⚠️ **Partly.** The mechanism is `local_files_only`, and a test proves a cached model loads with it set and an uncached one refuses. **There is no cache here to demonstrate it against**, so the end-to-end claim is unverified |
+| 4 | *(gate)* Ratio verified against direct token counts | ❌ **NOT VERIFIED.** Same cause |
+| 5 | *(gate)* Offline-after-cache proven | ❌ **NOT PROVEN.** Same cause |
+
+**Phase 6's exit gate is therefore not passed**, and the phase table says
+🟨 rather than ✅. What exists is a complete implementation whose failure paths
+are tested and whose success path is waiting on a host this environment cannot
+reach.
+
+**What *was* verified, and how.**
+
+Licence, from the wheel's own metadata rather than from `RESEARCH.md`. The
+package was deliberately not installed — see the install cost below — so the
+artefact's own `METADATA` and bundled `LICENSE` are the source:
+
+```
+$ python -m pip download --no-deps llmlingua -d .
+llmlingua-0.2.2-py3-none-any.whl   (30 KB)
+
+Name: llmlingua
+Version: 0.2.2
+License: MIT License
+Home-page: https://github.com/microsoft/LLMLingua
+Requires-Dist: transformers >=4.26.0, accelerate, torch, tiktoken, nltk, numpy
+
+llmlingua-0.2.2.dist-info/LICENSE:
+    MIT License
+    Copyright (c) Microsoft Corporation.
+```
+
+The install cost, confirming the handover's §6 trap 2 independently:
+
+```
+$ uv pip install --dry-run llmlingua
+Resolved 63 packages, including:
+  torch==2.13.0  triton==3.7.1  transformers==5.15.1
+  nvidia-cublas  nvidia-cuda-cupti  nvidia-cuda-nvrtc  nvidia-cuda-runtime
+  nvidia-cudnn-cu13  nvidia-cufft  nvidia-cufile  nvidia-curand
+  nvidia-cusolver  nvidia-cusparse  nvidia-cusparselt-cu13  nvidia-nccl-cu13
+  nvidia-nvjitlink  nvidia-nvshmem-cu13  nvidia-nvtx
+```
+
+**The CPU-only install is documented and unverified.**
+`download.pytorch.org` is denied here too, so whether
+`--index-url https://download.pytorch.org/whl/cpu` avoids the CUDA stack could
+not be tested. It is recorded in `docs/BACKENDS.md` as the recommendation, marked
+unverified.
+
+The refusal path, run:
+
+```
+$ tokenmill convert tests/fixtures/long_context.md --compress-ratio 0.5 --tokenizer bytes
+error: prompt compression needs LLMLingua, which is not installed
+hint:  install it with `pip install "tokenmill[compress]"` — note that it
+       resolves to 63 packages including PyTorch and the CUDA stack; see
+       docs/BACKENDS.md for the CPU-only install
+```
+
+The import-time guarantee, in a clean interpreter:
+
+```
+$ python -c "import tokenmill; from tokenmill.post.base import default_post_registry; \
+             default_post_registry().ids(); ..."
+post-processors loaded: ('strip_frontmatter', 'normalize_whitespace',
+  'aggressive_whitespace', 'links', 'dedupe_blocks', 'normalize_headings',
+  'chunk', 'compress')
+heavy modules imported as a side effect: NONE
+third-party modules after loading every post-processor: []
+```
+
+**Three design decisions worth the owner's eye.**
+
+**No sixth piece of process-global state.** The obvious way to force
+`transformers` to load from cache only is `HF_HUB_OFFLINE=1`. That would have
+been a sixth global — on top of the five `docs/ARCHITECTURE.md` records, whose
+*trajectory* is defect D2 — for the duration of a conversion. llmlingua passes
+`model_config` straight through to `from_pretrained`, so `local_files_only`
+rides in the call instead. A test asserts `os.environ` is unchanged across a
+compression. **The handover asked to be told before a sixth was added; none
+was.**
+
+**`trust_remote_code` is off, against llmlingua's default of on.** Reading its
+source out of the wheel showed `trust_remote_code = model_config.get(...,
+True)` — so by default a model repository can execute arbitrary code when the
+model loads. LLMLingua-2's own models are token classifiers that need nothing of
+the kind.
+
+**No bespoke ratio number.** The handover asked for the retention indicator to
+be the fidelity score rather than something new. It also turns out the
+*achieved ratio* needs nothing new either: the pipeline already measures the
+`compress` stage, so `--show-stages` reports it. Two numbers that already exist,
+zero invented.
+
+**A gap this exposed.** `PostProcessor.process(text, options) -> str` is the
+whole contract — a post-processor has **no channel for warnings or metadata**,
+unlike a backend with its `ConversionContext`. So the compressor logs instead of
+warning, and cannot attach its own ratio to the result. Phase 8's GUI will want
+this. Recorded under Deferred work.
+
+**Selective Context: deferred, with the reason measured.**
+
+```
+$ uv pip install --dry-run "tokenmill@." selective-context
+Resolved 106 packages in 501ms
+ + selective-context==0.1.3      <- not 0.1.4
+ + click==8.4.2
+ + spacy==3.8.15
+```
+
+Its current release (0.1.4) pins `click==8.0.4`, which conflicts with the CLI's
+click, so the resolver silently backs down to **0.1.3**. It also brings spacy and
+needs its own model download, and its happy path is exactly as unrunnable here as
+LLMLingua-2's. The plan lists it as optional; adding it would have doubled the
+unverified surface for no verifiable gain.
+
+**`compress` and `docling` resolve together — which closes nothing.**
+
+```
+$ uv pip install --dry-run llmlingua docling
+Resolved 126 packages, transformers==5.15.1, torch==2.13.0
+```
+
+`DEVELOPMENT_PLAN.md` and `RESEARCH.md` both flag a transformers conflict between
+them. Today's resolver finds a solution. **Neither was installed and they were
+never run together**, so this records only that the resolver no longer refuses.
+They stay separate extras regardless: 4.7 GB and 5.2 GB in one install is not
+something to do by accident.
+
+**Toolchain, all green:**
+
+```
+$ uv run ruff check .                     All checks passed!
+$ uv run ruff format --check .            123 files already formatted
+$ uv run mypy                             Success: no issues found in 103 source files
+$ uv run pytest -q                        1073 passed, 53 skipped
+$ uv run python scripts/make_fixtures.py --check
+                                          OK: 24 files reproduced byte-for-byte
+```
+
 ### 2026-08-24 — Phase 5 exit gate
 
 **Acceptance criteria, one by one.**
@@ -2354,7 +2509,7 @@ to overstate:
 | gitingest | repo | MIT **(verified 0.3.1)** | repo | ✅ | ✅ | The default for a repository: needs no external runtime. **Reconfigures the host's stdlib logging on import**; the adapter undoes it |
 | repomix | repo | MIT **(verified 1.18.0)** | subprocess | ✅ | ✅ | The most complete pack (8 files vs 7). Needs Node; `npx` downloads it per run, so it requires `--allow-network` without a local install |
 | code2prompt | repo | MIT **(verified 4.3.0)** | subprocess | ✅ | ✅ | **Fastest: 103 ms vs 564 and 1,082.** No wheel — `cargo install` compiles it |
-| llmlingua2 | compress | MIT | compress | ❌ | ❌ | Phase 6; off by default |
+| llmlingua2 | compress | MIT **(verified 0.2.2, from the wheel's METADATA and bundled LICENSE)** | compress | ✅ | ⚠️ | Phase 6, off by default. **Success path never run anywhere** — needs `huggingface.co`. Refusal, error, import-time and arithmetic paths tested. 63 packages / ~4.7 GB including the CUDA stack |
 | pymupdf4llm | documents | **AGPL-3.0** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | pandoc | documents | **GPL-2.0+** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | libreoffice | documents | MPL-2.0 | isolated | ❌ | ❌ | Phase 7; subprocess |
@@ -2371,9 +2526,14 @@ to overstate:
 | `dedupe_blocks` | yes | no (opt-in) | 250 | ✅ | ✅ | **−11.4%, fidelity 1.000** |
 | `normalize_headings` | yes | no (opt-in) | 400 | ✅ | ✅ | −0.3%, **fidelity 0.750** |
 | `chunk` | yes¹ | no (opt-in) | 700 | ✅ | ✅ | **+1.8%** on `long_context.md` |
+| `compress` | yes | no (opt-in) | 900 | ✅ | ⚠️² | **never run — no ratio exists** |
 
 ¹ `chunk` loses nothing; it is flagged so it stays out of the default chain. See
 Decisions and Open question 2.
+
+² `compress`'s refusal, error, import-time and arithmetic paths are tested; its
+success path has never been executed anywhere, because the model host is denied
+at this environment's egress proxy.
 
 **The default chain is exactly `normalize_whitespace`**, and that is asserted
 over the whole registry rather than per processor.
@@ -2878,6 +3038,31 @@ closed; these are the decisions and what changed.
   for us.
 
 ## Deferred / future work
+
+### From Phase 6
+
+- **The compressor's success path.** Not deferred by choice — deferred by an
+  egress policy. Everything needed to run it is written; it wants
+  `huggingface.co` and about 4.7 GB of install. The first person who runs it
+  produces the first ratio this project has ever had.
+- **Selective Context.** Deferred with the measurement: 0.1.4 pins
+  `click==8.0.4` against our CLI's click and a resolver silently drops to 0.1.3.
+- **A post-processor cannot warn or attach metadata.**
+  `process(text, options) -> str` is the whole contract, where a backend gets a
+  `ConversionContext` that collects warnings and structured facts. So the
+  compressor logs instead of warning, and reports its ratio only through the
+  pipeline's per-stage measurement. Phase 8's GUI will want a post-processor to
+  be able to say something; the fix is a context parameter, which is a breaking
+  change to the Phase 1 contract and needs the owner's sign-off.
+- **The exact model download size is unstated** because `huggingface.co` cannot
+  be reached to measure it. The docs say "hundreds of megabytes to a few
+  gigabytes" and name both model options rather than inventing a figure.
+- **The CPU-only PyTorch install is unverified.** `download.pytorch.org` is
+  denied here, so whether the CPU wheel index avoids the CUDA stack could not be
+  tested. Documented as the recommendation, marked unverified.
+- **`compress` and `docling` have never been installed together**, only
+  resolved together. A resolver finding a solution is not the same as the two
+  working in one process.
 
 ### From Phase 5
 

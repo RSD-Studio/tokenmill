@@ -798,6 +798,34 @@ lifecycle, and stderr capture.
 
 ---
 
+## Compression, and the state it does not add
+
+`src/tokenmill/post/compress.py`. Last in the chain at order 900, because
+compressing and then stripping would spend model time on text about to be
+deleted.
+
+Two decisions here are about *not* doing the obvious thing.
+
+**The offline switch is not an environment variable.** The natural way to make
+`transformers` work from cache only is `HF_HUB_OFFLINE=1`. That would have been
+a **sixth** piece of process-global state manipulated during a conversion, on
+top of the five this document already records — and the trajectory of that
+count is defect D2. llmlingua passes `model_config` straight through to
+`from_pretrained`, so `local_files_only` rides in the call instead. A test
+asserts the environment is unchanged.
+
+**`trust_remote_code` is off.** llmlingua defaults it to true. On a downloaded
+model that means executing code from a model repository, which is not something
+a document converter should do by default for a token classifier that does not
+need it.
+
+**A post-processor has no channel for warnings or metadata.** `process(text,
+options) -> str` is the whole contract — unlike a backend, which gets a
+`ConversionContext`. So the compressor logs rather than warning, and reports its
+ratio through the per-stage measurement the pipeline already does rather than
+attaching it to the result. That is a real gap and `PROGRESS.md` records it:
+Phase 8's GUI will want a post-processor to be able to say something.
+
 ## Security posture
 
 Every input document is treated as hostile — several backends will hand

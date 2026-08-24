@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 6 — prompt compression (optional tier, off by default)
+
+> **The success path has never been executed anywhere.** The LLMLingua-2 model
+> lives on `huggingface.co`, which the development environment denies at the
+> egress proxy. No compression has been run by this code and no ratio has been
+> produced by it. The refusal, error, import-time and arithmetic paths are
+> tested; the happy path is **unverified**. This is the posture Phase 2 took
+> with docling's PDF path.
+
+- **`compress` post-processor** (order 900, destructive, off by default) wrapping
+  LLMLingua-2 behind a `compress` extra. MIT, verified from the wheel's own
+  METADATA and bundled LICENSE.
+- **Nothing downloads without `--allow-network`.** The model loads with
+  `local_files_only` and the refusal names the size, the cache path and the exact
+  command. **No environment variable is set** — the switch rides in llmlingua's
+  `model_config` — so this adds nothing to the five pieces of process-global
+  state `docs/ARCHITECTURE.md` records.
+- **`trust_remote_code` is off**, against llmlingua's default of on, which lets a
+  model repository execute arbitrary code on load.
+- **Nothing is imported at module load**: loading all eight post-processors pulls
+  in zero third-party modules.
+- **No bespoke ratio number.** The achieved ratio is the `compress` row in
+  `--show-stages`; the retention indicator is `tokenmill fidelity`.
+- **An empty result raises** rather than reporting a 100% saving.
+- **`--compress-ratio` and `--compress-model`** on `tokenmill convert`.
+- **Selective Context is deferred**, with the measurement: its 0.1.4 release pins
+  `click==8.0.4`, conflicting with the CLI, and a resolver silently backs down to
+  0.1.3.
+
 #### Phase 5 — post-processing, formats, and measurement depth
 
 - **Five more post-processors**, every one destructive and off by default:

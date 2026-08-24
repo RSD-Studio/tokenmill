@@ -519,7 +519,7 @@ class Shouty(BasePostProcessor):
     id = "shouty"
     name = "Shouty"
     description = "Upper-cases everything."
-    destructive = True   # <- keeps it out of the default chain
+    destructive = True  # <- keeps it out of the default chain
     order = 300
 
     def process(self, text: str, options: ConvertOptions) -> str:

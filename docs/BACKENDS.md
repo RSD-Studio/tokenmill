@@ -1214,6 +1214,126 @@ names `--tokenizer bytes` as the way round it.
 only mechanism that keeps a post-processor out of the default chain. Recorded in
 `PROGRESS.md` as an open question rather than papered over.
 
+## `compress` — LLMLingua-2
+
+> **Read this before enabling it.** Prompt compression suits **redundant RAG
+> context**. It is not universally safe and **can degrade reasoning-heavy
+> prompts**. `RESEARCH.md` Category 6 is explicit about this, and Microsoft's
+> published figures are measured on their benchmarks, not on your task.
+> **Evaluate it on your own task** — `tokenmill fidelity` and `tokenmill
+> compare` exist for that. It is off by default and it should stay off until
+> you have measured it.
+
+> ### ⚠️ The success path of this adapter has never been run
+>
+> The model lives on `huggingface.co`, which the environment this was written in
+> denies at the egress proxy. **No compression has ever been performed by this
+> code and no ratio has ever been produced by it.** Every figure below is either
+> from `RESEARCH.md` (and attributed) or is about the install rather than the
+> compression. If you run it, the numbers you get are the first ones that exist.
+
+**Destroys:** words, on a model's judgement. More literally destructive than
+anything else in the toolkit.
+
+**Licence:** MIT, verified 2026-08-24 from the wheel's own `METADATA` and the
+`LICENSE` file it bundles (Microsoft Corporation) — not from `RESEARCH.md`. The
+package was deliberately *not* installed to check; see the install cost below.
+
+### The install is not what "CPU-feasible" suggests
+
+```console
+$ uv pip install --dry-run llmlingua
+63 packages, including:
+  torch==2.13.0  triton==3.7.1  transformers==5.15.1
+  nvidia-cublas  nvidia-cuda-cupti  nvidia-cuda-nvrtc  nvidia-cuda-runtime
+  nvidia-cudnn-cu13  nvidia-cufft  nvidia-cufile  nvidia-curand
+  nvidia-cusolver  nvidia-cusparse  nvidia-cusparselt-cu13  nvidia-nccl-cu13
+  nvidia-nvjitlink  nvidia-nvshmem-cu13  nvidia-nvtx
+```
+
+About **4.7 GB**. `DEVELOPMENT_PLAN.md` §1.6 calls LLMLingua-2 "CPU-feasible",
+which is true of *running* it and false of *installing* it on Linux, where an
+unpinned `torch` resolves to the CUDA build.
+
+**The CPU-only install, and it is UNVERIFIED:**
+
+```console
+$ pip install torch --index-url https://download.pytorch.org/whl/cpu
+$ pip install "tokenmill[compress]"
+```
+
+On a normal machine that installs the CPU-only PyTorch wheels and avoids the
+CUDA packages entirely. **This could not be tested here**:
+`download.pytorch.org` is also denied at this environment's proxy. Treat it as
+the documented recommendation, not as a measured result.
+
+### The model download is explicit, and refused by default
+
+Nothing is fetched unless the run carries `--allow-network`. Without it:
+
+```
+error: the LLMLingua-2 model 'microsoft/llmlingua-2-xlm-roberta-large-meetingbank'
+       is not in the HuggingFace cache, and this run may not download it
+hint:  compression models are large — hundreds of megabytes to a few gigabytes.
+       Re-run with --allow-network to fetch it (the download resumes if
+       interrupted), set extra['compress_cache_dir'] to choose where it lands, or
+       use the smaller 'microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank'.
+       Once cached, compression runs entirely offline.
+```
+
+**The exact model sizes are unverified** — `huggingface.co` is unreachable from
+here, so they are not stated as numbers.
+
+The mechanism is `local_files_only`, passed through llmlingua's `model_config`
+to `from_pretrained`. **No environment variable is set**, deliberately: this
+adapter adds nothing to the five pieces of process-global state
+`docs/ARCHITECTURE.md` records.
+
+### `trust_remote_code` is off, and llmlingua's default is on
+
+llmlingua defaults `trust_remote_code` to **true**, which permits a model
+repository to execute arbitrary code when the model loads. LLMLingua-2's own
+models are token classifiers that need nothing of the kind. This adapter sets it
+false.
+
+### What it reports
+
+Nothing bespoke. The **achieved ratio** is the `compress` row in
+`--show-stages`, measured by the pipeline like every other stage. The
+**retention indicator** is `tokenmill fidelity`. Inventing a third number when
+two already exist would have been the wrong answer to
+`benchmarks/README.md`'s rule.
+
+Structure is protected — newlines, pipes and hashes are passed as
+`force_tokens` — and digits via `force_reserve_digit`, because identifiers,
+versions and measurements are exactly what a low-information filter discards and
+a reader most needs kept.
+
+**An empty result is an error, not a 100% saving.** A compressor that returned
+nothing has destroyed the document, and the adapter raises rather than
+celebrating the ratio.
+
+### Selective Context is not implemented
+
+`DEVELOPMENT_PLAN.md` lists it as optional. Deferred, with the reason measured
+rather than asserted: `selective-context` 0.1.4 pins `click==8.0.4`, which
+conflicts with the CLI's own click, and a resolver silently backs down to
+**0.1.3** to satisfy both. It also needs `spacy` and a model download, and its
+happy path is exactly as unrunnable here as LLMLingua-2's. Adding it would have
+doubled the unverified surface for no verifiable gain.
+
+### Does `compress` coexist with `docling`?
+
+`DEVELOPMENT_PLAN.md` §Phase 6 and `RESEARCH.md` both flag a transformers
+version conflict between them, which is why they are separate extras. **Checked
+2026-08-24: they resolve together today** — 126 packages, `transformers 5.15.1`,
+`torch 2.13.0`, no conflict reported.
+
+**Resolving is not working.** Neither was installed and neither was run
+together, so this closes nothing; it only records that the resolver no longer
+refuses. They stay separate extras regardless, because 4.7 GB and 5.2 GB in one
+install is not a thing to do by accident.
+
 ---
 
 # Table formats

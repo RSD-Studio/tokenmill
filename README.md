@@ -270,6 +270,33 @@ on an air-gapped machine, for instance, where a BPE vocabulary cannot be
 downloaded. The conversion still succeeds and a warning says why. **tokenmill
 never substitutes an estimate for a measurement.**
 
+## Prompt compression (off by default, and it should stay off until you measure it)
+
+> Prompt compression suits **redundant RAG context**. It is not universally safe
+> and **can degrade reasoning-heavy prompts** — `docs/research/RESEARCH.md`
+> Category 6 is explicit about it, and the published figures are measured on
+> their benchmarks, not on your task. Evaluate it on yours.
+>
+> **The success path of tokenmill's LLMLingua-2 adapter has never been run.**
+> The model host is unreachable from the environment it was written in, so no
+> compression has been performed by this code and no ratio has been produced by
+> it. It is implemented, its refusal and error paths are tested, and its happy
+> path is unverified. See [`docs/BACKENDS.md`](docs/BACKENDS.md).
+
+```console
+$ pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU-only, unverified
+$ pip install "tokenmill[compress]"
+$ tokenmill convert notes.md --compress-ratio 0.5 --allow-network --show-stages
+```
+
+Nothing downloads without `--allow-network`; the refusal names the model, the
+cache path and the command. Once cached it runs offline. `pip install llmlingua`
+resolves to 63 packages and about 4.7 GB including the CUDA stack, which is why
+it is behind its own extra and why the CPU-only index is the recommended route.
+
+The achieved ratio is the `compress` row in `--show-stages`; what it cost is
+`tokenmill fidelity`. There is no third number.
+
 ## Backends
 
 Every licence below was verified against the **installed package metadata** when
