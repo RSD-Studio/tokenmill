@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Fidelity scoring (a Phase 10 slice, brought forward ahead of Phase 5)
+
+- **`tokenmill.fidelity`** — scores converted text against a fixture's
+  hand-labelled ground truth as six named components plus an unweighted overall
+  that names what composed it: heading recall, content recall, table integrity,
+  structure retention, boilerplate rejection and reading order.
+- **A component with no ground truth scores `None`, never zero and never one.**
+  `long_context.md` has no table, so scoring its table integrity either way
+  would be a false statement about a document with no table in it. Same rule
+  `ground_truth.json` already followed for `token_count`.
+- **An empty document scores zero on every component that applies**, including
+  boilerplate rejection. The arithmetic alone would score it 1.0 there — an
+  empty string genuinely contains no boilerplate — which is the failure
+  `benchmarks/README.md` names, reappearing inside the instrument built to
+  catch it.
+- **`tokenmill fidelity FILE --against FIXTURE`**, reading `-` for stdin so it
+  pipes from `convert`. `--json` carries `null` for a component that did not
+  apply, so a consumer can tell "not measured" from "measured as zero".
+- **Scorable ground truth for `jsrendered.html` and `scanned.pdf`**, added to
+  `scripts/make_fixtures.py` and regenerated. Neither could be scored before,
+  and `jsrendered.html` is the fixture the whole exercise is for: it produces
+  the largest reduction in the corpus, −90.7%, at a fidelity of **0.000**.
+- **A fidelity figure beside every token figure** in `docs/BENCHMARKS.md`,
+  covering every installed backend against every fixture it claims.
+- **Eight failure modes documented in `docs/BACKENDS.md` are now numbers** —
+  Kreuzberg flattening a PDF table reads as table integrity 0.00 against
+  pdfplumber's 1.00; pdfplumber interleaving two-column pages reads as reading
+  order 0.58 against pypdf's 1.00.
+
 #### Phase 4 — repository backends
 
 - **Three repository backends**, one set of options over three runtimes:

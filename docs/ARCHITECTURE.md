@@ -588,6 +588,86 @@ Do not use it to predict what a model will charge.
 
 ---
 
+## Fidelity: the other half of every measurement
+
+`src/tokenmill/fidelity/`. Brought forward from Phase 10 ahead of Phase 5,
+because Phase 5 adds post-processors that each strip something and Phase 6 adds
+a compressor that strips a great deal. Every one of them can be measured as a
+win in tokens, and the cost is invisible unless something goes looking.
+
+The package is deliberately *outside* the pipeline. It takes text and ground
+truth and returns a score; it never runs a conversion, never consults a
+tokenizer, and nothing in `core/` imports it. That keeps the rule in "Backends
+do not measure" intact in both directions — the pipeline measures cost, the
+fidelity package measures loss, and neither can quietly become the other.
+
+### Why never one number
+
+A `FidelityScore` is six named components plus an unweighted mean that carries
+the names of the components it was built from. Three decisions, each of which
+had an obvious alternative:
+
+**Decomposable, because a score you cannot decompose is a score you cannot act
+on.** "0.62" tells nobody whether to change backend, change post-processors or
+accept the loss. "Headings 1.00, tables 0.00" tells them exactly.
+
+**Unweighted, because a weighting would encode an opinion this project does not
+have.** Whether a lost table matters more than a lost heading depends on the
+document and the task. The user with the document owns that judgement.
+
+**The overall names its components, because an overall built from two of them is
+not comparable with one built from five** — and a reader who cannot see which is
+which will compare them anyway.
+
+### `None` is not zero, and this is where it matters most
+
+A component whose ground truth does not exist for a fixture scores `None`.
+`long_context.md` has no table: scoring its table integrity 0.0 claims a table
+was destroyed, and 1.0 claims one survived. Both are false statements about a
+document with no table in it.
+
+This is the same rule `ground_truth.json` set in Phase 0 by recording
+`token_count: null` rather than a characters-over-four guess, and the same one
+`TokenMeter` follows when no tokenizer loads. It matters more here because a
+fidelity score is a *judgement*, and a judgement invented from absent evidence
+is worse than a missing one.
+
+### The empty document, which is why the package exists
+
+`benchmarks/README.md` states the failure: *a converter that emits an empty
+string scores a 100% reduction*. The arithmetic reproduces it one level up. An
+empty string contains no boilerplate, so `boilerplate_rejection` scores it
+**1.0** — the instrument built to catch a destroyed document credits it with
+perfect extraction.
+
+So a document with no non-whitespace content scores 0.0 on every component that
+has ground truth, and says so in the detail. It is an explicit special case
+rather than an emergent property, because it needed to be: no arrangement of
+fractions produces it on its own.
+
+The general form of the same trap is handled by reporting, not by arithmetic.
+**Recall and rejection are a pair**, always reported together. `markdownify_html`
+keeps the whole page and scores high recall with zero rejection; a converter
+that emitted only the cookie banner would score the reverse. Neither number
+alone says extraction worked.
+
+### Reading structure back out of Markdown
+
+`fidelity/markdown.py` is a small strict reader, not a CommonMark parser: ATX
+and setext headings, GFM pipe tables, list markers, fenced code blocks and both
+link forms. A full parser would be a dependency in the core install, and rule 1
+is not worth spending on a measurement module.
+
+Two rules in it are load-bearing:
+
+**Fenced code blocks are opaque.** A `#` inside a fence is a comment in
+somebody's shell script and a `|` is a pipe operator. Counting either would make
+a backend that emits more code score as though it emitted more structure.
+
+**A pipe table needs its delimiter row.** A converter that flattens a table into
+prose sometimes leaves the pipes behind, and counting those as a surviving table
+would score the documented failure as a success.
+
 ## Error taxonomy
 
 `src/tokenmill/core/errors.py`.

@@ -124,6 +124,145 @@ proportionally more furniture than this one does. **Do not quote −77.1% as a
 general claim about the web.** It is what tokenmill does to this file. Phase 10's
 corpus is what could support a general claim.
 
+## Fidelity — what each reduction cost
+
+**Added 2026-08-24**, when the Phase 10 fidelity scorer was brought forward
+ahead of Phase 5. Every token figure on this page now has a fidelity figure
+beside it, which is what `benchmarks/README.md` asks for:
+
+> Token savings without a fidelity measurement is not a result — a converter
+> that emits an empty string scores a 100% reduction.
+
+### How to read a fidelity score
+
+Six components, each scored against `tests/fixtures/ground_truth.json`, plus an
+**unweighted mean of the components that scored**. Three rules make the numbers
+readable:
+
+- **`n/a` is not zero.** A component whose ground truth does not exist for a
+  fixture scores `n/a`. `long_context.md` has no table, so scoring its table
+  integrity 0.0 would claim a table was destroyed and 1.0 would claim one
+  survived. Both are false statements about a document with no table in it.
+- **An overall is only comparable with another built from the same
+  components.** Every score names them, and so does every row below.
+- **Recall and rejection are a pair.** Neither says extraction worked on its
+  own. A converter that emitted only the cookie banner would score perfect
+  boilerplate rejection.
+
+### The whole corpus, tokens beside fidelity
+
+Every installed backend against every fixture it claims, `--tokenizer bytes`,
+2026-08-24. Produced by converting each fixture and scoring the output with
+`tokenmill fidelity`. **Bytes, not model tokens** — see Units above.
+
+| Fixture | Backend | Output bytes | Byte change | Fidelity | Components scored |
+|---|---|---|---|---|---|
+| `article.html` | `trafilatura` | 2,854 | −19.8% | 1.000 | head, content, table |
+| `article.html` | `readability` | 2,864 | −19.6% | 1.000 | head, content, table |
+| `article.html` | `markdownify_html` | 2,916 | −18.1% | 1.000 | head, content, table |
+| `article.html` | `markitdown` | 2,864 | −19.6% | 1.000 | head, content, table |
+| `article.html` | `kreuzberg` | 3,063 | −14.0% | 1.000 | head, content, table |
+| `boilerplate.html` | `trafilatura` | 2,854 | **−77.1%** | **1.000** | head, content, table, boiler |
+| `boilerplate.html` | `readability` | 2,864 | −77.1% | 1.000 | head, content, table, boiler |
+| `boilerplate.html` | `kreuzberg` | 6,120 | −51.0% | 0.750 | head, content, table, boiler |
+| `boilerplate.html` | `markitdown` | 6,713 | −46.2% | 0.750 | head, content, table, boiler |
+| `boilerplate.html` | `markdownify_html` | 6,802 | −45.5% | 0.750 | head, content, table, boiler |
+| `jsrendered.html` | `markitdown` | 140 | **−90.7%** | **0.000** | head, content, boiler |
+| `jsrendered.html` | `trafilatura` | 140 | **−90.7%** | **0.000** | head, content, boiler |
+| `jsrendered.html` | `markdownify_html` | 165 | −89.1% | 0.000 | head, content, boiler |
+| `jsrendered.html` | `readability` | 167 | −89.0% | 0.000 | head, content, boiler |
+| `jsrendered.html` | `kreuzberg` | 180 | −88.1% | 0.000 | head, content, boiler |
+| `simple.pdf` | `kreuzberg` | 2,371 | — | 0.900 | head, content |
+| `simple.pdf` | `pdfplumber` | 2,370 | — | 0.500 | head, content |
+| `simple.pdf` | `pypdf` | 2,371 | — | 0.500 | head, content |
+| `simple.pdf` | `markitdown` | 2,377 | — | 0.500 | head, content |
+| `tables.pdf` | `pdfplumber` | 599 | — | 0.667 | head, content, table |
+| `tables.pdf` | `markitdown` | 769 | — | 0.606 | head, content, table |
+| `tables.pdf` | `kreuzberg` | 466 | — | 0.500 | head, content, table |
+| `tables.pdf` | `pypdf` | 481 | — | 0.333 | head, content, table |
+| `twocolumn.pdf` | `kreuzberg` | 4,061 | — | 0.667 | head, content, order |
+| `twocolumn.pdf` | `pypdf` | 4,050 | — | 0.667 | head, content, order |
+| `twocolumn.pdf` | `pdfplumber` | 4,050 | — | 0.528 | head, content, order |
+| `twocolumn.pdf` | `markitdown` | 4,062 | — | 0.528 | head, content, order |
+| `scanned.pdf` | all four | 0 | — | **0.000** | head, content |
+| `report.docx` | `markitdown` | 3,494 | — | 0.841 | head, content, table, struct |
+| `report.docx` | `kreuzberg` | 3,472 | — | 0.614 | head, content, table, struct |
+| `unicode.docx` | `kreuzberg` | 1,314 | — | 1.000 | head, content |
+| `unicode.docx` | `markitdown` | 1,312 | — | 0.955 | head, content |
+| `deck.pptx` | `markitdown` | 753 | — | 1.000 | content |
+| `deck.pptx` | `kreuzberg` | 398 | — | 1.000 | content |
+| `data.xlsx` | `kreuzberg` | 664 | — | 1.000 | content |
+| `data.xlsx` | `markitdown` | 675 | — | 0.667 | content |
+| `sample_repo` | `gitingest` | 2,944 | — | 1.000 | content, boiler |
+| `long_context.md` | `plaintext` | 79,255 | −0.0% | n/a | none |
+
+`crawl4ai`, `docling`, `repomix` and `code2prompt` are not installed in the
+environment that produced this table and have no rows. A dash in *Byte change*
+means the source is a binary document or a repository, which has no comparable
+before-count — see "A binary document has no before" in `docs/ARCHITECTURE.md`.
+
+### The row that justifies the whole exercise
+
+**`jsrendered.html` produces the largest reduction in the corpus, −90.7%, at a
+fidelity of 0.000.**
+
+The page's article is inserted by a script, so every parser-based backend gets a
+placeholder and reports having saved 90% of the bytes. It saved them by losing
+all of the content. That is the failure `benchmarks/README.md` names, and it is
+the exact result that would have looked like the best number on this page.
+
+The last session caught it by reading a table, and fixed the symptom: web
+backends now warn when a page looks client-rendered (defect D1). A warning is
+not a number, and this page is made of numbers. Now the number contradicts
+itself in place.
+
+### What the score caught that prose already said
+
+Every one of these was already written in `docs/BACKENDS.md` as an observed
+failure mode. They are now measurements, which means an upstream release that
+fixes one will move a number rather than quietly making a sentence untrue.
+
+| Claim in `BACKENDS.md` | Now reads |
+|---|---|
+| Kreuzberg flattens `tables.pdf` into "one run-on paragraph" | table integrity **0.00** vs pdfplumber's **1.00** |
+| pypdf recovers no tables | table integrity **0.00** on `tables.pdf` |
+| pdfplumber interleaves two-column pages | reading order **0.58**; pypdf and kreuzberg both **1.00** |
+| Kreuzberg infers headings from PDFs | heading recall **0.80** on `simple.pdf`; every other backend **0.00** |
+| Kreuzberg drops DOCX lists | structure retention **0.00** on `report.docx`; markitdown **1.00** |
+| MarkItDown demotes the DOCX title | heading recall **0.36** on `report.docx` |
+| MarkItDown mis-splits the PDF table header | table integrity **0.82** on `tables.pdf` |
+| Every backend returns nothing for `scanned.pdf` | fidelity **0.000**, four for four |
+
+One result was *not* in `BACKENDS.md` and came out of building the score:
+
+- **MarkItDown escapes Markdown syntax inside XLSX cell values.** `data.xlsx`
+  has a row labelled `backend_count`; MarkItDown emits it as `backend\_count`.
+  That is defensible Markdown — a bare underscore can open emphasis — but it
+  means a literal search of the output for the cell's own value fails, which is
+  what content recall does and what a RAG pipeline would do. Kreuzberg emits it
+  unescaped and scores 1.000 against MarkItDown's 0.667.
+
+MarkItDown's blank header row on `report.docx` also showed up while the scorer
+was being built, and it was **already** in `BACKENDS.md` under that backend's
+failure modes. It is recorded here because it forced a rule — blank cells do not
+count as recovered cells — not because it was a new finding.
+
+### The limits of this table
+
+- **It is bytes, not model tokens.** Both columns. See Units.
+- **Fidelity is measured against a synthetic corpus of fourteen fixtures**, all
+  generated by `scripts/make_fixtures.py`. It measures whether a converter
+  recovers what *these* documents contain.
+- **The components are unweighted.** Whether a lost table matters more than a
+  lost heading depends on the document and the task, and this project does not
+  have an opinion to encode.
+- **A high overall is not a licence to skip reading the output.** Every number
+  above was produced alongside output that was read.
+- **This is not the Phase 10 harness.** These figures are reproduced by running
+  the commands above, not read out of a committed result file; the key rows are
+  asserted by `tests/integration/test_fidelity_backends.py`. Phase 10 replaces
+  this with committed raw results, wall time and peak memory.
+
 ## Document conversion — `tables.pdf`
 
 Measured 2026-08-21, `--tokenizer bytes`.
@@ -186,9 +325,9 @@ see `docs/BACKENDS.md`.
   policy changes.
 - **Wall time and peak memory.** Recorded ad hoc in `PROGRESS.md`; not
   systematically, and the numbers in this sandbox would not transfer.
-- **Fidelity as a score.** Today fidelity is a set of pass/fail assertions —
-  markers absent, headings present, cells recovered. Turning that into a number
-  comparable across backends is Phase 10.
+- ~~**Fidelity as a score.**~~ **Done**, ahead of Phase 5 — see "Fidelity" above.
+  What remains for Phase 10 is the harness around it: wall time, peak memory and
+  committed raw result files.
 - **Serialisation formats.** CSV, TOON and JSON encoders are Phase 5, so there
   is nothing to compare yet. `RESEARCH.md` Category 7's warning applies in
   advance: format savings carry accuracy trade-offs, TOON's wins are narrow and

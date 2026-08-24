@@ -191,6 +191,40 @@ $ tokenmill tokens --list                    # what tokenizers are available
 $ tokenmill convert page.html --json         # machine-readable, counts null if unmeasured
 ```
 
+### What the saving cost
+
+A token saving on its own is not a result: a converter that emits an empty
+string scores a 100% reduction. `tokenmill fidelity` scores converted text
+against the corpus's hand-labelled ground truth, so the two halves of the
+measurement can be produced together.
+
+```console
+$ tokenmill convert tests/fixtures/boilerplate.html -q |
+      tokenmill fidelity - --against boilerplate.html
+
+component              score  count  detail
+---------------------  -----  -----  ----------------------------------------
+heading_recall         1.000  6/6    6 of 6 headings recovered as headings
+content_recall         1.000  3/3    3 of 3 required passages present
+table_integrity        1.000  35/35  35 of 35 expected cells came back ...
+structure_retention    n/a    -      ... names no list items, links or fences
+boilerplate_rejection  1.000  6/6    6 of 6 markers that must be absent are
+reading_order          n/a    -      ... carries no order sentinels
+
+overall: 1.000 (unweighted mean of heading_recall, content_recall,
+                table_integrity, boilerplate_rejection)
+```
+
+Six named components rather than one opaque number, because a score you cannot
+decompose is a score you cannot act on. **`n/a` is never zero**: a component
+with no ground truth for that fixture did not apply, which is a different
+statement from scoring badly.
+
+The measurement it exists for: `jsrendered.html` is a page whose article is
+inserted by a script. Every parser-based backend reports a **−90.7% reduction**
+on it and scores **0.000 fidelity**, because it saved those bytes by losing all
+of the content. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
 From Python:
 
 ```python

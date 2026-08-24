@@ -318,6 +318,20 @@ one above the real one. The real header is now a data row.
 the parent numbering, where the source has it one level down. docling restarts
 it as a nested `1.`.
 
+**Markdown syntax inside XLSX cell values is escaped.** `data.xlsx` has a
+totals row labelled `backend_count`. MarkItDown emits it as:
+
+```
+| backend\_count | 6.0 |
+```
+
+The backslash is defensible — a bare underscore can open emphasis in Markdown —
+but the cell no longer contains its own value as written, so a literal search of
+the output for `backend_count` fails. Kreuzberg emits it unescaped. Measured as
+content recall **0.667 against kreuzberg's 1.000** on that fixture; found by the
+fidelity scorer rather than by reading, because the two outputs look identical
+until you search them.
+
 **Images and audio need external binaries.** MarkItDown shells out to
 `exiftool` (images) and `exiftool` + `ffmpeg` (audio). Without them it returns
 an **empty string and no error at all** — a silent success producing nothing.
