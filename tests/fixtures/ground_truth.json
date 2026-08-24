@@ -268,6 +268,63 @@
         "load-bearing"
       ]
     },
+    "structured.md": {
+      "bullet_items": [
+        "Strip navigation",
+        "Strip advertising",
+        "Strip cookie banners"
+      ],
+      "description": "Front matter, skipped heading levels, lists, a code fence, inline and reference links, an image, a duplicated block and a table.",
+      "duplicated_block": "Structure carries meaning: headings say how a document is organised, list markers say that items are peers, and table pipes say which cell belongs to which column.",
+      "duplicated_block_occurrences": 2,
+      "expected_code_fences": 1,
+      "expected_headings": [
+        [
+          "A Structured Document",
+          1
+        ],
+        [
+          "A heading that skips a level",
+          3
+        ],
+        [
+          "Measurements",
+          2
+        ]
+      ],
+      "expected_link_targets": [
+        "https://example.com/inline",
+        "https://example.com/reference",
+        "images/pipeline.png"
+      ],
+      "front_matter_keys": [
+        "title",
+        "tags",
+        "draft"
+      ],
+      "heading_levels_present": [
+        1,
+        2,
+        3
+      ],
+      "image_alt_text": [
+        "A diagram of the pipeline"
+      ],
+      "must_contain": [
+        "An opening paragraph",
+        "Heading normalisation exists to repair that",
+        "A closing paragraph"
+      ],
+      "numbered_items": [
+        "Keep headings",
+        "Keep list markers",
+        "Keep table structure",
+        "Nested detail under the last item"
+      ],
+      "table_columns": 3,
+      "table_count": 1,
+      "table_rows_including_header": 4
+    },
     "tables.pdf": {
       "description": "One 7x5 grid table (header + 6 rows) for table-fidelity checks.",
       "expected_headings": [

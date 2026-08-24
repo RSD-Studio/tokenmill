@@ -121,9 +121,17 @@ class ImageHandling(StrEnum):
 
 
 class LinkHandling(StrEnum):
-    """What the ``links`` post-processor does with Markdown links."""
+    """What the ``links`` post-processor does with Markdown links.
+
+    ``REFERENCE`` moves every target to a definition list at the end of the
+    document and leaves ``[text][n]`` behind. It saves tokens only when a
+    target repeats — a page linking the same URL five times pays for it once —
+    and costs a little when every target is unique. The post-processor reports
+    which happened rather than assuming.
+    """
 
     KEEP = "keep"
+    REFERENCE = "reference"
     STRIP = "strip"
 
 

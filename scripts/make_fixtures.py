@@ -1429,6 +1429,141 @@ def build_sample_repo(out: Path) -> dict[str, Any]:
     }
 
 
+#: The paragraph `structured.md` repeats verbatim, so duplicate-block removal
+#: has something real to remove and can be checked by counting occurrences.
+DUPLICATED_BLOCK: Final = (
+    "Structure carries meaning: headings say how a document is organised, list "
+    "markers say that items are peers, and table pipes say which cell belongs to "
+    "which column."
+)
+
+#: `structured.md` in full. Written out rather than assembled from parts so the
+#: fixture reads as the document it is, and so the exact blank lines and
+#: trailing spaces the whitespace post-processors act on are visible here.
+#:
+#: Deliberate features, each of which some Phase 5 post-processor must handle:
+#: YAML front matter; a document whose top heading is H2 and which then skips
+#: to H4; a fenced code block containing a `#` comment and a `|` pipe, neither
+#: of which is a heading or a table; bullet, numbered and nested list items;
+#: inline, reference and bare-image links; a duplicated paragraph; a pipe
+#: table; trailing spaces and runs of blank lines.
+STRUCTURED_MD: Final = """---
+title: A Structured Document
+tags: [fixture, markdown, phase-5]
+draft: false
+---
+
+## A Structured Document
+
+An opening paragraph with an [inline link](https://example.com/inline) and a
+[reference link][ref-one] in it.
+
+![A diagram of the pipeline](images/pipeline.png)
+
+#### A heading that skips a level
+
+Converters routinely emit headings that start at H2 and skip levels. Heading
+normalisation exists to repair that, and it is destructive because the original
+levels are not recoverable afterwards.
+
+- Strip navigation
+- Strip advertising
+- Strip cookie banners
+
+1. Keep headings
+2. Keep list markers
+3. Keep table structure
+   1. Nested detail under the last item
+
+```python
+# This is a comment, not a heading.
+def render(cell: str) -> str:
+    return f"| {cell} |"
+```
+
+@@DUPLICATE@@
+
+### Measurements
+
+| Stage | Tokens | Delta |
+| --- | --- | --- |
+| source | 16180 | - |
+| converted | 3150 | -80.5% |
+| post-processed | 2980 | -81.6% |
+
+@@DUPLICATE@@
+
+@@TRAILING@@
+This file carries trailing spaces above and a run of blank lines below, so
+the whitespace post-processors have something real to collapse.
+
+
+
+[ref-one]: https://example.com/reference
+""".replace("@@DUPLICATE@@", DUPLICATED_BLOCK).replace("@@TRAILING@@", "A closing paragraph.   ")
+
+
+def build_structured_md(out: Path) -> dict[str, Any]:
+    """Write ``structured.md``: every Markdown construct Phase 5 acts on.
+
+    One fixture rather than six, because the post-processors have to compose:
+    stripping images must not disturb reference-link definitions, heading
+    normalisation must not touch the ``#`` inside a code fence, and
+    duplicate-block removal must not delete the second half of a table. Those
+    are only checkable on a document that has all of it at once.
+
+    It is also what gives the fidelity scorer's ``structure_retention``
+    component something to measure. Before this fixture the corpus named list
+    items on exactly one file and named no link target or code fence anywhere,
+    so the component scored ``n/a`` almost everywhere.
+
+    Args:
+        out: Fixture output directory.
+
+    Returns:
+        Ground-truth facts for the fixture.
+    """
+    path = out / "structured.md"
+    path.write_text(STRUCTURED_MD, encoding="utf-8", newline="\n")
+    return {
+        "description": (
+            "Front matter, skipped heading levels, lists, a code fence, inline "
+            "and reference links, an image, a duplicated block and a table."
+        ),
+        "expected_headings": [
+            ["A Structured Document", 1],
+            ["A heading that skips a level", 3],
+            ["Measurements", 2],
+        ],
+        "heading_levels_present": [1, 2, 3],
+        "must_contain": [
+            "An opening paragraph",
+            "Heading normalisation exists to repair that",
+            "A closing paragraph",
+        ],
+        "bullet_items": ["Strip navigation", "Strip advertising", "Strip cookie banners"],
+        "numbered_items": [
+            "Keep headings",
+            "Keep list markers",
+            "Keep table structure",
+            "Nested detail under the last item",
+        ],
+        "expected_link_targets": [
+            "https://example.com/inline",
+            "https://example.com/reference",
+            "images/pipeline.png",
+        ],
+        "expected_code_fences": 1,
+        "image_alt_text": ["A diagram of the pipeline"],
+        "front_matter_keys": ["title", "tags", "draft"],
+        "duplicated_block": DUPLICATED_BLOCK,
+        "duplicated_block_occurrences": 2,
+        "table_count": 1,
+        "table_columns": 3,
+        "table_rows_including_header": 4,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -1448,6 +1583,7 @@ BUILDERS: Final[list[tuple[str, Any]]] = [
     ("boilerplate.html", build_boilerplate_html),
     ("jsrendered.html", build_jsrendered_html),
     ("long_context.md", build_long_context_md),
+    ("structured.md", build_structured_md),
     ("sample_repo/", build_sample_repo),
 ]
 

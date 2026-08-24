@@ -24,6 +24,7 @@ EXPECTED_FIXTURES = [
     "long_context.md",
     "report.docx",
     "sample_repo/",
+    "structured.md",
     "scanned.pdf",
     "simple.pdf",
     "tables.pdf",

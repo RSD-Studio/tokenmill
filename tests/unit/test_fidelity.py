@@ -141,6 +141,20 @@ class TestHeadingRecall:
         assert component.score == 0.5
         assert component.missing == ("Alpha",)
 
+    def test_a_re_ranked_heading_reads_differently_from_a_deleted_one(self) -> None:
+        # Both cost a point, and only one of them lost any text. The
+        # `normalize_headings` post-processor scores 0.00 here while leaving
+        # every heading in place, so the sentence has to say which happened.
+        truth = {"expected_headings": [["Title", 1], ["Section", 2]]}
+        re_ranked = score("# Title\n\n## Section\n", truth, fixture="s").get("heading_recall")
+        deleted = score("Title\n\nSection\n", truth, fixture="s").get("heading_recall")
+
+        assert re_ranked.score == 0.0
+        assert deleted.score == 0.0
+        assert "present as headings at a different level" in re_ranked.detail
+        assert "present as headings at a different level" not in deleted.detail
+        assert "present as plain text" in deleted.detail
+
     def test_missing_headings_are_named_rather_than_counted(self) -> None:
         truth = {"expected_headings": ["Alpha", "Gamma"]}
         component = score("# Alpha\n", truth, fixture="s").get("heading_recall")

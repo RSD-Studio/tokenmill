@@ -229,8 +229,15 @@ kreuzberg = "tokenmill.backends.documents.kreuzberg_adapter:KreuzbergConverter"
 docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 
 [project.entry-points."tokenmill.postprocessors"]
+# Exactly one of these is non-destructive, and that is the whole default chain.
+# `default_chain()` is built by excluding destructive processors, so the default
+# pipeline cannot damage a document by construction rather than by convention.
 normalize_whitespace = "tokenmill.post.whitespace:WhitespaceNormalizer"
+strip_frontmatter = "tokenmill.post.frontmatter:FrontMatterStripper"
+aggressive_whitespace = "tokenmill.post.aggressive_whitespace:AggressiveWhitespaceCleaner"
 links = "tokenmill.post.links:LinkHandler"
+dedupe_blocks = "tokenmill.post.dedupe:DuplicateBlockRemover"
+normalize_headings = "tokenmill.post.headings:HeadingNormalizer"
 
 [project.entry-points."tokenmill.formats"]
 markdown = "tokenmill.formats.markdown_table:MarkdownTableEncoder"

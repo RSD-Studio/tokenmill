@@ -11,10 +11,17 @@ options (:attr:`~tokenmill.core.models.ImageHandling.KEEP` and
 :attr:`~tokenmill.core.models.LinkHandling.KEEP`); a user has to ask for a
 change, and the CLI adds it to the chain automatically when they do.
 
-Scope: inline links and images, ``[text](url)`` and ``![alt](url)``. Reference
-style links, autolinks and raw URLs are Phase 5, where "link handling (inline /
-reference / strip)" is a deliverable in its own right. Code — both fenced blocks
-and inline spans — is never touched: a URL in a code sample is content.
+Scope: inline links and images, ``[text](url)`` and ``![alt](url)``. Phase 5
+adds :attr:`~tokenmill.core.models.LinkHandling.REFERENCE`, which moves targets
+into a definition list at the foot of the document — a saving exactly when a
+target repeats, and a small cost when none does.
+
+Autolinks (``<https://example.com>``) and bare URLs in prose are still left
+alone. Rewriting a bare URL means deciding where it ends, and the answer differs
+between Markdown flavours; guessing wrong corrupts the sentence around it.
+
+Code — both fenced blocks and inline spans — is never touched: a URL in a code
+sample is content.
 """
 
 from __future__ import annotations
@@ -39,6 +46,9 @@ _IMAGE_RE: Final = re.compile(r"!\[(?P<alt>[^\]\[]*)\]\((?P<target>[^()\s]*(?:\s
 _LINK_RE: Final = re.compile(
     r"(?<!!)\[(?P<text>[^\]\[]*)\]\((?P<target>[^()\s]*(?:\s+\"[^\"]*\")?)\)"
 )
+
+#: An existing reference definition, ``[label]: target``.
+_DEFINITION_RE: Final = re.compile(r"^ {0,3}\[[^\]]+\]:\s*\S+")
 
 #: An inline code span, so its contents can be protected from rewriting.
 _CODE_SPAN_RE: Final = re.compile(r"(?P<ticks>`+)(?P<body>.+?)(?P=ticks)", re.DOTALL)
@@ -81,6 +91,7 @@ class LinkHandler(BasePostProcessor):
         ):
             return text
 
+        definitions: dict[str, int] = {}
         out: list[str] = []
         fence: str | None = None
         for line in text.split("\n"):
@@ -94,30 +105,46 @@ class LinkHandler(BasePostProcessor):
                 fence = match.group("fence")
                 out.append(line)
                 continue
-            out.append(self._rewrite_line(line, options))
-        return "\n".join(out)
+            out.append(self._rewrite_line(line, options, definitions))
 
-    def _rewrite_line(self, line: str, options: ConvertOptions) -> str:
+        body = "\n".join(out)
+        if not definitions:
+            return body
+        # Definitions are emitted in first-use order, so the numbering a reader
+        # meets going down the document is ascending.
+        ordered = sorted(definitions.items(), key=lambda item: item[1])
+        block = "\n".join(f"[{index}]: {target}" for target, index in ordered)
+        return body.rstrip("\n") + "\n\n" + block + "\n"
+
+    def _rewrite_line(self, line: str, options: ConvertOptions, definitions: dict[str, int]) -> str:
         """Rewrite one line, leaving inline code spans alone.
 
         Args:
             line: The line to rewrite.
             options: Supplies the handling modes.
+            definitions: Collects targets seen in reference mode, mapping each
+                to its label. Shared across lines so a repeated target is
+                defined once, which is the only case where the mode saves
+                anything.
 
         Returns:
             The rewritten line.
         """
+        if _DEFINITION_RE.match(line):
+            # Already a reference definition. Rewriting it would produce a
+            # definition for a definition.
+            return line
         pieces: list[str] = []
         position = 0
         for span in _CODE_SPAN_RE.finditer(line):
-            pieces.append(self._rewrite_text(line[position : span.start()], options))
+            pieces.append(self._rewrite_text(line[position : span.start()], options, definitions))
             pieces.append(span.group(0))
             position = span.end()
-        pieces.append(self._rewrite_text(line[position:], options))
+        pieces.append(self._rewrite_text(line[position:], options, definitions))
         return "".join(pieces)
 
     @staticmethod
-    def _rewrite_text(text: str, options: ConvertOptions) -> str:
+    def _rewrite_text(text: str, options: ConvertOptions, definitions: dict[str, int]) -> str:
         """Rewrite the links and images in a stretch of ordinary text.
 
         Images are handled before links so that ``![alt](url)`` is never
@@ -126,6 +153,8 @@ class LinkHandler(BasePostProcessor):
         Args:
             text: The text to rewrite.
             options: Supplies the handling modes.
+            definitions: Collects targets seen in reference mode, mapping each
+                to the label that will stand in for it.
 
         Returns:
             The rewritten text.
@@ -137,4 +166,12 @@ class LinkHandler(BasePostProcessor):
 
         if options.link_handling is LinkHandling.STRIP:
             text = _LINK_RE.sub(lambda m: m.group("text"), text)
+        elif options.link_handling is LinkHandling.REFERENCE:
+
+            def to_reference(match: re.Match[str]) -> str:
+                target = match.group("target")
+                label = definitions.setdefault(target, len(definitions) + 1)
+                return f"[{match.group('text')}][{label}]"
+
+            text = _LINK_RE.sub(to_reference, text)
         return text

@@ -181,6 +181,7 @@ def _heading_recall(text: str, truth: Mapping[str, Any]) -> ComponentScore:
     body = md.normalise(text).casefold()
     missing: list[str] = []
     as_text_only = 0
+    wrong_level = 0
     recovered = 0
 
     for title, level in expected:
@@ -192,13 +193,20 @@ def _heading_recall(text: str, truth: Mapping[str, Any]) -> ComponentScore:
             continue
         if matches:
             # Present as a heading, but not at the rank ground truth records.
+            wrong_level += 1
             missing.append(f"{title} (found at level {matches[0].level}, expected {wanted_level})")
             continue
         missing.append(title)
         if needle in body:
             as_text_only += 1
 
-    detail = f"{recovered} of {len(expected)} headings recovered as headings"
+    detail = f"{recovered} of {len(expected)} headings recovered at the expected level"
+    # Two very different failures share the same score and must not share
+    # the same sentence: a heading that was deleted and a heading that was
+    # re-ranked both cost a point, and only one of them lost any text.
+    # `normalize_headings` scores 0.00 here while leaving every heading in place.
+    if wrong_level:
+        detail += f"; {wrong_level} present as headings at a different level"
     if as_text_only:
         detail += f"; {as_text_only} present as plain text but not marked up as headings"
     return ComponentScore(
