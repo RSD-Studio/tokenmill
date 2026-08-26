@@ -43,6 +43,7 @@ importing it anyway if it were Python.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 from tokenmill.backends._subprocess import find_tool, run_tool, safe_path_argument
 from tokenmill.backends.repo._common import (
@@ -89,6 +90,25 @@ _AUTOSELECTED_HINT = (
     'pip install "tokenmill[repo]" for the Python backend, which needs no '
     "external tool; or " + _INSTALL_HINT
 )
+
+#: Extra wall-clock granted when `npx` has to fetch Repomix before it can run.
+#:
+#: `options.timeout_s` is a budget for a *conversion*. When `repomix` is already
+#: on PATH that is all it pays for, and packing this project's `sample_repo`
+#: fixture takes about 2 s. When the launcher is `npx`, the very same budget
+#: silently also pays for downloading and installing an npm package on first
+#: use — a different job with a wildly different cost. Measured cold: 6.8 s in
+#: this Linux container, and more than the whole 120 s default on a GitHub
+#: Windows runner, where it timed out `TestRepomix::test_it_packs_the_repository`
+#: on the py3.13 cell of CI run 85 and the py3.12 cell of run 87 while the other
+#: two Windows cells passed. The conversion there would have taken seconds; the
+#: install is what did not fit.
+#:
+#: So the fetch gets its own allowance instead of eating the user's. Someone who
+#: passed `--timeout 30` still gets 30 s of *packing*: they do not also get 30 s
+#: to install Node software they may not have realised was being installed.
+#: `npm install -g repomix` removes the fetch, and with it this allowance.
+_NPX_FETCH_ALLOWANCE_S: Final = 180.0
 
 
 class RepomixConverter(BaseConverter):
@@ -154,14 +174,19 @@ class RepomixConverter(BaseConverter):
             BackendFailed: If Repomix exits non-zero, or writes nothing.
         """
         settings = read_repo_options(options)
-        launcher = self._launcher(options)
+        launcher, fetches_package = self._launcher(options)
+
+        # See _NPX_FETCH_ALLOWANCE_S: the npx path has to install the package
+        # before it can run it, and that install is not part of the conversion
+        # the user set a budget for.
+        budget = options.timeout_s + (_NPX_FETCH_ALLOWANCE_S if fetches_package else 0.0)
 
         with repo_workdir(source, options, self.info.id) as root:
             argv = [*launcher, *self._arguments(settings), "--", _target(root, self.info.id)]
             result = run_tool(
                 argv,
                 backend_id=self.info.id,
-                timeout_s=options.timeout_s,
+                timeout_s=budget,
                 cwd=root,
             )
 
@@ -214,14 +239,17 @@ class RepomixConverter(BaseConverter):
         )
         return text
 
-    def _launcher(self, options: ConvertOptions) -> list[str]:
+    def _launcher(self, options: ConvertOptions) -> tuple[list[str], bool]:
         """Return the command that runs Repomix, preferring an installed one.
 
         Args:
             options: Supplies ``allow_network``.
 
         Returns:
-            The launcher prefix.
+            The launcher prefix, and whether running it will first **fetch** the
+            package. The caller needs the second half because a fetch is not a
+            conversion and must not be timed as one; see
+            :data:`_NPX_FETCH_ALLOWANCE_S`.
 
         Raises:
             NetworkRequired: If only ``npx`` is available and network access has
@@ -229,7 +257,7 @@ class RepomixConverter(BaseConverter):
         """
         installed = find_tool("repomix")
         if installed is not None:
-            return [installed]
+            return [installed], False
         if not options.allow_network:
             # The hint depends on whether the user chose this backend. Someone
             # who typed `--backend repomix` wants repomix; someone who typed
@@ -243,7 +271,7 @@ class RepomixConverter(BaseConverter):
             )
         # `--yes` so npx never stops to ask; stdin is closed, so a prompt would
         # hang forever holding a terminal nobody is watching.
-        return ["npx", "--yes", "repomix@latest"]
+        return ["npx", "--yes", "repomix@latest"], True
 
     @staticmethod
     def _arguments(settings: RepoOptions) -> list[str]:

@@ -23,6 +23,7 @@ from tokenmill.backends.repo.repomix_repo import RepomixConverter
 from tokenmill.core.errors import BackendUnavailable, ConversionError, NetworkRequired
 from tokenmill.core.models import ConversionResult, ConvertOptions, Source
 from tokenmill.core.pipeline import Pipeline
+from tokenmill.core.protocol import ConversionContext
 from tokenmill.core.registry import Registry
 
 pytestmark = pytest.mark.integration
@@ -529,3 +530,72 @@ class TestTheCleanInstallStory:
         assert excinfo.value.hint is not None
         assert "npm install -g repomix" in excinfo.value.hint
         assert "tokenmill[repo]" not in excinfo.value.hint
+
+
+class TestTheNpxFetchIsNotTimedAsAConversion:
+    """A package install must not be charged to the conversion's budget.
+
+    CI found this the hard way once runners came back: `npx --yes repomix@latest`
+    has to download and install an npm package before it can pack anything, and
+    that install ran inside `options.timeout_s`. On GitHub's Windows runners it
+    did not fit in the 120 s default, so `TestRepomix::test_it_packs_the_repository`
+    failed on the py3.13 cell of run 85 and the py3.12 cell of run 87 — while the
+    other Windows cells passed, which is what a budget that is merely too tight
+    looks like. Packing `sample_repo` itself takes about 2 s.
+    """
+
+    def test_the_npx_launcher_declares_that_it_fetches(self) -> None:
+        if shutil.which("repomix") is not None:
+            pytest.skip("repomix is installed here, so npx is not the launcher")
+
+        launcher, fetches = RepomixConverter()._launcher(NETWORKED)
+
+        assert launcher[0] == "npx"
+        assert fetches is True, (
+            "the npx launcher installs the package before running it; saying so is "
+            "what stops that install being timed as if it were the conversion"
+        )
+
+    def test_an_installed_repomix_gets_no_fetch_allowance(self) -> None:
+        """The allowance is for the download, so a local install must not get it."""
+        if shutil.which("repomix") is None:
+            pytest.skip("repomix is not installed here, so there is no local launcher")
+
+        launcher, fetches = RepomixConverter()._launcher(NETWORKED)
+
+        assert fetches is False
+        assert launcher[0] != "npx"
+
+    def test_the_allowance_is_added_to_the_users_budget_rather_than_taken_from_it(
+        self, sample_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The timeout `run_tool` actually receives, captured rather than inferred.
+
+        Asserted against a deliberately tiny `--timeout`, because the bug was
+        precisely that a small conversion budget also had to cover a large
+        install. The user's 5 s of packing survives; the install is extra.
+        """
+        from tokenmill.backends.repo import repomix_repo
+
+        seen: dict[str, float] = {}
+
+        def fake_run_tool(_argv: list[str], **kwargs: Any) -> Any:
+            seen["timeout_s"] = kwargs["timeout_s"]
+            raise NetworkRequired("stop here", backend_id="repomix")
+
+        monkeypatch.setattr(repomix_repo, "run_tool", fake_run_tool)
+        monkeypatch.setattr(repomix_repo, "find_tool", lambda _name: None)
+
+        converter = RepomixConverter()
+        with pytest.raises(ConversionError):
+            converter._convert(
+                Source.from_path(sample_repo),
+                NETWORKED.with_(timeout_s=5.0),
+                ConversionContext(),
+            )
+
+        assert seen["timeout_s"] == 5.0 + repomix_repo._NPX_FETCH_ALLOWANCE_S
+        assert seen["timeout_s"] > 120.0, (
+            "the whole point is that the fetch survives the 120 s default that "
+            "two Windows CI cells died on"
+        )
