@@ -512,24 +512,40 @@ shouty = "my_package.shouty:Shouty"
 yaml = "my_package.yaml_table:YamlTableEncoder"
 ```
 
-### If your post-processor can lose anything, say so
+### Two flags, and they answer different questions
 
 ```python
 class Shouty(BasePostProcessor):
     id = "shouty"
     name = "Shouty"
     description = "Upper-cases everything."
-    destructive = True  # <- keeps it out of the default chain
+    destructive = True  # <- what it can lose; shown to the user
+    in_default_chain = False  # <- whether it runs when nobody asked; the mechanism
     order = 300
 
     def process(self, text: str, options: ConvertOptions) -> str:
         return text.upper()
 ```
 
-`default_chain()` is built by **excluding** destructive post-processors, so the
-default pipeline cannot damage a document by construction rather than by
-convention. A post-processor that changes the document's shape — even without
-losing information — should set the flag too; `chunk` does.
+`default_chain()` reads **`in_default_chain` and nothing else**. `destructive`
+is documentation: it is what the CLI's `post` listing and the GUI show someone
+deciding whether to switch a step on, and no code branches on it.
+
+Answer them separately:
+
+- **`destructive`** — can this discard information the user might have wanted?
+  If yes, `in_default_chain` must be `False`, and a registry-wide test in
+  `tests/unit/test_post_phase5.py` enforces that implication in both directions.
+- **`in_default_chain`** — should this run when the user names no chain? A step
+  that loses nothing can still answer no, because it *reshapes* the document.
+  `chunk` is exactly that case: it inserts markers, discards nothing, and nobody
+  who did not ask for chunking should get chunk boundaries.
+
+Until Phase 7 there was only `destructive`, and it did both jobs. That forced
+`chunk` to declare itself destructive purely to stay out of the default chain —
+a lie of convenience that the owner signed off splitting. If you find yourself
+setting `destructive` for a reason that is not "this can lose information", you
+want `in_default_chain` instead.
 
 Pick an `order` inside the band that matches what you do; `docs/ARCHITECTURE.md`
 lists them. Two post-processors sharing an order is not an error but does make

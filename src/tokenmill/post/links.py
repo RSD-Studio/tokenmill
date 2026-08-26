@@ -72,6 +72,7 @@ class LinkHandler(BasePostProcessor):
         "Controlled by --images and --links; does nothing under the defaults."
     )
     destructive = True
+    in_default_chain = False
     order = 200
 
     def process(self, text: str, options: ConvertOptions) -> str:

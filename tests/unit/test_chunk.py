@@ -41,9 +41,18 @@ def long_text(fixture_dir: Path) -> str:
 class TestTheContract:
     """True whether or not Chonkie is installed."""
 
-    def test_it_is_destructive_and_therefore_not_in_the_default_chain(self) -> None:
+    def test_it_loses_nothing_and_is_still_not_in_the_default_chain(self) -> None:
+        """Both halves, because they used to be one flag and could not both be true.
+
+        Chunking inserts marker comments and discards nothing, so `destructive`
+        is False — which under the pre-Phase-7 contract would have put it in the
+        default chain, because that flag was also the mechanism. `chunk` is the
+        processor that made the case for splitting them.
+        """
         processor = default_post_registry().get("chunk")
-        assert processor.destructive is True
+
+        assert processor.destructive is False
+        assert processor.in_default_chain is False
         assert "chunk" not in [p.id for p in default_post_registry().default_chain()]
 
     def test_it_sits_in_the_chunking_band(self) -> None:

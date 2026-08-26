@@ -356,6 +356,9 @@ convention = "google"
 # in this project, and CONTRIBUTING.md rule 4 says a figure that is not in
 # captured output does not go in a document.
 "tests/unit/test_web_tokens_network.py" = ["T201"]
+# Same reason: this file's whole purpose is to print the format figures into a
+# CI log, because that log is the citable source docs/BENCHMARKS.md quotes.
+"tests/unit/test_formats_tokens_network.py" = ["T201"]
 
 [tool.ruff.format]
 docstring-code-format = true

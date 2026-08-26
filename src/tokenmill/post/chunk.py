@@ -18,12 +18,18 @@ bytes, the same unit every other number in the report is in. Under a real model
 tokenizer the id is handed to Chonkie to resolve, which needs the vocabulary
 download that tokenizer needs anyway.
 
-**Why this is marked destructive**, when it deletes nothing: `destructive` is
-the only mechanism that keeps a post-processor out of the default chain, and a
-conversion that silently grew chunk boundaries nobody asked for would be exactly
-the surprise the flag exists to prevent. That does stretch the flag's stated
-meaning — "can lose information the user might have wanted" — and the stretch is
-recorded in `PROGRESS.md` as a question for the owner rather than papered over.
+**This step deletes nothing, and it still does not run by default.** Those are
+now two separate declarations, which is the whole reason Phase 7 renamed the
+mechanism. It sets `destructive = False`, honestly: chunking inserts marker
+comments and reorders nothing, and every byte of the input survives into the
+output. It sets `in_default_chain = False`, also honestly: a conversion that
+silently grew chunk boundaries nobody asked for is exactly the surprise the
+default chain exists to prevent.
+
+Until Phase 7 there was only one flag, so this processor had to claim to be
+destructive in order to stay out of the default chain — a lie of convenience
+that `PROGRESS.md` recorded as a question rather than papering over. The owner
+chose to split the flag; this is the processor that made the case.
 """
 
 from __future__ import annotations
@@ -57,8 +63,9 @@ class Chunker(BasePostProcessor):
         id: ``chunk``.
         name: Display name.
         description: One-line summary.
-        destructive: True — see the module docstring; it changes the document's
-            shape and must not be in the default chain.
+        destructive: False — it inserts markers and discards nothing.
+        in_default_chain: False — it reshapes the document, and nobody who did
+            not ask for chunking should get chunk boundaries.
         order: 700, the chunking band.
     """
 
@@ -68,7 +75,8 @@ class Chunker(BasePostProcessor):
         "Split into token-sized chunks separated by a marker comment. Sizes are "
         "in the run's tokenizer's unit. Needs `pip install tokenmill[chunk]`."
     )
-    destructive = True
+    destructive = False
+    in_default_chain = False
     order = 700
 
     def process(self, text: str, options: ConvertOptions) -> str:

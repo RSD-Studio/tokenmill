@@ -100,6 +100,7 @@ class PromptCompressor(BasePostProcessor):
         '`pip install "tokenmill[compress]"` and a model download.'
     )
     destructive = True
+    in_default_chain = False
     order = 900
 
     def process(self, text: str, options: ConvertOptions) -> str:

@@ -353,3 +353,103 @@ class TestReadingRealConverterOutput:
     ) -> None:
         with pytest.raises(TableError):
             registry.get("markdown").decode("| a | b |\n| 1 | 2 |\n")
+
+
+class TestTheOnePipeTableParser:
+    r"""Defect N3: two pipe-table parsers existed, and now there is one.
+
+    `tokenmill.fidelity.markdown` had its own scanner, written separately and
+    deliberately less forgiving. Two implementations of one syntax is a bug
+    reported twice and fixed once, so the difference became an argument to
+    `scan_tables` instead of a second copy of the algorithm.
+
+    These assert that the flag is load-bearing — that `unescape` genuinely
+    changes the answer — because a strictness flag nobody can see the effect of
+    is indistinguishable from a merge that quietly dropped one behaviour.
+    """
+
+    def test_fidelity_no_longer_carries_a_parser_of_its_own(self) -> None:
+        """Guard the guard: if a second parser reappears there, fail here.
+
+        Named after what actually went wrong. `fidelity.markdown` used to define
+        `_split_row` and its own copy of the delimiter pattern; both are gone,
+        and their return would be the third implementation this merge exists to
+        prevent.
+        """
+        from tokenmill.fidelity import markdown as fid
+
+        assert not hasattr(fid, "_split_row")
+        assert not hasattr(fid, "_DELIMITER_RE")
+
+    def test_fidelity_and_the_encoder_agree_on_where_a_table_is(self) -> None:
+        """The same block, read by both callers, is the same table."""
+        from tokenmill.fidelity.markdown import tables
+        from tokenmill.formats.markdown_table import scan_tables
+
+        text = "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
+
+        (measured,) = tables(text)
+        (scanned,) = scan_tables([ln for ln in text.split("\n") if ln.strip()])
+
+        assert measured.rows == scanned
+
+    def test_unescape_true_rejoins_a_cell_containing_an_escaped_pipe(self) -> None:
+        r"""Round-tripping must undo `\|`, or the row tears in half."""
+        from tokenmill.formats.markdown_table import scan_tables
+
+        lines = [r"| a | b |", "| --- | --- |", r"| x \| y | z |"]
+
+        (table,) = scan_tables(lines, unescape=True)
+
+        assert table[1] == ("x | y", "z"), "the escaped pipe is one cell, not two"
+
+    def test_unescape_false_keeps_the_backslash_it_did_not_write(self) -> None:
+        r"""Fidelity scores converter output, which we never escaped.
+
+        Treating `\` as an escape character there would silently alter the
+        content being measured, so the same input splits differently — and
+        that difference is the whole reason the flag exists.
+        """
+        from tokenmill.formats.markdown_table import scan_tables
+
+        lines = [r"| a | b |", "| --- | --- |", r"| x \| y | z |"]
+
+        (table,) = scan_tables(lines, unescape=False)
+
+        assert table[1] == ("x \\", "y", "z"), (
+            "without unescaping, the backslash is content and the pipe is a "
+            "column boundary, so the same row is three cells rather than two"
+        )
+        assert len(scan_tables(lines, unescape=True)[0][1]) == 2, (
+            "and the flag is what makes the difference, on identical input"
+        )
+
+    def test_a_delimiter_row_is_what_makes_pipes_a_table(self) -> None:
+        from tokenmill.formats.markdown_table import is_delimiter_row, scan_tables
+
+        assert is_delimiter_row("| --- | :---: |")
+        assert not is_delimiter_row("| a | b |")
+        assert scan_tables(["| a | b |", "| 1 | 2 |"]) == []
+
+    def test_limit_stops_early_and_none_finds_them_all(self) -> None:
+        from tokenmill.formats.markdown_table import scan_tables
+
+        lines = [
+            "| a |",
+            "| --- |",
+            "| 1 |",
+            "",
+            "| b |",
+            "| --- |",
+            "| 2 |",
+        ]
+
+        assert len(scan_tables(lines, limit=1)) == 1
+        assert len(scan_tables(lines)) == 2
+
+    def test_the_delimiter_row_is_punctuation_and_is_not_returned(self) -> None:
+        from tokenmill.formats.markdown_table import scan_tables
+
+        (table,) = scan_tables(["| a | b |", "| --- | --- |", "| 1 | 2 |"])
+
+        assert table == (("a", "b"), ("1", "2"))

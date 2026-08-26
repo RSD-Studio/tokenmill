@@ -1,4 +1,4 @@
-"""GitHub-flavoured Markdown pipe tables.
+r"""GitHub-flavoured Markdown pipe tables, and the one parser that reads them.
 
 The baseline every other format is measured against, because it is what the
 converters actually emit: `pdfplumber` recovers `tables.pdf` as one of these,
@@ -8,19 +8,148 @@ The decoder is deliberately more forgiving than the encoder. It has to read
 tables written by thirteen backends and by hand, so it accepts rows with or
 without leading and trailing pipes and ignores the delimiter row's alignment
 colons. The encoder emits one canonical shape.
+
+**This module owns pipe-table parsing for the whole project** (defect N3). Until
+Phase 7 there were two implementations: this one and a second in
+`tokenmill.fidelity.markdown`, written separately and deliberately differing in
+strictness. Two parsers for one syntax is one bug reported twice and fixed once,
+so they are now a single :func:`scan_tables` with the difference expressed as an
+argument rather than as duplicated code.
+
+The difference is real and worth keeping, which is why it is a flag and not a
+merge to the stricter of the two:
+
+* **Round-tripping a table** (`unescape=True`) must undo the escaping
+  :func:`_escape` applies, or `\\|` inside a cell tears the row in half.
+* **Measuring fidelity** (`unescape=False`) must not. It counts cells in text a
+  converter produced, which was never escaped by us, so treating a backslash as
+  an escape character would silently alter the content being scored.
+
+What each caller does *before* scanning still differs, and legitimately so:
+fidelity drops fenced code blocks first, because a `|` in a shell script is a
+pipe operator; the encoder drops blank lines instead. Line preparation is the
+caller's; recognising a table is this module's.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Final
 
 from tokenmill.formats.base import BaseTableEncoder, Table, TableError
 
-__all__ = ["MarkdownTableEncoder"]
+__all__ = ["MarkdownTableEncoder", "is_delimiter_row", "scan_tables", "split_row"]
 
 #: A GFM delimiter row: pipes, dashes, colons and spaces, with at least one dash.
 _DELIMITER_RE: Final = re.compile(r"^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
+
+
+def is_delimiter_row(line: str) -> bool:
+    """Return whether ``line`` is a GFM table delimiter row.
+
+    This is what separates a table from a line that merely contains pipes, and
+    it is the whole reason the `table_integrity` fidelity component can tell a
+    surviving table from a flattened one: a backend that mangles a table often
+    leaves the pipes behind but not the delimiter.
+
+    Args:
+        line: The line to test.
+
+    Returns:
+        True when the line is a delimiter row.
+    """
+    return "|" in line and _DELIMITER_RE.match(line) is not None
+
+
+def split_row(line: str, *, unescape: bool = True) -> tuple[str, ...]:
+    r"""Split one pipe-delimited row into its cell values.
+
+    Args:
+        line: The row, with or without leading and trailing pipes.
+        unescape: Treat ``\|`` and ``\\`` as escapes, as :meth:`
+            MarkdownTableEncoder.encode` writes them. Pass ``False`` when
+            reading text this project did not encode — see the module
+            docstring.
+
+    Returns:
+        The trimmed cell values.
+    """
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|") and not (unescape and stripped.endswith("\\|")):
+        stripped = stripped[:-1]
+
+    if not unescape:
+        return tuple(cell.strip() for cell in stripped.split("|"))
+
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(stripped):
+        char = stripped[index]
+        if char == "\\" and index + 1 < len(stripped) and stripped[index + 1] in "\\|":
+            current.append(stripped[index + 1])
+            index += 2
+            continue
+        if char == "|":
+            cells.append("".join(current).strip())
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    cells.append("".join(current).strip())
+    return tuple(cells)
+
+
+def scan_tables(
+    lines: Sequence[str],
+    *,
+    unescape: bool = True,
+    limit: int | None = None,
+) -> list[tuple[tuple[str, ...], ...]]:
+    """Find every pipe table in an already-prepared sequence of lines.
+
+    A run of pipe-bearing lines is only a table when a delimiter row follows the
+    header. That strictness is deliberate and is what makes the
+    `table_integrity` fidelity component mean anything.
+
+    The delimiter row is not returned: it is punctuation, not data.
+
+    Args:
+        lines: The lines to scan. **Prepared by the caller** — this function
+            does no fence-stripping and no blank-line filtering, because the two
+            callers legitimately want different preparation.
+        unescape: Passed to :func:`split_row`.
+        limit: Stop after this many tables. ``None`` finds all of them.
+
+    Returns:
+        One entry per table, each a tuple of rows, each row a tuple of cells.
+        The header is the first row.
+    """
+    found: list[tuple[tuple[str, ...], ...]] = []
+    index = 0
+    while index < len(lines):
+        header = lines[index]
+        if "|" not in header or index + 1 >= len(lines):
+            index += 1
+            continue
+        if not is_delimiter_row(lines[index + 1]):
+            index += 1
+            continue
+
+        rows = [split_row(header, unescape=unescape)]
+        cursor = index + 2
+        while cursor < len(lines) and "|" in lines[cursor]:
+            rows.append(split_row(lines[cursor], unescape=unescape))
+            cursor += 1
+        found.append(tuple(rows))
+        if limit is not None and len(found) >= limit:
+            return found
+        index = cursor
+    return found
 
 
 class MarkdownTableEncoder(BaseTableEncoder):
@@ -96,18 +225,12 @@ class MarkdownTableEncoder(BaseTableEncoder):
         # U+2028, U+2029, \x0b and \x0c, which are ordinary cell content and
         # would be torn across rows. Found by the round-trip property test.
         lines = [line for line in text.split("\n") if line.strip()]
-        for index, line in enumerate(lines[:-1]):
-            if "|" not in line or not _DELIMITER_RE.match(lines[index + 1]):
-                continue
-            headers = _split(line)
-            body = []
-            for candidate in lines[index + 2 :]:
-                if "|" not in candidate:
-                    break
-                body.append(_split(candidate))
-            return Table.of(headers, body)
-        msg = "no Markdown table found: a header row must be followed by a delimiter row"
-        raise TableError(msg)
+        found = scan_tables(lines, unescape=True, limit=1)
+        if not found:
+            msg = "no Markdown table found: a header row must be followed by a delimiter row"
+            raise TableError(msg)
+        headers, *body = found[0]
+        return Table.of(list(headers), [list(row) for row in body])
 
 
 def _escape(cell: str) -> str:
@@ -121,40 +244,3 @@ def _escape(cell: str) -> str:
     """
     escaped = cell.replace("\\", "\\\\").replace("|", "\\|")
     return escaped.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-
-
-def _split(line: str) -> list[str]:
-    r"""Split one pipe row into unescaped cells.
-
-    Splits on unescaped pipes only, so a cell containing ``\\|`` survives.
-
-    Args:
-        line: The row.
-
-    Returns:
-        The cell values.
-    """
-    stripped = line.strip()
-    if stripped.startswith("|"):
-        stripped = stripped[1:]
-    if stripped.endswith("|") and not stripped.endswith("\\|"):
-        stripped = stripped[:-1]
-
-    cells: list[str] = []
-    current: list[str] = []
-    index = 0
-    while index < len(stripped):
-        char = stripped[index]
-        if char == "\\" and index + 1 < len(stripped) and stripped[index + 1] in "\\|":
-            current.append(stripped[index + 1])
-            index += 2
-            continue
-        if char == "|":
-            cells.append("".join(current).strip())
-            current = []
-            index += 1
-            continue
-        current.append(char)
-        index += 1
-    cells.append("".join(current).strip())
-    return cells

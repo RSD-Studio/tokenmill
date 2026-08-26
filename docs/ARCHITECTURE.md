@@ -538,12 +538,24 @@ the outcome does not depend on discovery order. Reserved ranges:
 An explicit `--post a,b,c` runs **in the order the user gave**, overriding
 declared order, because somebody naming a chain by hand means that sequence.
 
-### Destructive is a structural property
+### Two flags: one is the mechanism, one is the description
 
-A post-processor that can lose information the user might have wanted sets
-`destructive = True`, and `default_chain()` is built by excluding them. The
-default pipeline therefore *cannot* damage a document — not by convention, by
-construction.
+A post-processor declares `in_default_chain`, and `default_chain()` is built
+from exactly that. It separately declares `destructive` — whether it can lose
+information the user might have wanted — which is shown to the user and is
+never branched on.
+
+The default pipeline still *cannot* damage a document — by construction, not by
+convention. `default_chain()` reads both flags: a processor runs by default only
+if it declares `in_default_chain` **and** is not destructive. The second half is
+redundant against a correctly declared processor and is kept precisely so that
+splitting the flag did not weaken anything, including for a third-party plugin
+written against the old contract that sets `destructive = True` and knows
+nothing about the new field.
+
+A processor declaring both is a contradiction rather than a preference, so
+`tests/unit/test_post_phase5.py` asserts the implication over the whole registry
+from both ends and it fails loudly instead of being quietly resolved.
 
 `normalize_whitespace` earns its non-destructive claim literally: it leaves
 fenced code blocks entirely alone, and it preserves Markdown hard line breaks
@@ -551,21 +563,26 @@ fenced code blocks entirely alone, and it preserves Markdown hard line breaks
 Stripping those would quietly change how a document renders, and a
 "non-destructive" step that quietly changes rendering is not one.
 
-Phase 5 made this flag load-bearing in a way it was not before. Phase 1 shipped
-one destructive post-processor; there are now six, and the default chain is
-still exactly `normalize_whitespace`. The risk is no longer that one of them is
-wrong — it is that the seventh forgets the flag and quietly joins the default
-chain, so the invariant is asserted **over the whole registry** rather than per
-processor.
+Phase 5 made this load-bearing in a way it was not before. Phase 1 shipped one
+destructive post-processor; there are now eight processors in total, and the
+default chain is still exactly `normalize_whitespace`. The risk is not that one
+of the eight is wrong — it is that the ninth forgets, so the invariant is
+asserted **over the whole registry** rather than per processor.
 
-**`chunk` stretches the flag, and the stretch is deliberate.** It deletes
-nothing; it inserts chunk markers. It is marked destructive because that is the
-only mechanism keeping a post-processor out of the default chain, and a
-conversion that silently grew boundaries nobody asked for is exactly the
-surprise the flag exists to prevent. So the flag now carries two meanings — "can
-lose information" and "changes the document's shape" — and `PROGRESS.md` records
-that as a question for the owner rather than hiding it behind a convenient
-reading.
+**Why the split happened, and what `chunk` proved.** `chunk` deletes nothing; it
+inserts chunk markers. Under the single flag it had to declare itself
+destructive anyway, because that was the only mechanism keeping a processor out
+of the default chain — so the flag carried two meanings at once, "can lose
+information" and "changes the document's shape", and for `chunk` the first was
+simply false. Phase 7 split them on the owner's sign-off: `chunk` now declares
+`destructive = False` and `in_default_chain = False`, both true, which the old
+contract could not express.
+
+This is a breaking change to the Phase 1 post-processor contract, made with the
+owner's sign-off. A third-party post-processor written against the old contract
+keeps working unchanged: it sets `destructive = True`, and `default_chain()`
+reads that too, so it stays out exactly as it did before.
+`docs/ADDING_A_BACKEND.md` carries the migration note.
 
 ---
 

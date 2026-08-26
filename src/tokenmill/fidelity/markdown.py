@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
+from tokenmill.formats.markdown_table import scan_tables
+
 __all__ = [
     "Heading",
     "Table",
@@ -47,11 +49,6 @@ _FENCE_RE: Final = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 #: A bullet or ordered list marker at the start of a line.
 _LIST_RE: Final = re.compile(r"^(?P<indent>[ \t]*)(?P<marker>[-*+]|\d{1,9}[.)])[ \t]+(?P<rest>.*)$")
-
-#: A GFM table delimiter row: only pipes, dashes, colons and whitespace, with
-#: at least one dash. This is what separates a table from a line that merely
-#: contains pipes.
-_DELIMITER_RE: Final = re.compile(r"^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
 
 #: An inline image. Matched before links, because a link pattern also matches
 #: the tail of an image.
@@ -198,50 +195,21 @@ def tables(text: str) -> tuple[Table, ...]:
     pipes behind, and counting those as a surviving table would score the
     failure this project documents as a success.
 
+    The scanning itself lives in :func:`tokenmill.formats.markdown_table.scan_tables`,
+    which is the project's one pipe-table parser (defect N3). What this function
+    contributes is the preparation: fenced code blocks are dropped first, so a
+    ``|`` in somebody's shell script is a pipe operator rather than a column
+    boundary. It scans with ``unescape=False`` because this text came out of a
+    converter and was never escaped by us — see that module's docstring.
+
     Args:
         text: The Markdown to scan.
 
     Returns:
         The tables found, outside fenced code blocks, in document order.
     """
-    visible = _uncoded_lines(text)
-    found: list[Table] = []
-    index = 0
-    while index < len(visible):
-        header = visible[index][1]
-        if "|" not in header or index + 1 >= len(visible):
-            index += 1
-            continue
-        delimiter = visible[index + 1][1]
-        if "|" not in delimiter or not _DELIMITER_RE.match(delimiter):
-            index += 1
-            continue
-
-        rows = [_split_row(header)]
-        cursor = index + 2
-        while cursor < len(visible) and "|" in visible[cursor][1]:
-            rows.append(_split_row(visible[cursor][1]))
-            cursor += 1
-        found.append(Table(tuple(rows)))
-        index = cursor
-    return tuple(found)
-
-
-def _split_row(line: str) -> tuple[str, ...]:
-    """Split one pipe-delimited row into its cell values.
-
-    Args:
-        line: The row, with or without leading and trailing pipes.
-
-    Returns:
-        The trimmed cell values.
-    """
-    stripped = line.strip()
-    if stripped.startswith("|"):
-        stripped = stripped[1:]
-    if stripped.endswith("|"):
-        stripped = stripped[:-1]
-    return tuple(cell.strip() for cell in stripped.split("|"))
+    visible = [line for _, line in _uncoded_lines(text)]
+    return tuple(Table(rows) for rows in scan_tables(visible, unescape=False))
 
 
 def list_item_lines(text: str) -> tuple[str, ...]:

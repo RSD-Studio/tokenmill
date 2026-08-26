@@ -5,12 +5,19 @@ Markdown, then an ordered, individually toggleable chain of post-processors
 turns it into the final text. They are plugins in exactly the same way backends
 are, discovered through the ``tokenmill.postprocessors`` entry point group.
 
-Two rules govern them, and both come from ``CONTRIBUTING.md``:
+Three rules govern them, and they come from ``CONTRIBUTING.md``:
 
-* **Destructive steps are opt-in.** A post-processor that can lose information
-  the user might have wanted sets :attr:`PostProcessor.destructive` and is not
-  in the default chain. The default chain must never be able to damage a
-  document.
+* **The default chain is opt-out, and it is one flag that says so.** A
+  post-processor sets :attr:`PostProcessor.in_default_chain` to declare whether
+  it runs when the user asks for nothing, and ``default_chain()`` reads exactly
+  that. The default chain must never be able to damage a document.
+* **Destructive is documentation, and it is a separate question.**
+  :attr:`PostProcessor.destructive` says whether a step can lose information the
+  user might have wanted. Until Phase 7 it was *also* the mechanism keeping a
+  step out of the default chain, which made ``chunk`` — which loses nothing and
+  only inserts markers — declare itself destructive in order to stay out. One
+  flag carrying two meanings meant one of them had to be a lie; now the
+  mechanism and the description are separate, and both can be true.
 * **Order is explicit.** Each declares an :attr:`PostProcessor.order`, and the
   chain runs in ascending order so the result does not depend on entry point
   iteration order. ``docs/ARCHITECTURE.md`` records the reserved ranges.
@@ -49,8 +56,15 @@ class PostProcessor(Protocol):
         id: Stable identifier, used as the ``--post`` value and entry point name.
         name: Human-readable display name.
         description: One sentence on what it does.
-        destructive: Whether it can discard information. Destructive
-            post-processors are never in the default chain.
+        destructive: Whether it can discard information the user might have
+            wanted. **Documentation, not mechanism** — see the module docstring.
+            It is what the CLI and the GUI show a user deciding whether to
+            enable a step, and it is never consulted to build a chain.
+        in_default_chain: Whether this runs when the user names no chain. This
+            is the mechanism :meth:`PostProcessorRegistry.default_chain` reads.
+            Anything destructive must set it ``False``; something that is not
+            destructive may still set it ``False`` because it reshapes the
+            document, which is what ``chunk`` does.
         order: Position in the chain; lower runs first.
     """
 
@@ -58,6 +72,7 @@ class PostProcessor(Protocol):
     name: str
     description: str
     destructive: bool
+    in_default_chain: bool
     order: int
 
     def process(self, text: str, options: ConvertOptions) -> str:
@@ -89,6 +104,7 @@ class BasePostProcessor(ABC):
     name: str
     description: str
     destructive: bool = False
+    in_default_chain: bool = True
     order: int = 500
 
     @abstractmethod
@@ -189,14 +205,28 @@ class PostProcessorRegistry:
     def default_chain(self) -> tuple[PostProcessor, ...]:
         """Return the post-processors that run when the user asks for nothing.
 
-        Every non-destructive post-processor, in chain order. Destructive ones
-        are excluded by construction, so the default pipeline cannot lose
-        anything the converter produced.
+        Every post-processor that declares :attr:`PostProcessor.in_default_chain`
+        **and** is not destructive, in chain order.
+
+        The second half is redundant against a correctly declared processor, and
+        it is deliberately kept anyway. Splitting the flag would otherwise have
+        weakened a Phase 1 guarantee that held *by construction*: a third-party
+        post-processor written against the old contract sets ``destructive =
+        True`` and says nothing about ``in_default_chain``, which
+        :class:`BasePostProcessor` defaults to ``True`` — so a plugin that was
+        correctly excluded before this change would have silently joined the
+        default chain on upgrade. Reading both flags means the default pipeline
+        still cannot damage a document by construction rather than by test.
+
+        A processor declaring both is a contradiction rather than a preference,
+        and ``tests/unit/test_post_phase5.py`` asserts the implication over the
+        whole registry from both ends so it surfaces as a failure rather than
+        being quietly resolved here.
 
         Returns:
             The default chain.
         """
-        return tuple(p for p in self if not p.destructive)
+        return tuple(p for p in self if p.in_default_chain and not p.destructive)
 
     def resolve(self, ids: tuple[str, ...] | None) -> tuple[PostProcessor, ...]:
         """Turn a requested chain into post-processors.
