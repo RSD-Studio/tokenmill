@@ -195,12 +195,31 @@ def run_tool(
 
     import time
 
+    # Resolve argv[0] on PATH ourselves rather than leaving it to the OS.
+    #
+    # On Windows the two are not the same lookup. `shutil.which` honours
+    # PATHEXT, so it finds `npx.cmd`; CreateProcess appends only `.exe`, so
+    # `subprocess.run(["npx", ...])` raises FileNotFoundError on a machine that
+    # plainly has npx installed. CI's first Windows run since the repository
+    # went public failed repository-backend tests exactly this way, while
+    # `probe_tool` — which uses `shutil.which` — reported the tool available.
+    # The probe and the launch have to agree.
+    #
+    # On POSIX this changes nothing: `shutil.which` returns the same file the
+    # kernel would have found. When it finds nothing we keep the bare name, so
+    # the FileNotFoundError below still produces the same BackendUnavailable.
+    # `argv` itself is left alone: it is what the messages below name and what
+    # ToolResult records for provenance, and "install
+    # C:\\Program Files\\nodejs\\npx.cmd" is not a hint anyone can act on.
+    resolved = shutil.which(argv[0])
+    launch = [resolved, *argv[1:]] if resolved is not None else argv
+
     environment = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV}
-    _log.debug("running %s", argv)
+    _log.debug("running %s", launch)
     started = time.perf_counter()
     try:
         completed = subprocess.run(  # noqa: S603 - list argv, shell=False, no user string
-            argv,
+            launch,
             capture_output=True,
             timeout=timeout_s,
             cwd=str(cwd) if cwd is not None else None,

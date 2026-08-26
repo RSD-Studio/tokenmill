@@ -311,6 +311,12 @@ class TestTheCommand:
     ) -> None:
         # The exit-gate check, as a test: every number in the table is the
         # byte length of the file it wrote.
+        #
+        # This can only fail on Windows, and it did: text-mode writing rewrote
+        # every \n as \r\n, so pdfplumber's file was 615 bytes against a
+        # reported 599. There is no way to provoke that on Linux or macOS, so
+        # the CI Windows cells are the only place this assertion has teeth --
+        # which is the argument for keeping them.
         out = tmp_path / "variants"
         result = runner.invoke(
             app,
@@ -332,6 +338,7 @@ class TestTheCommand:
                 continue
             written = (out / f"{row['backend']}.md").read_bytes()
             assert len(written) == row["tokens"], row["backend"]
+            assert b"\r\n" not in written, row["backend"]
 
     def test_json_carries_the_verdict(self, fixture_dir: Path) -> None:
         result = runner.invoke(

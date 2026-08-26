@@ -2581,6 +2581,40 @@ of a red one, however faithful. The status table's "(local; CI cannot schedule
 runners)" notes stay as they are until a run comes back green, and this entry
 will be extended with that run's number rather than edited to assume it.
 
+**Round three — run 84: 21 of 24 green, and Windows tells the truth for the
+first time.** Lint, types, coverage, tokenizers, fixtures and all nine
+`clean-core-install` cells passed, as did every Ubuntu and macOS test cell. All
+three **Windows** test cells failed, 6 tests each — failures the help-text bug
+had been masking, and which no run in this project's history could have found,
+because CI has never once executed the suite on Windows. Two causes, both real
+product defects rather than test artefacts:
+
+- **`npx` could not be launched, on a runner that has npx installed.**
+  `shutil.which` honours `PATHEXT` and finds `npx.cmd`, so `probe_tool` reported
+  the tool available; `CreateProcess` appends only `.exe`, so
+  `subprocess.run(["npx", ...], shell=False)` raised `FileNotFoundError` and the
+  user saw `npx is not installed or not on PATH`. The probe and the launch were
+  doing two different lookups. `run_tool` now resolves `argv[0]` with
+  `shutil.which` and launches the resolved path, while leaving `argv` itself
+  alone for messages and provenance — "install
+  `C:\Program Files\nodejs\npx.cmd`" is not a hint anyone can act on. On POSIX
+  this is a no-op. **This means the repomix backend has never worked on Windows,
+  since Phase 4.** Recorded as a defect that shipped, not as a test fix.
+- **`--write` produced files that did not match the numbers beside them.** All
+  four write sites used text mode, so Python rewrote every `\n` as `\r\n` on
+  Windows: `pdfplumber.md` was 615 bytes against a reported 599.
+  `docs/BENCHMARKS.md`'s standing claim is that each number in the table is the
+  byte length of the file it wrote, and on Windows that claim was false. All
+  four now pass `newline=""`.
+
+**Honest limit on the second fix.** It cannot be provoked on Linux or macOS —
+text mode translates nothing there — so no test in this repository can fail on
+it locally. The CI Windows cells are the only place that assertion has teeth,
+which is now written into the test itself rather than left implicit. The `npx`
+fix is verified on POSIX only (present tool runs and keeps its bare name in
+provenance; absent tool still raises `BackendUnavailable` with the actionable
+hint); its Windows behaviour is asserted by CI and nowhere else.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned

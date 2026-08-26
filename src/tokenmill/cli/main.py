@@ -428,7 +428,10 @@ def convert(
         print(json.dumps(_result_to_json(result, include_text=output is None), indent=2))
     elif output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(result.text, encoding="utf-8")
+        # newline="" so the bytes on disk are the bytes we counted. Without it
+        # Python's text mode rewrites every \n as \r\n on Windows, and the file
+        # is larger than the number the report just printed.
+        output.write_text(result.text, encoding="utf-8", newline="")
         print(f"wrote {output}", file=sys.stderr)
     else:
         print(result.text, end="" if result.text.endswith("\n") else "\n")
@@ -529,7 +532,10 @@ def repo(
         print(json.dumps(_result_to_json(result, include_text=output is None), indent=2))
     elif output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(result.text, encoding="utf-8")
+        # newline="" so the bytes on disk are the bytes we counted. Without it
+        # Python's text mode rewrites every \n as \r\n on Windows, and the file
+        # is larger than the number the report just printed.
+        output.write_text(result.text, encoding="utf-8", newline="")
         print(f"wrote {output}", file=sys.stderr)
     else:
         print(result.text, end="" if result.text.endswith("\n") else "\n")
@@ -972,16 +978,21 @@ def _write_variants(directory: Path, comparison: Any, format_comparison: Any) ->
     """
     directory.mkdir(parents=True, exist_ok=True)
     written = 0
+    # newline="" throughout: docs/BENCHMARKS.md's claim is that each number in
+    # the table is the byte length of the file beside it, and a test asserts it.
+    # Text-mode newline translation on Windows breaks both.
     for row in comparison.rows:
         if row.text is None:
             continue
-        (directory / f"{row.backend_id}.md").write_text(row.text, encoding="utf-8")
+        (directory / f"{row.backend_id}.md").write_text(row.text, encoding="utf-8", newline="")
         written += 1
     if format_comparison is not None:
         for row in format_comparison.rows:
             if row.text is None:
                 continue
-            (directory / f"table.{row.format_id}").write_text(row.text, encoding="utf-8")
+            (directory / f"table.{row.format_id}").write_text(
+                row.text, encoding="utf-8", newline=""
+            )
             written += 1
     print(f"wrote {written} variant(s) to {directory}", file=sys.stderr)
 
