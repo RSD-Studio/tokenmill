@@ -123,12 +123,24 @@ went green including the step that downloads layout models from
 `huggingface.co`. Update `PROGRESS.md`, `docs/BACKENDS.md` and the backend status
 table: it is verified, and say which run verified it.
 
-**(c) CI found 24 real test failures in its first run**, all now fixed on the
-branch this prompt ships with. Three were the last session's; twenty-one were
-Phase 4 tests that asserted gitingest's behaviour unconditionally while the CI
-job installed only the `documents` extra, so they had **never executed
-anywhere**. The lesson is worth carrying: a suite that has only run on one
-machine, with one set of extras, has verified less than its pass count suggests.
+**(c) CI found 24 real test failures in its first run, and 1 more in its
+second**, all now fixed on the branch this prompt ships with.
+
+In run 81: three were the last session's; twenty-one were Phase 4 tests that
+asserted gitingest's behaviour unconditionally while the CI job installed only
+the `documents` extra, so they had **never executed anywhere**.
+
+In run 82, after that fix: `test_the_flags_are_documented_in_help` failed on all
+nine test cells. `typer/rich_utils.py` sets `FORCE_TERMINAL` when `GITHUB_ACTIONS`,
+`FORCE_COLOR` or `PY_COLORS` is set, and reads them **at import time**, so help
+text is plain on a developer's machine and colourised in CI — and Rich's option
+highlighter emits the leading dash of a long flag as its own span, so the literal
+substring `--offline` is simply not present in the rendered bytes. The fix strips
+ANSI before asserting. **Two things to carry from this.** First: you can
+reproduce CI's rendering exactly with `GITHUB_ACTIONS=true uv run pytest -q`,
+and you should, before claiming a CLI-output change is green. Second, and
+larger: a suite that has only run on one machine, with one set of extras, in one
+terminal environment, has verified less than its pass count suggests.
 
 **One known flake, already handled, do not "fix" it again.** The blocking
 `tokenizers` job hit five consecutive **HTTP 429** responses from
