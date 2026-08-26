@@ -18,9 +18,11 @@ than the assertion loosened.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tokenmill.core.errors import NetworkRequired
 from tokenmill.core.models import ConvertOptions, Source
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.tokens.meter import TokenMeter
@@ -131,16 +133,44 @@ class TestRealPipelineMeasurement:
         assert meter.failure is None
 
 
+def hub_tokenizer(model: str) -> Any:
+    """Return a Hub tokenizer, skipping when the Hub rate-limits the runner.
+
+    Anonymous requests to `huggingface.co` are rate-limited per IP, and CI
+    runners share addresses. On 2026-08-26 — the first run after CI came back —
+    both tests below failed on five consecutive `429 Too Many Requests`
+    responses for `bert-base-uncased/tokenizer.json`. The adapter behaved
+    correctly and raised `NetworkRequired` with its offline hint; the Hub was
+    simply refusing to serve.
+
+    A 429 is infrastructure, not a defect, and failing a blocking job on one is
+    how a suite gets ignored. **Only the rate-limit case skips**: any other
+    failure still fails, and the tiktoken tests above — the ones the project's
+    headline token figure depends on — are untouched by this and stay strict.
+
+    Args:
+        model: The Hub model id.
+
+    Returns:
+        The tokenizer.
+    """
+    pytest.importorskip("tokenizers")
+    try:
+        return TokenizerRegistry().get(model)
+    except NetworkRequired as exc:  # pragma: no cover - depends on the Hub
+        if "429" in str(exc) or "Too Many Requests" in str(exc):
+            pytest.skip(f"huggingface.co rate-limited this runner: {exc}")
+        raise
+
+
 class TestRealHuggingFace:
     def test_a_hub_tokenizer_resolves_and_counts(self) -> None:
-        pytest.importorskip("tokenizers")
-        tokenizer = TokenizerRegistry().get("hf:bert-base-uncased")
+        tokenizer = hub_tokenizer("hf:bert-base-uncased")
 
         assert tokenizer.count("hello world") > 0
 
     def test_special_tokens_are_not_added_to_the_count(self) -> None:
         """Adding [CLS]/[SEP] would make every document two tokens too expensive."""
-        pytest.importorskip("tokenizers")
-        tokenizer = TokenizerRegistry().get("hf:bert-base-uncased")
+        tokenizer = hub_tokenizer("hf:bert-base-uncased")
 
         assert tokenizer.count("hello") == 1
