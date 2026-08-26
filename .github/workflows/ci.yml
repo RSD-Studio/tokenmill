@@ -92,11 +92,19 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
-      # --extra documents so the markitdown and kreuzberg integration tests
-      # run rather than skipping. Everything it pulls is CPU-only, permissively
-      # licensed and wheel-installable on all three platforms; docling stays
-      # out, which is the whole point of its separate extra.
-      - run: uv sync --extra dev --extra fixtures --extra documents
+      # Every extra whose tests would otherwise skip. CI exists to exercise
+      # more than a developer's laptop, not less: before 2026-08-26 this job
+      # installed `documents` only, so the gitingest, readability and chonkie
+      # tests silently skipped on all nine cells while passing locally for
+      # anyone who happened to have those extras.
+      #
+      # Everything here is CPU-only, permissively licensed and
+      # wheel-installable on all three platforms. `docling`, `crawl4ai` and
+      # `compress` stay out — multi-gigabyte, and each has its own job or is
+      # covered by a stub.
+      - run: >
+          uv sync --extra dev --extra fixtures --extra documents
+          --extra web --extra repo --extra chunk
       - name: Run tests
         run: uv run pytest -q --cov=tokenmill --cov-report=term-missing -rs
 
@@ -110,7 +118,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra dev --extra fixtures --extra documents
+      # Same extras as the test matrix: a coverage number measured over a
+      # different set of installed backends is not the suite's coverage.
+      - run: >
+          uv sync --extra dev --extra fixtures --extra documents
+          --extra web --extra repo --extra chunk
       # DEVELOPMENT_PLAN.md §4 sets a >=85% target on core and tokens
       # specifically; adapters elsewhere are thin wrappers and are allowed to be
       # lower. Gating the two packages the target names stops the number

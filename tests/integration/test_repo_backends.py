@@ -27,6 +27,16 @@ from tokenmill.core.registry import Registry
 
 pytestmark = pytest.mark.integration
 
+#: gitingest is behind the `repo` extra, so an install without it cannot run
+#: the tests below. They asserted its behaviour unconditionally until CI first
+#: ran on 2026-08-26 and failed 21 of them on every cell: the suite had only
+#: ever been run on a machine that happened to have the extra.
+#:
+#: The CI test job now installs `repo`, so these run rather than skip. The
+#: marker is what makes a *partial* install degrade to a skip instead of a
+#: failure, which is the same contract every other optional backend has.
+requires_gitingest = pytest.mark.requires("gitingest")
+
 OFFLINE = ConvertOptions(tokenizer="bytes")
 
 #: With permission for a backend to fetch its own runtime — which for repomix
@@ -73,6 +83,7 @@ def pack(pipeline: Pipeline, root: Path, backend: str, **extra: Any) -> Conversi
     return pipeline.run(Source.from_path(root), options)
 
 
+@requires_gitingest
 class TestGitingest:
     """The primary, and the one auto-selection picks."""
 
@@ -187,6 +198,7 @@ class TestGitingest:
         assert os.environ.get("GITHUB_TOKEN") == "sentinel-value"
 
 
+@requires_gitingest
 class TestTheTokenBudget:
     """Phase 4's second acceptance criterion: it caps, and it reports."""
 
@@ -257,6 +269,7 @@ class TestTheTokenBudget:
         assert any("budget could not be applied" in w for w in result.warnings)
 
 
+@requires_gitingest
 class TestTheDirectoryBreakdown:
     def test_it_says_which_folder_is_eating_the_context(
         self, sample_repo: Path, pipeline: Pipeline
@@ -273,6 +286,7 @@ class TestTheDirectoryBreakdown:
         assert "Tokens by directory" not in result.text
 
 
+@requires_gitingest
 class TestRunningWithoutTheRuntime:
     """The acceptance criterion about the *absent* case. These always run.
 
@@ -407,6 +421,7 @@ class TestCode2Prompt:
         assert "Tokens by directory" in result.text
 
 
+@requires_gitingest
 class TestAllThreeAgreeOnWhatMatters:
     """The claim that makes this one product rather than three CLIs."""
 
