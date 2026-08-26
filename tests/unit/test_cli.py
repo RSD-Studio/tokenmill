@@ -10,6 +10,7 @@ path a user's broken ``pip install`` would take, rather than a simulation of it.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +42,23 @@ OFFLINE = ["--tokenizer", "bytes"]
 #: The new default is covered by `TestTheDefaultBackendForAWebPage`, and the
 #: extraction itself by `tests/integration/test_web_backends.py`.
 RAW = ["--backend", "markdownify_html"]
+
+#: Matches an ANSI SGR escape sequence, for :func:`plain`.
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain(text: str) -> str:
+    """Strip ANSI styling, so an assertion reads the words and not the colours.
+
+    Typer decides at *import* time whether to force a terminal, and one of the
+    three environment variables it looks at is ``GITHUB_ACTIONS``. So help text
+    is plain on a developer's machine and colourised in CI — and Rich's option
+    highlighter emits the leading dash of a long flag as its own span, which
+    means the literal substring ``--offline`` is present locally and absent in
+    CI. That divergence cost a red run; asserting on the stripped text is what
+    the assertion meant in the first place.
+    """
+    return _SGR.sub("", text)
 
 
 @pytest.fixture(autouse=True)
@@ -261,7 +279,7 @@ class TestTheFetchFlags:
         result = runner.invoke(app, ["convert", "--help"])
 
         for flag in ("--offline", "--ignore-robots", "--allow-network", "--user-agent"):
-            assert flag in result.stdout
+            assert flag in plain(result.stdout)
 
     def test_a_flag_that_was_not_passed_does_not_clobber_a_configured_value(
         self, tmp_path: Path

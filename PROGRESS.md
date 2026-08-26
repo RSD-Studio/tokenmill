@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-24 by Claude Code_
+_Last updated: 2026-08-26 by Claude Code_
 
 ## Status at a glance
 
@@ -37,9 +37,13 @@ and for the reason `docs/REVIEW_PHASES_0_4.md` §8 gives: Phase 5's
 post-processors can each be measured as a win in tokens and a loss in fidelity,
 and without a fidelity metric its defaults would be argued rather than measured.
 
-**CI has still never scheduled a runner since run 24.** Re-checked at the start
-of this session — see the verification log entry for 2026-08-24. Everything
-below is local green, which is not the same claim.
+**CI came back to life on 2026-08-26**, when the owner made the repository
+public; the five-day runner-scheduling failure was a billing condition, not our
+YAML. Its first real runs found 24 failures and then 1 more — three of them
+mine, twenty-one of them latent in Phase 4 since 2026-08-22, and the last a
+CI-only rendering difference in a help-text assertion. See the verification log
+entry for that date. Until a run comes back green, everything below is still
+local green, which is not the same claim.
 
 ## Previous phase: 2 — Document backends (complete)
 
@@ -2493,6 +2497,89 @@ And the traps that will otherwise be rediscovered the expensive way:
 5. `docs/LICENSES.md` is a dead link from `CONTRIBUTING.md`.
 6. CI could not schedule runners as of 11:15 UTC today — re-check before
    relying on it.
+
+### 2026-08-26 — CI is alive, and it had two rounds of real failures to report
+
+The owner made the repository public. That fixed the runner-scheduling failure
+that had stood since run 24 on 2026-08-21: a private repository on a plan with
+no included Actions minutes creates jobs, expands matrices correctly, and then
+fails every one of them with `runner_id: 0` and no steps — which is what 23
+consecutive runs, and then every run for five days, had been doing. It was never
+our YAML. **The entry for 2026-08-22 titled "CI cannot schedule runners, and it
+is not our YAML" was right about the cause and is now closed.**
+
+The immediate consequence is that Phases 3, 4, 5, 6 and the fidelity slice got
+their first real CI run, and CI had five days of accumulated truth to tell.
+
+**Round one — run 81, 24 jobs, 24 failures.** Two causes, in opposite
+directions:
+
+- **Three failures were mine, from this session.** `tests/unit/test_post_phase5.py`
+  builds the expected default chain by excluding the destructive processors, and
+  its exclusion set named `dedupe` and the rest but not `chunk`. It passed on my
+  machine for the worst possible reason: chonkie happened to be installed here,
+  so `chunk` registered and the count came out right by accident. On a runner
+  without the `chunk` extra it did not. Fixed by naming the set for what it
+  actually is — `NEEDS_AN_EXTRA = frozenset({"chunk", "compress"})`.
+- **Twenty-one failures were Phase 4's, and had been latent since 2026-08-22.**
+  `tests/integration/test_repo_backends.py` imports gitingest at module scope
+  with no `requires` marker. Locally the `repo` extra was installed, so the file
+  ran; in CI the `test` job installed `--extra documents` only, so the file
+  errored at collection. Phase 4's exit gate was recorded as "local green only",
+  which was honest, but nobody had noticed that the CI job could not have run
+  these tests even if runners had been available. Fixed in both directions: a
+  `requires_gitingest` marker on the five classes, and the `test` and `coverage`
+  jobs now install every extra that is CPU-only, permissive and
+  wheel-installable on all three platforms — `documents web repo chunk`. Before
+  today that job installed `documents` alone, so the gitingest, readability and
+  chonkie tests would have silently skipped on all nine cells.
+
+**Round two — run 82, one failure, on all nine test cells and the coverage
+gate.** I pushed the round-one fix saying it would make the suite green. It did
+not. That was an overclaim: I had verified both install shapes locally
+(`1024 passed, 102 skipped` minimal; `1073 passed, 53 skipped` with the new CI
+extras) and treated local green as proof of CI green, which is precisely the
+inference this project has been burned by twice.
+
+The remaining failure was `test_the_flags_are_documented_in_help`, which asserts
+that `--offline`, `--ignore-robots`, `--allow-network` and `--user-agent` appear
+in `tokenmill convert --help`.
+
+- Command: `env GITHUB_ACTIONS=true uv run pytest -q`
+- Result: `1 failed, 1072 passed, 53 skipped` — **an exact reproduction of the
+  CI counts**, on this machine, from one environment variable.
+- Cause: `typer/rich_utils.py` line 80 sets `FORCE_TERMINAL = True` when any of
+  `GITHUB_ACTIONS`, `FORCE_COLOR` or `PY_COLORS` is set, and it reads them at
+  *import* time. So help text is plain on a developer's machine and colourised
+  in CI. Rich's option highlighter then emits the leading dash of a long flag as
+  its own span: the rendered bytes are
+  `\x1b[1;36m-\x1b[0m\x1b[1;36m-offline\x1b[0m`, in which the literal
+  substring `--offline` does not occur.
+- The CLI is not at fault. The help genuinely documents all four flags; the
+  assertion was reading styling rather than words. Fixed by stripping ANSI SGR
+  sequences before the comparison, via a `plain()` helper in the test module
+  that carries this explanation. Checked that the assertion still has teeth: the
+  four real flags are found in the stripped text and an invented one is not.
+- Because typer reads those variables at import time, an environment fixture
+  would not have worked — by the time a test runs, `FORCE_TERMINAL` is already
+  bound. Stripping at the assertion is the change that actually holds.
+
+**Verified before pushing, this time with the failing environment reproduced
+first:**
+
+- `uv run ruff check .` — all checks passed
+- `uv run ruff format --check .` — 126 files already formatted
+- `uv run mypy` — no issues in 103 source files
+- `GITHUB_ACTIONS=true uv run pytest -q` — `1073 passed, 53 skipped`
+- `uv run pytest -q` — `1073 passed, 53 skipped`
+- The coverage job's exact command — `Required test coverage of 85% reached.
+  Total coverage: 95.42%`
+
+**What this does not yet establish.** Everything above is still this machine.
+The claim that CI is green belongs to a green run, not to a local reproduction
+of a red one, however faithful. The status table's "(local; CI cannot schedule
+runners)" notes stay as they are until a run comes back green, and this entry
+will be extended with that run's number rather than edited to assume it.
 
 ## Backend status
 
