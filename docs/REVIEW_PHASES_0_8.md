@@ -14,7 +14,10 @@ produced it, or is marked unverified.
 
 ## 1. Verdict first
 
-**This is the first review written with a working CI matrix**, and that changes
+**CI run 97 on this branch is green across all 25 jobs**, which is the first
+time a review here could open with that sentence.
+
+**This is also the first review written with a working CI matrix**, and that changes
 what the rest of this document is worth. The previous review's opening complaint
 was that nothing had been verified anywhere but one Linux box. Nine cells now
 run on every push, and they found things — real ones, twice, in this session

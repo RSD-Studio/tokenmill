@@ -2639,6 +2639,19 @@ hint); its Windows behaviour is asserted by CI and nowhere else.
 
 ### 2026-08-27 — Phases 7 and 8 exit gate
 
+**CI run 97 on `claude/phases-7-8-734pty` (commit `49076d0`): all 25 jobs
+green.** That is the branch's first fully green run and it is the one the exit
+gate rests on. The route there, because the failures are the useful part:
+
+| Run | Result | What it found |
+|---|---|---|
+| 88 | ✅ success | the repomix npx-timeout fix; `Main`'s red cell resolved |
+| 89 | ❌ 1 job | the byte/token orderings disagree — a **finding**, not a bug |
+| 90 | ❌ 11 jobs | a deprecated metadata API under `-W error`; an environment-dependent test |
+| 93 | ❌ | the same two, before the fix landed |
+| 94 | ❌ 1 job | Type check: the `gui` extra was on the test job and not on that one |
+| 97 | ✅ **success** | — |
+
 Pasted, not summarised.
 
 ```console
