@@ -43,18 +43,18 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
 from benchmarks.memory import measure_memory
 from benchmarks.models import CellResult
-from tokenmill.core.errors import ConversionError
+from tokenmill.core.errors import ConfigError, ConversionError
 from tokenmill.core.models import ConversionResult, ConvertOptions, Source
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.core.registry import Registry, default_registry
-from tokenmill.fidelity import COMPONENTS
+from tokenmill.fidelity import COMPONENTS, resolve_fixture
 from tokenmill.fidelity import score as score_fidelity
 
 __all__ = ["Cell", "cells_for", "run_cell", "run_matrix"]
@@ -146,12 +146,42 @@ def cells_for(
             # corpus on this machine, and the manifest's notes record it.
             _log.info("no backend claims %s", name)
             continue
+        truth = _truth_for(truths, name)
         for converter in candidates:
             backend_id = converter.info.id
             if wanted is not None and backend_id not in wanted:
                 continue
-            found.append(Cell(name, path, backend_id, truths.get(name)))
+            found.append(Cell(name, path, backend_id, truth))
     return found
+
+
+def _truth_for(truths: Mapping[str, Any], name: str) -> Any | None:
+    """Find a corpus item's ground truth, forgiving the manifest's key spelling.
+
+    This was ``truths.get(name)``, which is wrong for exactly one fixture and
+    silently so. The manifest keys a directory fixture with a trailing slash —
+    ``sample_repo/`` — because that is how the generator writes it, and the
+    corpus lists it as ``sample_repo``. The lookup missed, the cell got no truth,
+    and the report printed ``n/a`` in the fidelity column: indistinguishable from
+    the honest "this fixture has no answer key". :func:`resolve_fixture` is the
+    project's own answer to this and the CLI has used it since Phase 5; the
+    harness simply did not.
+
+    Args:
+        truths: The loaded ground-truth manifest.
+        name: The corpus item's name.
+
+    Returns:
+        Its ground truth, or ``None`` when the manifest genuinely has none —
+        logged, because an unscored fixture should be a decision rather than an
+        accident.
+    """
+    try:
+        _, truth = resolve_fixture(truths, name)
+    except ConfigError:
+        _log.info("no ground truth for %s, so its cells are unscored", name)
+        return None
+    return truth
 
 
 def run_cell(

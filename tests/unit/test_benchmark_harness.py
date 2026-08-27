@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 
 import pytest
-from benchmarks.harness import Cell, _portable_message, cells_for, run_cell
+from benchmarks.harness import Cell, _portable_message, _truth_for, cells_for, run_cell
 from benchmarks.models import CellResult, RunManifest
 from benchmarks.report import (
     ReportError,
@@ -37,6 +37,7 @@ from benchmarks.report import (
 from benchmarks.run import _uncounted_status, observed_versions
 
 from tokenmill.core.registry import Registry
+from tokenmill.fidelity import load_ground_truth
 
 
 def _manifest(**overrides: object) -> RunManifest:
@@ -575,3 +576,38 @@ class TestAUnitThatCountedNothingFailsTheRun:
             _cell(tokenizer="o200k_base", tokens_before=None, tokens_after=None),
         ]
         assert _uncounted_status(rows, ["bytes", "o200k_base"]) == 1
+
+
+class TestTheRepositoryFixtureIsActuallyScored:
+    """The harness looked up ground truth by a key the manifest does not use.
+
+    `cells_for` did `truths.get(name)`. The generator keys a directory fixture
+    with a trailing slash — `sample_repo/` — and the corpus lists it as
+    `sample_repo`, so the lookup missed and every repository cell was scored
+    `n/a`. That is indistinguishable in the report from the honest "this fixture
+    has no answer key", which is why it survived a full run and a written-up
+    result set: it was caught by noticing that `docs/BENCHMARKS.md` had a
+    fidelity of 1.000 for a cell the matrix called unscorable.
+
+    `resolve_fixture` has handled this since Phase 5 and the CLI has always used
+    it. The harness simply did not.
+    """
+
+    def test_a_trailing_slash_key_is_found(self, fixture_dir: Path) -> None:
+        truths = dict(load_ground_truth(fixture_dir))
+        assert "sample_repo/" in truths
+        assert "sample_repo" not in truths
+        assert _truth_for(truths, "sample_repo") is not None
+
+    def test_a_fixture_with_no_truth_at_all_still_returns_none(self) -> None:
+        assert _truth_for({"tables.pdf": {}}, "nothing_like_this.pdf") is None
+
+    def test_every_corpus_item_the_generator_makes_has_a_truth(self, fixture_dir: Path) -> None:
+        """The property the near-miss was hiding: nothing is silently unscored."""
+        from benchmarks.run import corpus_items
+
+        truths = dict(load_ground_truth(fixture_dir))
+        unscored = [
+            name for name, _ in corpus_items(fixture_dir) if _truth_for(truths, name) is None
+        ]
+        assert unscored == []
