@@ -433,6 +433,106 @@ honest recommendation is to measure it on your own documents before enabling it.
 (`report.docx` repeats a "detail" paragraph per section) and correctly finds
 none where there is none.
 
+## The isolated backends (Phase 7)
+
+Measured 2026-08-27, `--tokenizer bytes`, fidelity beside every figure.
+
+### `tables.pdf` — the fixture built to punish table-flattening
+
+| Backend | Bytes | Fidelity |
+|---|---|---|
+| `kreuzberg` | **466** | 0.500 |
+| `pypdf` | 481 | 0.333 |
+| **`pymupdf4llm`** | 553 | **0.848** |
+| `pdfplumber` | 599 | 0.667 |
+| `markitdown` | 769 | 0.606 |
+
+### `twocolumn.pdf` — and this is the surprising one
+
+| Backend | Bytes | Fidelity |
+|---|---|---|
+| `pdfplumber` | **4,050** | 0.528 |
+| `pypdf` | 4,050 | 0.667 |
+| `kreuzberg` | 4,061 | 0.667 |
+| `markitdown` | 4,062 | 0.528 |
+| **`pymupdf4llm`** | 4,069 | **0.972** |
+
+**Multi-column reading order has been this project's worst-served case since
+Phase 2.** Every Python backend either interleaves the columns or loses the
+layout, and 0.667 was the ceiling across four of them. PyMuPDF4LLM scores
+**0.972** and costs 19 bytes more than the cheapest — 0.5%.
+
+That is the answer to whether an AGPL tool is worth a separate virtualenv, a
+subprocess boundary and 1.6 s of interpreter start-up per conversion: on PDFs,
+yes, and not narrowly. It is also the most faithful backend on `simple.pdf`
+(1.000, against kreuzberg's 0.900 and 0.500 for everything else).
+
+### `report.docx` — the clearest illustration of this page's whole premise
+
+| Backend | Bytes | Fidelity |
+|---|---|---|
+| **`libreoffice`** | **3,418** | **0.375** |
+| `kreuzberg` | 3,472 | 0.614 |
+| `markitdown` | 3,494 | **0.841** |
+| `pandoc` | 3,567 | 0.841 |
+
+**The cheapest output and the worst, in the same row.** LibreOffice's
+`txt:Text` filter emits plain text: every heading, every table and every list
+marker is gone. A benchmark sorted by size recommends it.
+
+This is why `tokenmill compare` is not sorted by size and why the GUI's
+comparison table has no sortable columns.
+
+### What the isolation costs
+
+| Backend | `tables.pdf` | Why |
+|---|---|---|
+| `pypdf` | 73 ms | in-process |
+| `pdfplumber` | ~100 ms | in-process |
+| `pymupdf4llm` | ~1,570 ms | **a whole Python interpreter starts per conversion** |
+
+Single unrepeated runs (defect N7). The gap is real and the shape of the fix is
+a persistent child process, which the plan says to measure before building —
+this is that measurement, and Phase 10 owns it.
+
+---
+
+## The GUI (Phase 8)
+
+**A 20-file batch of the fixture corpus**, `--tokenizer bytes`, 2026-08-27:
+
+```
+20-file batch in 3.10s; caller polled 362 times while it ran
+total=20 done=20 failed=0 cancelled=0
+comparable=6/20  before=35,020 after=14,348  ratio=59.0%
+tokens_produced (all items) = 40,854
+```
+
+**Two numbers, deliberately.** `tokens_produced` is what the batch costs to send
+to a model — every item. `ratio` is what it *saved*, over the six items that had
+a comparable before-count. Fourteen of the twenty are binary documents, which
+have no before-count at all: a PDF's "before" would be a file size, not a token
+count of anything a model would read.
+
+Conflating them produced a real bug. The first version summed output over every
+item and input over only the ones that had it, and reported this corpus at
+**−16.7%** — a batch that appeared to have grown by a sixth. It had not; the
+denominator was missing seven files the numerator included.
+
+**Worker start-up**, measured because the argument for serialising the queue
+initially rested on it and turned out not to:
+
+```
+import tokenmill + Registry(): min 0.125s  median 0.133s  n=5
+```
+
+Not the several tenths assumed. The case for one worker thread rests on defect
+D2 — `Pipeline.run` touches process-global state that is not thread-safe — and
+on the pickle cost of moving `ConversionResult` between processes, not on
+start-up.
+
+---
+
 ## The core install, and its ceiling
 
 **Defect D4, open since Phase 3 and undecided for four phases, decided here.**
