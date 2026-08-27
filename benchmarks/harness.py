@@ -162,6 +162,7 @@ def run_cell(
     pipeline: Pipeline | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     extra: dict[str, Any] | None = None,
+    allow_network: bool = False,
 ) -> CellResult:
     """Measure one cell: convert it ``repeats`` times, score it, record it.
 
@@ -188,6 +189,13 @@ def run_cell(
         pipeline: The pipeline to run; a default one is built when omitted.
         timeout_s: Per-conversion budget.
         extra: Backend options, such as a service address.
+        allow_network: Whether backends may reach the network. **Off by
+            default**, and explicit rather than inferred: with it off, ``repomix``
+            refuses because ``npx`` would download it and a heavy backend refuses
+            because it would download weights. Both refusals are honest rows.
+            Turning it on lets those backends take part, and the run manifest
+            records that it was on — because a timing that includes a package
+            download is not a conversion timing.
 
     Returns:
         The cell's result, successful or not. **Never raises**: an unattended
@@ -204,11 +212,7 @@ def run_cell(
         backend=cell.backend,
         fallback=False,
         timeout_s=timeout_s,
-        # Every corpus item is a local file, so nothing here needs the network —
-        # except a service backend, whose address arrives in `extra`. Granting
-        # it unconditionally would let a backend quietly download a model in the
-        # middle of a benchmark and time the download as the conversion.
-        allow_network=bool(extra),
+        allow_network=allow_network,
         extra=extra or {},
     )
     source = Source.from_path(cell.path)
@@ -272,6 +276,7 @@ def run_matrix(
     pipeline: Pipeline | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     extra: dict[str, Any] | None = None,
+    allow_network: bool = False,
     on_cell: Any = None,
 ) -> Iterator[CellResult]:
     """Run every cell against every tokenizer, yielding results as they land.
@@ -286,6 +291,7 @@ def run_matrix(
         pipeline: The pipeline to run.
         timeout_s: Per-conversion budget.
         extra: Backend options.
+        allow_network: Whether backends may reach the network.
         on_cell: Called with ``(index, total, cell, tokenizer)`` before each
             cell, for progress. Optional.
 
@@ -307,6 +313,7 @@ def run_matrix(
                 pipeline=runner,
                 timeout_s=timeout_s,
                 extra=extra,
+                allow_network=allow_network,
             )
 
 

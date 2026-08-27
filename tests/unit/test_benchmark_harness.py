@@ -34,6 +34,7 @@ from benchmarks.report import (
     merge,
     write_results,
 )
+from benchmarks.run import observed_versions
 
 from tokenmill.core.registry import Registry
 
@@ -374,3 +375,55 @@ class TestTheMatrixIsNotCurated:
         by_fixture = {c.fixture: c.truth for c in cells}
         assert by_fixture["tables.pdf"] is not None
         assert by_fixture["long_context.md"] is not None
+
+
+class TestTheManifestRecordsVersionsItActuallySaw:
+    """A manifest that lists every backend against ``None`` records nothing.
+
+    The first committed run had exactly that: thirteen installed backends, all
+    mapped to ``null``, under a field whose docstring promised "the version of
+    every backend that took part". The per-cell figures were right the whole
+    time; the manifest was simply never filled from them.
+    """
+
+    def test_a_backends_version_comes_from_its_cells(self) -> None:
+        results = [
+            _cell(backend="trafilatura", backend_version="2.2.0"),
+            _cell(backend="pandoc", backend_version="pandoc 3.1.3"),
+        ]
+        versions = observed_versions(results, {"trafilatura": None, "pandoc": None})
+        assert versions == {"trafilatura": "2.2.0", "pandoc": "pandoc 3.1.3"}
+
+    def test_an_installed_backend_with_no_cells_stays_unknown(self) -> None:
+        versions = observed_versions(
+            [_cell(backend="trafilatura", backend_version="2.2.0")],
+            {"trafilatura": None, "code2prompt": None},
+        )
+        assert versions["code2prompt"] is None
+
+    def test_a_backend_that_could_not_say_stays_unknown(self) -> None:
+        versions = observed_versions(
+            [_cell(backend="repomix", backend_version=None)], {"repomix": None}
+        )
+        assert versions["repomix"] is None
+
+    def test_disagreeing_versions_are_both_reported_rather_than_one_picked(self) -> None:
+        results = [
+            _cell(backend="pandoc", backend_version="pandoc 3.1.3"),
+            _cell(backend="pandoc", backend_version="pandoc 3.5"),
+        ]
+        versions = observed_versions(results, {"pandoc": None})
+        assert versions["pandoc"] == "pandoc 3.1.3, pandoc 3.5"
+
+    def test_the_committed_manifest_names_a_version_for_every_backend_that_ran(self) -> None:
+        """The regression this class exists for, asserted against the real file."""
+        root = Path(__file__).resolve().parents[2]
+        results_dir = root / "benchmarks" / "results" / "2026-08-27"
+        manifest = json.loads((results_dir / "manifest.json").read_text(encoding="utf-8"))
+        rows = json.loads((results_dir / "results.json").read_text(encoding="utf-8"))["results"]
+        ran = {row["backend"] for row in rows if row["backend_version"]}
+        assert ran, "the committed run should have backends that reported a version"
+        for backend in sorted(ran):
+            assert manifest["backend_versions"].get(backend), (
+                f"{backend} produced rows with a version but the manifest records none"
+            )

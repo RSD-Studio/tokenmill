@@ -32,10 +32,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 import platform
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,7 +48,7 @@ from tokenmill import __version__
 from tokenmill.core.registry import default_registry
 from tokenmill.fidelity import load_ground_truth
 
-__all__ = ["build_manifest", "corpus_items", "main"]
+__all__ = ["build_manifest", "corpus_items", "main", "observed_versions"]
 
 _log = logging.getLogger(__name__)
 
@@ -142,10 +144,12 @@ def build_manifest(
         notes: Anything qualifying the whole run.
 
     Returns:
-        The manifest.
+        The manifest, with ``backend_versions`` holding one key per installed
+        backend and ``None`` for each. The versions themselves are only known
+        once a conversion has actually run, so :func:`observed_versions` fills
+        them in afterwards; a manifest written straight from this function
+        would claim to record provenance it does not have.
     """
-    import os
-
     registry = default_registry()
     versions: dict[str, str | None] = {}
     absent: list[str] = []
@@ -176,6 +180,40 @@ def build_manifest(
         backend_versions=versions,
         notes=all_notes,
     )
+
+
+def observed_versions(
+    results: Sequence[CellResult], known: Mapping[str, str | None]
+) -> dict[str, str | None]:
+    """Fill in each backend's version from what its cells actually reported.
+
+    A version resolved by asking the registry before the run is a version of
+    something that may never have run. This takes the figure the conversion
+    itself recorded — a subprocess backend's ``--version`` output, or the
+    installed distribution's version — so the manifest describes the run rather
+    than the environment.
+
+    Args:
+        results: Every cell of the run.
+        known: The installed backends, from :func:`build_manifest`. Backends
+            with no cells keep their ``None``: installed, never exercised.
+
+    Returns:
+        A new mapping. A backend whose cells disagree — impossible in one run,
+        but not worth asserting away — reports every value it gave, joined by
+        ``", "``, rather than an arbitrary one.
+
+    Raises:
+        Nothing.
+    """
+    seen: dict[str, set[str]] = {}
+    for result in results:
+        if result.backend_version:
+            seen.setdefault(result.backend, set()).add(result.backend_version)
+    merged: dict[str, str | None] = dict(known)
+    for backend, versions in seen.items():
+        merged[backend] = ", ".join(sorted(versions))
+    return merged
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -214,6 +252,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Only these backends; repeatable. Defaults to every one that claims a fixture.",
     )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
+    parser.add_argument(
+        "--allow-network",
+        action="store_true",
+        help=(
+            "Let backends reach the network. Off by default: without it repomix "
+            "refuses because npx would download it, which is an honest row. With "
+            "it on, repomix takes part and its first timing may include a package "
+            "download — the manifest records that the flag was set."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
@@ -228,7 +276,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     corpus = corpus_items(args.corpus)
     cells = cells_for(corpus, truths, backends=args.backends)
 
-    notes = _environment_notes(tokenizers)
+    notes = _environment_notes(tokenizers, allow_network=args.allow_network)
     manifest = build_manifest(args.corpus, tokenizers, args.repeats, notes)
 
     def progress(index: int, total: int, cell: object, tokenizer: str) -> None:
@@ -241,10 +289,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             tokenizers,
             repeats=args.repeats,
             timeout_s=args.timeout,
+            allow_network=args.allow_network,
             on_cell=progress,
         )
     )
 
+    manifest = replace(
+        manifest, backend_versions=observed_versions(results, manifest.backend_versions)
+    )
     paths = write_results(args.out, results, manifest)
     failed = sum(1 for r in results if not r.ok)
     empty = sum(1 for r in results if r.ok and r.empty_output)
@@ -255,18 +307,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _environment_notes(tokenizers: Sequence[str]) -> list[str]:
+def _environment_notes(tokenizers: Sequence[str], *, allow_network: bool) -> list[str]:
     """Say what this environment could and could not measure.
 
     A limitation the reader has to infer is one they will not infer.
 
     Args:
         tokenizers: What is being counted in.
+        allow_network: Whether backends were permitted to reach the network.
 
     Returns:
         The notes.
     """
     notes: list[str] = []
+    if allow_network:
+        notes.append(
+            "Run with --allow-network, so backends that fetch were able to. "
+            "repomix's first conversion may include an npx package download; its "
+            "warm-up run absorbs it, but treat its timing as the least reliable "
+            "figure here."
+        )
+    else:
+        notes.append(
+            "Run without --allow-network. repomix therefore refuses rather than "
+            "letting npx download it mid-benchmark, and that refusal is a row."
+        )
     if list(tokenizers) == ["bytes"]:
         notes.append(
             "Counted in UTF-8 bytes only. A byte figure is NOT a token figure: on "
