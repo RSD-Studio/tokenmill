@@ -103,7 +103,7 @@ Every fixture crossed with every backend the registry says claims its format.
 Five timed repeats each after a discarded warm-up, plus one extra instrumented
 pass for memory. Raw data:
 [`benchmarks/results/2026-08-27/`](../benchmarks/results/2026-08-27/), commit
-`a8a2764`, corpus digest `cd2d48ccf99bddb4`, on Linux 6.18.44 / x86-64 / Python
+`e8a2065`, corpus digest `cd2d48ccf99bddb4`, on Linux 6.18.44 / x86-64 / Python
 3.11.15 / 4 cores. Counted in **UTF-8 bytes** — see [Units](#units-read-this-before-quoting-anything).
 
 This section pulls out what the matrix says that the project did not already
@@ -126,25 +126,25 @@ backend that was asked easier questions, and it would have put `pymupdf4llm`
 | Fixture | Backend | Bytes out | Fidelity | Median | Added RSS |
 |---|---|---|---|---|---|
 | `tables.pdf` | `pypdf` | 481 | **0.333** | 5 ms | 0 MiB |
-| `tables.pdf` | `kreuzberg` | 466 | 0.500 | 10 ms | 0 MiB |
-| `tables.pdf` | `markitdown` | 769 | 0.606 | 56 ms | 0 MiB |
-| `tables.pdf` | `pdfplumber` | 599 | 0.667 | 30 ms | 0 MiB |
-| `tables.pdf` | `pymupdf4llm` | 553 | **0.848** | **1,149 ms** | **282 MiB** |
-| `twocolumn.pdf` | `pypdf` | 4,050 | 0.667 | 14 ms | 0 MiB |
-| `twocolumn.pdf` | `pdfplumber` | 4,050 | 0.528 | 136 ms | 0 MiB |
-| `twocolumn.pdf` | `markitdown` | 4,062 | 0.528 | 301 ms | 0 MiB |
-| `twocolumn.pdf` | `kreuzberg` | 4,061 | 0.667 | 27 ms | 0 MiB |
-| `twocolumn.pdf` | `pymupdf4llm` | 4,069 | **0.972** | **1,288 ms** | 249 MiB |
+| `tables.pdf` | `kreuzberg` | 466 | 0.500 | 9 ms | 0 MiB |
+| `tables.pdf` | `markitdown` | 769 | 0.606 | 50 ms | 0 MiB |
+| `tables.pdf` | `pdfplumber` | 599 | 0.667 | 26 ms | 0 MiB |
+| `tables.pdf` | `pymupdf4llm` | 553 | **0.848** | **1,168 ms** | **280 MiB** |
+| `twocolumn.pdf` | `pypdf` | 4,050 | 0.667 | 13 ms | 0 MiB |
+| `twocolumn.pdf` | `pdfplumber` | 4,050 | 0.528 | 151 ms | 0 MiB |
+| `twocolumn.pdf` | `markitdown` | 4,062 | 0.528 | 311 ms | 0 MiB |
+| `twocolumn.pdf` | `kreuzberg` | 4,061 | 0.667 | 24 ms | 0 MiB |
+| `twocolumn.pdf` | `pymupdf4llm` | 4,069 | **0.972** | **1,316 ms** | 282 MiB |
 | `simple.pdf` | `pypdf` | 2,371 | 0.500 | 9 ms | 0 MiB |
-| `simple.pdf` | `pdfplumber` | 2,370 | 0.500 | 77 ms | 0 MiB |
-| `simple.pdf` | `markitdown` | 2,377 | 0.500 | 147 ms | 0 MiB |
-| `simple.pdf` | `kreuzberg` | 2,371 | 0.900 | 17 ms | 0 MiB |
-| `simple.pdf` | `pymupdf4llm` | 2,410 | **1.000** | **1,291 ms** | 330 MiB |
+| `simple.pdf` | `pdfplumber` | 2,370 | 0.500 | 79 ms | 0 MiB |
+| `simple.pdf` | `markitdown` | 2,377 | 0.500 | 135 ms | 0 MiB |
+| `simple.pdf` | `kreuzberg` | 2,371 | 0.900 | 15 ms | 0 MiB |
+| `simple.pdf` | `pymupdf4llm` | 2,410 | **1.000** | **1,152 ms** | 322 MiB |
 
 `pymupdf4llm` is the most faithful PDF backend on all three scorable PDFs and it
-is the most expensive on all three: roughly **100× to 250× the wall time of
-`pypdf`** and about 280 MiB of resident memory against `pypdf`'s nothing
-measurable. That is the trade tokenmill exists to make visible, and it is not
+is the most expensive on all three: **103×, 133× and 234× the wall time of
+`pypdf`** on `twocolumn.pdf`, `simple.pdf` and `tables.pdf` respectively, and
+280–322 MiB of resident memory against `pypdf`'s nothing measurable. That is the trade tokenmill exists to make visible, and it is not
 the trade a size-only comparison would show.
 
 ### `twocolumn.pdf` is the argument for fidelity scoring, in one row
@@ -195,14 +195,14 @@ and last on memory:
 
 | Fixture | Backend | Fidelity | Median | Added RSS |
 |---|---|---|---|---|
-| `report.docx` | `markitdown` | **0.841** | 332 ms | 1 MiB |
-| `report.docx` | `pandoc` | **0.841** | 207 ms | 126 MiB |
-| `report.docx` | `kreuzberg` | 0.614 | 8 ms | 0 MiB |
-| `report.docx` | `libreoffice` | **0.375** | **1,700 ms** | **263 MiB** |
+| `report.docx` | `markitdown` | **0.841** | 346 ms | 0 MiB |
+| `report.docx` | `pandoc` | **0.841** | 167 ms | 125 MiB |
+| `report.docx` | `kreuzberg` | 0.614 | 7 ms | 0 MiB |
+| `report.docx` | `libreoffice` | **0.375** | **1,466 ms** | **263 MiB** |
 | `unicode.docx` | `kreuzberg` | **1.000** | 7 ms | 0 MiB |
-| `unicode.docx` | `pandoc` | **1.000** | 177 ms | 124 MiB |
-| `unicode.docx` | `markitdown` | 0.955 | 362 ms | 0 MiB |
-| `unicode.docx` | `libreoffice` | 0.500 | **1,656 ms** | 222 MiB |
+| `unicode.docx` | `pandoc` | **1.000** | 167 ms | 124 MiB |
+| `unicode.docx` | `markitdown` | **0.955** | 322 ms | 0 MiB |
+| `unicode.docx` | `libreoffice` | 0.500 | **1,446 ms** | 263 MiB |
 
 It also fails outright on `data.xlsx` and `deck.pptx` in this container, exiting
 0 having written nothing — the failure mode its adapter was hardened against in
@@ -211,8 +211,9 @@ repair R0. **LibreOffice's value here is format coverage, not quality**, and
 converts formats nothing else in the core install will, and because a
 `.doc`/`.odt`/`.rtf` path has to exist somewhere.
 
-`pandoc` and `markitdown` tie on `report.docx` at 0.841 by different routes, and
-`pandoc` pays 126 MiB for the process boundary to get there.
+`pandoc` and `markitdown` tie on `report.docx` at 0.841 by different routes.
+`markitdown` gets there in-process for no measurable resident memory; `pandoc`
+pays 125 MiB for the process boundary and is twice as fast for it.
 
 ### The process boundary costs about 250 MiB, consistently
 
@@ -221,13 +222,19 @@ minus a reading taken immediately before it. The in-process backends measure
 zero — they allocate in Python, which `tracemalloc` sees and the resident set
 mostly does not. Everything that spawns something lands in the same band:
 
-| Backend | What it spawns | Added RSS |
+| Backend | What it spawns | Added RSS, across its cells |
 |---|---|---|
-| `pandoc` | `pandoc` | 111–126 MiB |
-| `libreoffice` | `soffice` | 222–263 MiB |
+| `pandoc` | `pandoc` | 28, 64, 108, 111, 123, 124, 125 MiB |
+| `libreoffice` | `soffice` | 263 MiB, both cells |
 | `repomix` | `npx` → `node` | 279 MiB |
-| `pymupdf4llm` | nothing — in-process C | 249–330 MiB |
+| `pymupdf4llm` | nothing — in-process C | 280, 282, 322 MiB |
 | everything else | nothing | 0 MiB |
+
+`pandoc`'s spread is the honest one to look at. Its seven cells range from 28 to
+125 MiB against inputs from a 1.5 kB Markdown file to a 79 kB one, which is what
+a sampled figure looks like when the work is short enough that the 5 ms sampler
+catches a different part of the process's growth each time. Read it as a band,
+not as seven measurements.
 
 `pymupdf4llm` is the interesting row: it is an in-process backend whose memory
 is invisible to `tracemalloc` (0.1 MiB reported) and plainly visible in the
@@ -238,16 +245,16 @@ one.
 
 | Backend | Bytes out | Fidelity | Scored | Median | Added RSS | Version |
 |---|---|---|---|---|---|---|
-| `gitingest` | 2,944 | 1.000 | 2 | 313 ms | 0 MiB | 0.3.1 |
-| `repomix` | 3,786 | 1.000 | 2 | 1,443 ms | 279 MiB | — |
+| `gitingest` | 2,944 | 1.000 | 2 | 271 ms | 0 MiB | 0.3.1 |
+| `repomix` | 3,786 | 1.000 | 2 | 1,518 ms | 279 MiB | — |
 
 The fixture is nine tracked files (four Python, two Markdown, a
 `pyproject.toml`, a `.gitignore` and a binary blob) plus a `.gitignore`d
 `secrets.env` that neither emits. Two fidelity components apply to a packed
 repository — content recall and boilerplate rejection — and both engines score
 1.000 on both. **So this is a like-for-like cost comparison at equal measured
-fidelity**, and on it `gitingest` produces 22% less output in a fifth of the
-time with no subprocess at all.
+fidelity**, and on it `gitingest` produces 22% less output in a sixth of the
+time (5.6×) with no subprocess at all.
 
 Read the "equal measured fidelity" carefully. Two of six components is all the
 corpus can score here; `repomix`'s extra 842 bytes are structure — a directory
