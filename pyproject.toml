@@ -385,6 +385,11 @@ convention = "google"
 "scripts/make_fixtures.py" = ["T201", "E501", "RUF001", "RUF002", "RUF003"]
 # The CLI presentation layer is the one place allowed to write to stdout.
 "src/tokenmill/cli/**" = ["T201"]
+# The benchmark harness has command-line entry points of its own, and their
+# progress and summary lines are the interface. Same rule as the CLI, applied to
+# the two modules that are one.
+"benchmarks/run.py" = ["T201"]
+"benchmarks/merge.py" = ["T201"]
 # The network-marked benchmark test prints the measured figure on purpose: the
 # CI log is the only place a real model-token number can be *read out* of a run
 # in this project, and CONTRIBUTING.md rule 4 says a figure that is not in
@@ -404,7 +409,11 @@ docstring-code-format = true
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.11"
-files = ["src", "scripts", "tests"]
+# `benchmarks` is here from Phase 10 onwards. It is not a script directory: it
+# produces the numbers this project publishes, and a harness that silently
+# recorded a `None` where a count belonged would be the most expensive kind of
+# bug here — one that is wrong in a committed file somebody later cites.
+files = ["src", "scripts", "tests", "benchmarks"]
 # The sample_repo fixture is synthetic source code used as conversion input.
 exclude = ["^tests/fixtures/"]
 strict = true
