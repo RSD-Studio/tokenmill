@@ -30,12 +30,29 @@ read about:
   stderr attached.
 
 **Filters are a separate install from the binary.** A machine can have ``soffice``
-on ``PATH`` and still convert nothing: this project's own container had
-``libreoffice-core`` without ``libreoffice-writer``, so the binary ran, exited
-zero and produced ``Error: source file could not be loaded`` for every input.
-The availability probe cannot see that — a filter set is not a file with a
-predictable path — so it is reported as a conversion failure carrying the
-install hint, and ``docs/BACKENDS.md`` documents it as a failure mode.
+on ``PATH`` and still convert nothing: this project's own container ships
+``libreoffice-core`` without ``libreoffice-writer``, so the binary runs, exits
+zero and produces ``Error: source file could not be loaded`` for every input.
+
+Phase 7 reported that as a conversion failure carrying the install hint and left
+the availability probe saying "available", on the grounds that a filter set is
+not a file with a predictable path. It is, near enough: LibreOffice describes
+each document component in its configuration registry, as ``writer.xcd``,
+``calc.xcd`` and friends, and a core-only install has the registry directory and
+none of those files. :meth:`LibreOfficeConverter._probe` now looks, and this
+backend reports itself **unavailable with the ``apt`` line** on such a machine
+instead of accepting work it cannot do.
+
+The check only ever downgrades on **positive** evidence — a registry directory
+that was found and that contains no component. An install whose layout we do not
+recognise keeps the old answer, because "I could not find the registry" is not
+the same fact as "there are no filters", and a probe that guessed would make a
+working LibreOffice disappear from somebody's backend list. The runtime failure
+above stays as the backstop for exactly that case.
+
+This was found the way trap 1 in the handover says it will be: on a fresh
+container without the tools a previous session had installed, where six tests
+that should have skipped failed instead.
 
 License: MPL-2.0. Read on 2026-08-26 from
 ``/usr/share/doc/libreoffice-core/copyright`` of ``libreoffice-core
@@ -50,6 +67,7 @@ from typing import Final
 from tokenmill.backends.isolated.base import SubprocessConverter
 from tokenmill.core.errors import BackendFailed
 from tokenmill.core.models import (
+    Availability,
     BackendInfo,
     ConvertOptions,
     Domain,
@@ -84,6 +102,39 @@ _FORMATS: Final[tuple[str, ...]] = (
 #: What LibreOffice says when it loaded nothing. It exits **zero** anyway.
 _LOAD_FAILURE: Final = "source file could not be loaded"
 
+#: Where LibreOffice keeps its configuration registry, relative to a directory
+#: above the executable. Two spellings because the macOS bundle uses
+#: ``Contents/Resources`` where Linux and Windows use ``share``.
+_REGISTRY_DIRS: Final[tuple[tuple[str, ...], ...]] = (
+    ("share", "registry"),
+    ("Resources", "registry"),
+)
+
+#: How far above the executable to look for the registry. Two is enough on all
+#: three platforms — ``program/soffice`` and ``Contents/MacOS/soffice`` are both
+#: two levels down from the install root — and a third would start matching
+#: ``/usr/share``, which belongs to the whole system rather than to LibreOffice.
+_REGISTRY_SEARCH_DEPTH: Final = 3
+
+#: One registry file per document component. A build carrying none of these can
+#: start, print its version and load nothing.
+_COMPONENT_REGISTRY_FILES: Final[tuple[str, ...]] = (
+    "writer.xcd",
+    "calc.xcd",
+    "impress.xcd",
+    "draw.xcd",
+)
+
+#: What to install when the components are missing. Named per-distribution
+#: because "install LibreOffice" is exactly the advice that fails here — it is
+#: already installed.
+_COMPONENTS_HINT: Final = (
+    "LibreOffice is installed without its document components, so it can start "
+    "and convert nothing. Install them too: "
+    "'apt install libreoffice-writer libreoffice-calc libreoffice-impress', or "
+    "install the full 'libreoffice' package rather than 'libreoffice-core'"
+)
+
 
 class LibreOfficeConverter(SubprocessConverter):
     """Converts documents with a headless LibreOffice, out of process.
@@ -117,6 +168,58 @@ class LibreOfficeConverter(SubprocessConverter):
     )
 
     executable = "soffice"
+
+    def _probe(self) -> Availability:
+        """Report availability, and refuse a LibreOffice that has no filters.
+
+        Two questions, in order: is the binary there, and can it load a
+        document. The second is the one Phase 7 left unasked, and the answer
+        costs one :meth:`~pathlib.Path.is_file` per component.
+
+        Returns:
+            Whatever the base probe said, unless a registry directory was found
+            and contains no document component — in which case unsupported,
+            carrying the package names to install.
+        """
+        base = super()._probe()
+        if not base:
+            return base
+        registry = self._registry_dir()
+        if registry is None:
+            # No evidence either way. Keep the binary's answer; the runtime
+            # check in run_conversion is the backstop.
+            return base
+        if any((registry / name).is_file() for name in _COMPONENT_REGISTRY_FILES):
+            return base
+        return Availability.unsupported(
+            f"LibreOffice at {self.discover()} has no document components installed",
+            hint=_COMPONENTS_HINT,
+        )
+
+    def _registry_dir(self) -> Path | None:
+        """Locate LibreOffice's configuration registry from its executable.
+
+        ``PATH`` usually holds a symlink — ``/usr/bin/soffice`` pointing into
+        ``/usr/lib/libreoffice/program`` — so the real path is resolved first,
+        or every parent examined would be the wrong tree.
+
+        Returns:
+            The registry directory, or ``None`` when this install's layout is
+            not one of the three recognised ones.
+        """
+        binary = self.discover()
+        if binary is None:  # pragma: no cover - _probe checks this first
+            return None
+        try:
+            resolved = Path(binary).resolve()
+        except OSError:  # pragma: no cover - a path that cannot be resolved
+            return None
+        for parent in list(resolved.parents)[:_REGISTRY_SEARCH_DEPTH]:
+            for parts in _REGISTRY_DIRS:
+                candidate = parent.joinpath(*parts)
+                if candidate.is_dir():
+                    return candidate
+        return None
 
     def run_conversion(
         self,
