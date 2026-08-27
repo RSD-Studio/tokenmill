@@ -1027,6 +1027,17 @@ def backends(
     domain: Annotated[
         Domain | None, typer.Option("--domain", "-d", help="Only backends serving this domain.")
     ] = None,
+    tier: Annotated[
+        str | None,
+        typer.Option(
+            "--tier",
+            help=(
+                "Only backends in this tier: a licence tier (permissive, "
+                "restricted, copyleft, non-commercial) or 'heavy' for the "
+                "GPU tier."
+            ),
+        ),
+    ] = None,
     show_licenses: Annotated[
         bool,
         typer.Option(
@@ -1045,14 +1056,22 @@ def backends(
         _show_licenses(as_json=as_json)
         return
 
+    matches_tier = _tier_filter(tier)
+
     rows: list[list[str]] = []
     payload: list[dict[str, Any]] = []
     for converter in registry:
         info = converter.info
         if domain is not None and domain not in info.domains:
             continue
+        if not matches_tier(info):
+            continue
         availability = converter.is_available()
-        if not availability and not show_all:
+        # `--tier heavy` implies `--all`: every heavy backend is unavailable on
+        # a machine without one installed, and a filter that answered "no
+        # backends matched" to the question "what is in the GPU tier" would be
+        # useless exactly when it is asked.
+        if not availability and not show_all and tier != _HEAVY_TIER:
             continue
         rows.append(
             [
@@ -1263,10 +1282,6 @@ def main() -> None:
         sys.exit(EXIT_BUG)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    main()
-
-
 @app.command()
 def gui(
     port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on.")] = 8080,
@@ -1423,6 +1438,36 @@ def _diagnosis_to_json(diagnosis: Any) -> dict[str, Any]:
     }
 
 
+#: The value of `--tier` that selects the GPU tier rather than a licence tier.
+#:
+#: Not a `LicenseTier`, deliberately. "Heavy" is a statement about hardware and
+#: dependency weight, and three of the six heavy backends are permissive, so
+#: folding it into the licence enum would have made two different questions
+#: share one answer.
+_HEAVY_TIER: Final = "heavy"
+
+
+def _tier_filter(tier: str | None) -> Any:
+    """Build the predicate `--tier` selects with.
+
+    Args:
+        tier: The requested tier, or ``None`` for everything.
+
+    Returns:
+        A predicate over `BackendInfo`.
+    """
+    if tier is None:
+        return lambda _info: True
+    if tier == _HEAVY_TIER:
+        return lambda info: info.requires_gpu
+    try:
+        wanted = LicenseTier(tier)
+    except ValueError:
+        known = ", ".join([*(t.value for t in LicenseTier), _HEAVY_TIER])
+        _fail(f"unknown tier {tier!r}", hint=f"known tiers: {known}")
+    return lambda info: info.license_tier is wanted
+
+
 def _show_licenses(*, as_json: bool) -> None:
     """Audit the licence of every installed distribution and report it.
 
@@ -1495,3 +1540,21 @@ def _show_licenses(*, as_json: bool) -> None:
         )
         print("see CONTRIBUTING.md rule 2 and docs/LICENSES.md", file=sys.stderr)
         raise typer.Exit(code=1)
+
+
+# At the very bottom, and that position is load-bearing rather than tidy.
+#
+# It used to sit halfway up this file, just after `main()`. Under
+# `python -m tokenmill.cli.main` the module executes top to bottom, so `main()`
+# ran before anything defined below it existed — and every command still worked,
+# because every command was above it. Phase 9 added a helper below and
+# `tokenmill backends --all` started failing with
+# `NameError: name '_tier_filter' is not defined`, but *only* through `python
+# -m`, not through the `tokenmill` console script, which imports the module
+# fully before calling anything.
+#
+# Caught by two tests that invoke the CLI as a subprocess rather than through
+# typer's runner. Moved here so the next person to add a helper does not
+# rediscover it.
+if __name__ == "__main__":  # pragma: no cover
+    main()
