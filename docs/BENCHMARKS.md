@@ -414,7 +414,11 @@ clean bill of health.** It removed a title, a tag list and a draft flag, and no
 component tracks front matter. A fidelity score of 1.000 means *nothing ground
 truth asked about was lost*, which is not the same as *nothing was lost*.
 
-### On real converter output, the whitespace processors do almost nothing
+### `aggressive_whitespace`: the three cells said worthless, the fifty said 18%
+
+**Correcting a published claim.** Until Phase 9 this page said
+`aggressive_whitespace` was "close to worthless on this corpus", on the strength
+of three cells:
 
 | Fixture | Backend | Base | `aggressive_whitespace` | `dedupe_blocks` |
 |---|---|---|---|---|
@@ -422,12 +426,50 @@ truth asked about was lost*, which is not the same as *nothing was lost*.
 | `report.docx` | `markitdown` | 3,494 | 3,491 (−0.1%) | 3,205 (**−8.3%**) |
 | `boilerplate.html` | `markdownify_html` | 6,802 | 6,802 (+0.0%) | 6,802 (+0.0%) |
 
-This is reported because it is unflattering and because it is the useful
-finding. **`aggressive_whitespace` is close to worthless on this corpus**: the
-converters already emit tidy Markdown and `normalize_whitespace` runs before it,
-so there is almost no padding left to remove. It earns its place on
-hand-written or scraped input, not on output from the backends here — and the
-honest recommendation is to measure it on your own documents before enabling it.
+`docs/REVIEW_PHASES_0_8.md` recorded that as defect N5 and the owner's §3.6 said
+to find input where it earns its place or delete it. Measured across **all fifty
+backend-by-fixture cells the corpus has**, in bytes, on 2026-08-27:
+
+| Fixture | Backend | Base | `+aggressive_whitespace` | Change | Fidelity |
+|---|---|---|---|---|---|
+| `tables.pdf` | `markitdown` | 769 | 628 | **−18.3%** | 0.606 → **0.606** |
+| `article.html` | `kreuzberg` | 3,063 | 2,957 | −3.5% | 1.000 → **1.000** |
+| `article.html` | `pandoc` | 3,072 | 2,966 | −3.5% | 1.000 → **1.000** |
+| `structured.md` | `pandoc` | 1,609 | 1,571 | −2.4% | 0.977 → **0.977** |
+| `boilerplate.html` | `kreuzberg` | 6,120 | 6,014 | −1.7% | 0.750 → **0.750** |
+| `boilerplate.html` | `pandoc` | 7,346 | 7,240 | −1.4% | 0.750 → **0.750** |
+| `report.docx` | `pandoc` | 3,567 | 3,531 | −1.0% | 0.841 → **0.841** |
+
+It saves on **10 of 50 cells** and does nothing on the other 40. **Fidelity is
+identical in every one**, which is the half that makes the saving worth having.
+
+**Why `tables.pdf` through `markitdown` is 18%.** MarkItDown pads its table
+columns so they line up in a text editor:
+
+```text
+| Backend     | License  | Runtime | Tables Pages/sec |      |
+| markitdown  | MIT      | CPU     | weak             | 12.0 |
+```
+
+becomes
+
+```text
+| Backend | License | Runtime | Tables Pages/sec | |
+| markitdown | MIT | CPU | weak | 12.0 |
+```
+
+That alignment is pure presentation — no model reads a column edge — and on this
+document it is 18% of the bytes. The result is still a valid Markdown table,
+which is exactly why the fidelity score does not move.
+
+**The lesson is about the measurement, not the processor.** The earlier claim
+was not a lie; it was three cells generalised to a corpus, and the three happened
+to be ones where every backend already emits tidy Markdown. Reading them as "it
+is close to worthless" is the same mistake as reading a benchmark's best row as
+its typical one. `tests/unit/test_post_phase5.py::TestAggressiveWhitespaceEarnsItsPlace`
+now asserts the padding, the saving and the unchanged fidelity, so if MarkItDown
+stops padding its tables this number fails rather than quietly becoming a lie
+about a tool that has improved.
 
 `dedupe_blocks` finds real redundancy where real redundancy exists
 (`report.docx` repeats a "detail" paragraph per section) and correctly finds

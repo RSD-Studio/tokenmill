@@ -1280,11 +1280,20 @@ lose their alignment.
 **Does not destroy:** fenced code, indented code blocks, list nesting, or the
 spacing inside an inline code span.
 
-**Worth knowing before you enable it:** on this project's own corpus it is close
-to worthless — `+0.0%` on `twocolumn.pdf` and `boilerplate.html`, `−0.1%` on
-`report.docx` — because the backends already emit tidy Markdown and
-`normalize_whitespace` runs first. It earns its place on hand-written or scraped
-input. Measure it on your own documents rather than assuming.
+**Worth knowing before you enable it:** it does nothing on 40 of the corpus's 50
+backend-by-fixture cells, and on the other 10 it saves between 0.1% and **18.3%**
+with **no change in fidelity at all**. The big one is `tables.pdf` through
+`markitdown`, which pads its table columns so they align in a text editor:
+collapsing that padding removes 18.3% of the bytes and leaves a valid Markdown
+table.
+
+So the rule is not "enable it" or "do not" — it is that whether it helps depends
+entirely on whether your converter pads. Backends that emit tidy Markdown give
+it nothing to do; MarkItDown's aligned tables, Pandoc's and Kreuzberg's HTML
+output give it a real saving. Measure it on your own documents.
+
+This page said "close to worthless" for four phases, on three cells. See
+`docs/BENCHMARKS.md` for the correction and the full fifty.
 
 ## `links`
 
