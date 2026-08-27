@@ -47,7 +47,7 @@ They report as skips, not silence:
 
 ```bash
 uv run pytest -q -m network    # real tokenizer vocabulary downloads
-uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path, Phase 9)
+uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path)
 uv run pytest -q -m compress   # the compress extra plus a model (Phase 6)
 uv run pytest -q -m browser    # drives a real Chromium (crawl4ai, Phase 3)
 ```
@@ -76,10 +76,19 @@ requirement in the default dependency set. Anything heavy goes behind an
 `optional-dependencies` group and a lazy import.
 
 **2. Copyleft dependencies are never imported.** AGPL and GPL tools
-(PyMuPDF4LLM, Marker, Surya, Pandoc, Firecrawl core, omniparse) are invoked via
-subprocess or a service boundary, never `import`ed into the tokenmill process.
-Every adapter declares its licence in `BackendInfo`. See
+(PyMuPDF4LLM, Pandoc, Firecrawl core, omniparse) are invoked via subprocess or a
+service boundary, never `import`ed into the tokenmill process. So are
+**source-available** ones — MinerU's licence is Apache-2.0 plus a revenue
+threshold and an attribution obligation, which is its own tier. Every adapter
+declares its licence in `BackendInfo`. See
 [`docs/LICENSES.md`](docs/LICENSES.md).
+
+Note that rule 1 and rule 2 are separate, and some backends are out of process
+for the *first* reason. Marker and Surya are Apache-2.0 as of `marker-pdf` 2.0.0
+and `surya-ocr` 0.22.1 — verified from the wheels, against what `RESEARCH.md`
+says — so importing them would be legal. It would also put PyTorch in the
+dependency tree, which rule 1 forbids. LibreOffice is the same shape for a third
+reason: it is C++.
 
 **3. Backends import lazily.** A backend module must import cleanly with its
 heavy dependency absent. The real import happens inside `convert()`. A missing

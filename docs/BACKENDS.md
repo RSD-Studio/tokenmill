@@ -1145,7 +1145,7 @@ because the failure mode is the *next* post-processor forgetting the flag.
 
 ---
 
-## The isolated backends (Phase 7)
+## The external backends (Phase 7)
 
 Three backends that never enter the tokenmill process. Two are isolated because
 of their licence and one because it is not Python;
@@ -1282,6 +1282,239 @@ swallowing it or failing on it.
 no filesystem confinement, no network namespace. A tool run through it has the
 same access the user does. It is a *licence and language* boundary, and nothing
 here should be read as claiming more.
+
+---
+
+# The GPU tier (Phase 9)
+
+**Read this first: nothing in this section has been run.** The machine this
+project is built on has no GPU and its egress proxy denies the host the model
+weights live on, so **no Marker, Surya, MinerU, olmOCR, DeepSeek-OCR or dots.ocr
+conversion has ever been performed by this code.** Every statement below about
+what these tools *produce* is attributed to its source; every statement about
+what tokenmill *does with them* is asserted by
+`tests/integration/test_heavy_backends.py`.
+
+That is a smaller claim than the rest of this page makes and it is the honest
+one. What is verified is the path almost every reader will actually take: on a
+machine without a GPU, each of these reports itself unavailable and prints the
+exact commands that would change that.
+
+## The licences are not what `RESEARCH.md` says
+
+Read from each package's published wheel — its `METADATA` and the licence file
+it bundles — on 2026-08-27:
+
+| Backend | Package | Verified licence | Bundled file | `RESEARCH.md` said |
+|---|---|---|---|---|
+| Marker | `marker-pdf` 2.0.0 | **Apache-2.0** | 11,358 bytes of Apache 2.0 text | GPL-3.0 |
+| Surya | `surya-ocr` 0.22.1 | **Apache-2.0** | 9,135 bytes of Apache 2.0 text | GPL-3.0 |
+| MinerU | `mineru` 3.4.5 | **`LicenseRef-MinerU-Open-Source-License`** | Apache-2.0 **plus additional terms** | AGPL-3.0 |
+| olmOCR | `olmocr` 0.4.27 | Apache-2.0 | 11,359 bytes of Apache 2.0 text | Apache-2.0 |
+
+Marker and Surya are published by the same organisation and both relicensed from
+GPL to Apache between the versions `RESEARCH.md` surveyed and today. MinerU's
+AGPL entry was true of its predecessor: `magic-pdf` 1.3.12 on PyPI still reads
+`License: AGPL-3.0`.
+
+**This is the fourth and fifth time this project has found `RESEARCH.md` wrong
+about a licence**, and the first time in the *safe* direction — over-restricting
+rather than under-restricting. The lesson is unchanged: read the artefact.
+
+### Two of them are permissive and still run out of process
+
+Marker and Surya could legally be imported. They are not, and the reason is
+**`CONTRIBUTING.md` rule 1 rather than rule 2**: importing them would put
+PyTorch and a CUDA stack into tokenmill's dependency tree. Exactly the same
+shape as LibreOffice, which is MPL-2.0 and out of process because it is C++.
+
+### MinerU's licence puts an obligation on *you*
+
+`LicenseRef-MinerU-Open-Source-License` is Apache-2.0 "and is subject to the
+additional terms below". The two that matter:
+
+1. **A commercial licence** is required above 100 million monthly active users
+   or USD 20 million monthly revenue.
+2. **An attribution obligation**: if you provide an online service based on
+   MinerU, you must prominently say that you use it.
+
+Clause 2 is not hypothetical for a tokenmill user — **`tokenmill gui --server`
+is an online service.** The adapter therefore warns on every single conversion.
+`LicenseTier.RESTRICTED` exists for this, and `docs/LICENSES.md` has the full
+text and the reasoning.
+
+## `marker`
+
+**Install:** `python -m venv ~/.local/share/tokenmill/marker && ~/.local/share/tokenmill/marker/bin/pip install marker-pdf`
+**License:** Apache-2.0 (code). **Weights: not verified** — see below.
+**Upstream:** <https://github.com/datalab-to/marker>
+**Formats:** pdf, images, and the Office formats — **subprocess isolation**
+
+The highest-quality PDF-to-Markdown converter in the survey, and the benchmark
+the rest of this project is measured against. `RESEARCH.md` Category 1 reports
+it as the structure-fidelity leader; **we have not measured it.** PyMuPDF4LLM's
+0.972 on `twocolumn.pdf` is the number it would have to beat, and nobody here
+has run the comparison.
+
+### Observed failure modes
+
+**None observed, because it has not been run.** What *is* asserted:
+
+- It reports itself unavailable with two commands — a virtual environment and a
+  `pip install` — rather than "install marker", because `pip install marker-pdf`
+  into a user's current environment pulls PyTorch into it.
+- It writes its Markdown into a nested directory and signals failure by writing
+  nothing while exiting zero. The adapter checks for the file, not the exit
+  code — the same LibreOffice lesson, in a new tier.
+- Auto-selection never reaches it: `priority` is 1, below every light backend,
+  because a backend that starts a 5 GB download must be asked for by name.
+
+## `surya`
+
+**Install:** `python -m venv ~/.local/share/tokenmill/surya && ~/.local/share/tokenmill/surya/bin/pip install surya-ocr`
+**License:** Apache-2.0 (code). **Weights: not verified.**
+**Upstream:** <https://github.com/datalab-to/surya>
+**Formats:** pdf and images — **subprocess isolation**
+
+Marker's engine on its own: OCR, layout detection and reading order in 90+
+languages.
+
+**This is the backend that would move `scanned.pdf` off 0.000.** Every backend
+in every other tier returns an empty document for it — documented above, scored
+0.000 by the fidelity scorer, deliberately, as the honest measurement of "no OCR
+here". **Surya has not been run, so the 0.000 stands.**
+
+### Observed failure modes
+
+**None observed.** One design note: Surya's CLI writes JSON — text lines with
+bounding boxes — rather than Markdown, because bounding boxes are what it is
+for. The adapter reads Markdown when a release produces it and otherwise lifts
+the recognised lines out of the JSON **in Surya's own order**. It does not sort
+the boxes itself: reordering a page is a layout engine, which this project has
+said since Phase 2 is not an adapter's job.
+
+## `mineru`
+
+**Install:** `python -m venv ~/.local/share/tokenmill/mineru && ~/.local/share/tokenmill/mineru/bin/pip install 'mineru[core]'`
+**License:** `LicenseRef-MinerU-Open-Source-License` — **restricted**, with
+obligations on you. **Weights: not verified.**
+**Upstream:** <https://github.com/opendatalab/MinerU>
+**Formats:** pdf, images, docx, pptx, xlsx — **subprocess isolation**
+
+Layout-aware conversion with formula and table recognition.
+
+### Observed failure modes
+
+**None observed.** What is asserted is the licence behaviour: every conversion
+carries a warning naming both obligations and pointing at
+`docs/LICENSES.md`, because a licence term nobody is told about is one nobody
+complies with.
+
+## `olmocr`
+
+**Install:** `python -m venv ~/.local/share/tokenmill/olmocr && ~/.local/share/tokenmill/olmocr/bin/pip install olmocr[gpu]`
+**License:** Apache-2.0 (code). **Weights: not verified.**
+**Upstream:** <https://github.com/allenai/olmocr>
+**Formats:** pdf and images — **subprocess isolation**
+
+**Its hardware requirement is real in a way the others' are not.** Marker and
+Surya are *slow* without a GPU; olmOCR runs a vision-language model through vLLM,
+which has no usable CPU path and no Metal backend at all. On a machine without
+an NVIDIA card it does not run. `tokenmill doctor` says so before the download
+rather than after it.
+
+## `deepseek_ocr` — the most on-theme backend in the project
+
+**Install:** nothing. Run the model yourself and pass its address:
+`--extra deepseek_ocr_url=http://localhost:8000 --allow-network`
+**License:** MIT **as reported by DeepSeek**, unverified here — the host is
+denied at this environment's proxy, so unlike the four above, no artefact was
+read. **Weights: not verified.**
+**Upstream:** <https://github.com/deepseek-ai/DeepSeek-OCR>
+**Formats:** images — **service isolation**
+
+Every other backend in this project reduces tokens by converting a document into
+a cheaper representation of the same text. DeepSeek-OCR's claim is different in
+kind: that a page **rendered as an image** and fed to a vision encoder costs
+fewer tokens than the same page's text. If that holds, the cheapest way to give
+a model a document is sometimes to give it a picture of one — the exact opposite
+of everything else here.
+
+**Their numbers, as theirs.** DeepSeek's own report describes compression ratios
+of roughly **10x** at high decoding precision, degrading as the ratio rises past
+about 20x. That is their measurement, of their model, on their benchmark.
+
+**Ours: none.** No ratio has been produced by this code. Measuring optical
+compression on our corpus needs the model running, which needs a GPU and the
+model host. `docs/BENCHMARKS.md` carries their figure attributed and **no figure
+of ours**, and `CONTRIBUTING.md` rule 4 is why.
+
+What the adapter does do is record the service's own `prompt_tokens` and
+`completion_tokens` on every result, namespaced `service_*`. **That pair is the
+measurement** — vision tokens in, text tokens out — so the first person to run
+this with a GPU gets the number this project has been unable to produce.
+
+### The PyPI trap
+
+`pip install deepseek-ocr` does **not** install DeepSeek's model:
+
+```
+Name: deepseek-ocr
+Version: 0.3.0
+Summary: A simple and efficient Python SDK for DeepSeek-OCR API
+License-Expression: MIT
+Project-URL: Repository, https://github.com/BukeLy/DeepSeek-OCR-SDK
+Copyright (c) 2025 Chengjie
+```
+
+A third party's client for a hosted API. Wrapping it would have shipped a
+**hosted-SaaS backend**, which this project's first constraint forbids outright,
+while looking like it had wrapped the model. Found by reading the summary rather
+than the licence field.
+
+## `dots_ocr`
+
+**Install:** nothing; run the model and pass `--extra dots_ocr_url=...`.
+**License:** MIT as reported, unverified here. **Weights: not verified.**
+**Upstream:** <https://github.com/rednote-hilab/dots.ocr>
+**Formats:** images — **service isolation**
+
+Layout detection and text recognition in one 1.7B vision-language model — small
+enough for a card that cannot hold the others, where Surya runs layout and
+recognition as separate models.
+
+## What the service adapters *are* verified to do
+
+Against a real local HTTP server, not a mock
+(`tests/integration/test_heavy_backends.py`):
+
+- Build an OpenAI chat-completions request with the image inline as a `data:`
+  URL and the model's own prompt.
+- Send **`temperature: 0`**. An OCR backend that returned different text on two
+  runs of the same page would make every measurement taken through it
+  unreproducible.
+- Record the service's token counts, namespaced so they cannot be read as a
+  tokenmill measurement.
+- Refuse without `--allow-network`, even on loopback.
+- Fail with *"the service returned no choices; it may not be an
+  OpenAI-compatible endpoint"* when the address points at something else —
+  because reporting an empty document would send the user to look at their
+  image, and the problem is their URL.
+
+**What is not verified:** that a real DeepSeek-OCR or dots.ocr deployment
+answers exactly this way. The request follows the shape both projects' serving
+instructions document, which is a contract rather than a guess, and that is the
+strongest claim available without a GPU.
+
+## Granite-Docling is not a backend, deliberately
+
+The plan lists it alongside the six above. It is a **model**, not a tool: IBM
+publishes it for use *through* Docling, which tokenmill already wraps. A seventh
+adapter would have been a second way to reach a backend that already exists,
+with its own availability rules and its own row in every user's listing, in
+order to pass a different `--model` flag. That is a docling option if anyone
+wants it, not a backend, and pretending otherwise would have made the count
+look better at the cost of the thing being true.
 
 ---
 

@@ -321,10 +321,35 @@ its adapter was written, not taken from a README.
 | `pymupdf4llm` | documents | **AGPL-3.0** | separate venv | **the most faithful backend here** — 0.848 on `tables.pdf` | ✅ Phase 7 — **never imported** |
 | `pandoc` | documents | **GPL-2.0-or-later** | system binary | EPUB, LaTeX, RST, Org and thirty more | ✅ Phase 7 — **never imported** |
 | `libreoffice` | documents | MPL-2.0 | system binary | legacy `.doc` / `.xls` / `.ppt` | ✅ Phase 7 — subprocess (C++, not a licence issue) |
-| marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | install docs only | GPU tier | Phase 9 |
+| `marker` | documents | **Apache-2.0** | separate venv | the structure-fidelity leader in the survey | 🟨 Phase 9 — **never run here** |
+| `surya` | documents | **Apache-2.0** | separate venv | OCR and reading order in 90+ languages | 🟨 Phase 9 — **never run here** |
+| `mineru` | documents | **`LicenseRef-MinerU`** | separate venv | formulas and tables; obligations on *you* | 🟨 Phase 9 — **never run here** |
+| `olmocr` | documents | Apache-2.0 | separate venv | Allen AI's OCR; genuinely needs NVIDIA | 🟨 Phase 9 — **never run here** |
+| `deepseek_ocr` | documents | MIT *(reported)* | HTTP service | **optical context compression** | 🟨 Phase 9 — **never run here** |
+| `dots_ocr` | documents | MIT *(reported)* | HTTP service | layout + text in one 1.7B model | 🟨 Phase 9 — **never run here** |
 
-**What these backends do not do.** None does OCR, so a scanned PDF converts to
-an empty document — loudly, with a warning, never silently. That is Phase 9.
+**The GPU tier is documented, not demonstrated.** Six adapters exist, `heavy = []`
+is still empty, and a clean core install is still 40 packages. But this project
+is built on a machine with no GPU that cannot reach the host the model weights
+live on, so **not one of them has ever converted a document.** What is verified
+is the path you will take if you do not have a GPU either: each reports itself
+unavailable and prints the exact commands that would change that. `tokenmill
+doctor` gathers all of it, and does not lie about your hardware — it
+distinguishes "no GPU" from "the driver is installed and no device answered",
+which is what a container started without `--gpus` looks like.
+
+Two licence corrections worth surfacing, both read from the published wheels
+rather than from our own research notes: **Marker and Surya are Apache-2.0**,
+not GPL-3.0 as `RESEARCH.md` records. They still run out of process — importing
+them would put PyTorch in the dependency tree, which is a different rule.
+**MinerU is neither**: Apache-2.0 plus a revenue threshold and an obligation to
+say you use it if you offer an online service, which `tokenmill gui --server`
+is. It warns you, every time.
+
+**What these backends do not do.** Nothing in the light or external tiers does
+OCR, so a scanned PDF converts to an empty document — loudly, with a warning,
+never silently. Surya is the backend that would change that, and it has not been
+run, so `scanned.pdf` still scores 0.000.
 
 **On the 70–90% figures above:** we measured our own equivalent on our own
 fixture and got **−83.1%**, in **real `o200k_base` tokens** — 3,716 → 629 —
@@ -428,7 +453,7 @@ The core install must stay light. Everything heavy lives behind extras:
 | `compress` | LLMLingua-2, transformers | Requires a model download |
 | `ocr` | pytesseract, PaddleOCR | Requires a system binary or model weights |
 | `gui` | NiceGUI + FastAPI | Only needed for `tokenmill gui` |
-| `heavy` | *(intentionally empty)* | Marker, MinerU, olmOCR, Surya run **out of process**; they are documented, never depended on |
+| `heavy` | *(intentionally empty, forever)* | Marker, MinerU, olmOCR, Surya, DeepSeek-OCR and dots.ocr run **out of process**; documented, never depended on. `tokenmill doctor` prints the install commands |
 
 ## Licence tiering
 

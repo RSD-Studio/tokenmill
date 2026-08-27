@@ -874,6 +874,57 @@ No service backend is registered, and a test asserts that stays true: a row for
 a container nobody is running is a permanently-unavailable backend in every
 user's listing.
 
+### The GPU tier (Phase 9)
+
+`src/tokenmill/backends/heavy/`. Six backends, two shapes, one rule: **none of
+them is ever a dependency.** `pyproject.toml`'s `heavy = []` is empty and a
+clean core install is still 40 packages.
+
+- **Four run from an environment of their own** — Marker, Surya, MinerU, olmOCR
+  — as `HeavyConverter`, which subclasses `SubprocessConverter` and adds the
+  `~/.local/share/tokenmill/<id>/` convention, install instructions that are two
+  commands rather than one, and a refusal without `--allow-network` because the
+  first run downloads weights.
+- **Two are reached over HTTP** — DeepSeek-OCR and dots.ocr — as
+  `VllmOcrConverter`, because they are model *weights* rather than packages and
+  there is nothing to install.
+
+`HeavyTier` is a marker both shapes inherit, and it exists because of a bug
+rather than a design: `doctor` originally tested
+`isinstance(converter, HeavyConverter)` and silently gave the two service
+backends no install instructions, no weights-licence line and no "this machine
+has no GPU" note. Found by reading `doctor`'s output, which is the Phase 8
+lesson repeating itself.
+
+**Why a separate environment rather than an extra**, for the four that have one:
+these resolve to PyTorch plus a CUDA stack, they disagree with each other and
+with docling about transformers versions, and rule 1 says the core install stays
+light. It is the PyMuPDF4LLM pattern reused for a different reason — there the
+separate environment is a *licence* boundary, here it is a *dependency* one —
+and the difference is kept visible rather than blurred into "they are all
+isolated".
+
+**`tokenmill doctor` is a library function.** `backends/heavy/doctor.py` gathers,
+`cli/format.py` renders. The gathering is not in the CLI so that a test can drive
+it and the GUI could too — the same rule the Phase 8 GUI is built on.
+
+**It never guesses**, and the four ways it could lie each have a test:
+
+- *CUDA installed* is not *a usable GPU*. A container without `--gpus` has the
+  driver and no device; `nvidia-smi` runs and lists nothing. Reported as
+  `cuda-unusable`, which is a different sentence from `none` because it needs a
+  different fix.
+- *No `nvidia-smi`* is not *no GPU* either, when the CUDA libraries are present.
+- A VRAM figure is never invented. `nvidia-smi` prints `[N/A]` for a device that
+  will not answer, and "0.0 GiB" would read as a measurement.
+- Apple Silicon is reported as Apple Silicon, with the note that vLLM has no
+  Metal backend so olmOCR and the two services do not run there at all.
+
+PyTorch is never imported into this process. The one authoritative question —
+what the *installed* torch thinks, since a CPU-only wheel on a machine with a
+card reports no GPU — is asked of a backend's own interpreter, and only when
+that environment already exists.
+
 ### What the external boundary is not
 
 **It is not a security boundary.** No sandboxing, no resource limits, no

@@ -14,16 +14,20 @@ Phase 7 found `RESEARCH.md`'s "PyMuPDF4LLM: AGPL-3.0" is only half the story
 
 ## The tiering rules
 
-Three tiers, and they are `LicenseTier` in the code rather than a convention:
+**Four** tiers, and they are `LicenseTier` in the code rather than a convention:
 
 | Tier | What it means | What tokenmill may do with it |
 |---|---|---|
 | **permissive** | MIT, Apache-2.0, BSD, ISC, PSF, MPL, LGPL | Import it into our process |
+| **restricted** | BUSL, Elastic-2.0, SSPL, PolyForm, Commons Clause, any unrecognised `LicenseRef-` | **Never import.** Subprocess or service boundary only, and the obligations are the user's to read |
 | **copyleft** | AGPL, GPL | **Never import.** Subprocess or service boundary only |
 | **non-commercial** | CC-BY-NC, RAIL, purchase-only | Excluded by default; not wrapped |
 
-Four rules govern how a licence string reaches a tier, and each exists because
-something real would otherwise be classified wrongly:
+`restricted` arrived in Phase 9 and [§ MinerU, and why there is a fourth
+tier](#mineru-and-why-there-is-a-fourth-tier) explains what forced it.
+
+**Six** rules govern how a licence string reaches a tier, and each exists
+because something real would otherwise be classified wrongly:
 
 **1. A disjunction resolves to its most permissive *available* branch.**
 `A OR B` means the recipient chooses. `tld` ships
@@ -46,6 +50,33 @@ use as a library without relicensing the caller, and `CONTRIBUTING.md` rule 2
 names AGPL and GPL. Written down because "it contains the letters GPL" is the
 reading that would otherwise be applied. Tightening this should be a decision
 somebody makes, not a regex drifting, so a test asserts it.
+
+**5. A source-available licence is not a permissive one.** BUSL-1.1,
+Elastic-2.0, SSPL, PolyForm, anything carrying a Commons Clause, and anything
+whose text says "additional terms" are **restricted**. Before Phase 9 every one
+of them classified as permissive.
+
+SSPL is the alarming one — it is aggressively copyleft for anything offered as a
+service, and it was being treated as MIT-equivalent. Elastic-2.0 matters to this
+project directly: `kreuzberg` is pinned `<5` because `RESEARCH.md` records that
+its successor line moved to Elastic-2.0, and if that pin were ever removed this
+classifier would have said nothing at all.
+
+**6. An unrecognised `LicenseRef-` identifier is restricted, never permissive.**
+SPDX's `LicenseRef-` prefix means, by definition, *this is not a listed
+licence*. An identifier whose entire meaning is "you do not know what this is"
+must not be read as "assume the friendliest one". Before Phase 9,
+`LicenseRef-Anything-At-All` classified as permissive.
+
+Checked **last**, after the copyleft, non-commercial and purchasable rules, so
+`LicenseRef-Artifex-Commercial` and `LicenseRef-Proprietary` keep the sharper
+answers those rules already give them.
+
+Where `restricted` sits in the ordering is load-bearing for rule 1:
+`Apache-2.0 OR BUSL-1.1` has an unconditional branch and is permissive;
+`BUSL-1.1 OR AGPL-3.0` has none and resolves to restricted — fewer obligations
+than the AGPL branch, and still not permissive, so the mechanism keeps it out of
+this process either way.
 
 ## How enforcement actually works
 
@@ -311,6 +342,118 @@ Each of these was run, not assumed. The command is
 | 2026-08-22 | Dev environment: core + `documents` + `web` + `crawl4ai` + `dev` + `fixtures` | 154 | One flagged: `tld`, explained above. Everything else MIT, Apache-2.0, BSD, ISC, PSF or MPL. |
 | 2026-08-22 | Dev environment with the `repo` extra, without `crawl4ai` | 99 | Same single flag. gitingest's tree adds `starlette`, `pydantic`, `httpx`, `loguru` and `pathspec` — BSD-3-Clause, MIT, BSD-3-Clause, MIT and MPL-2.0. |
 | 2026-08-26 | Dev environment: core + `documents` + `web` + `repo` + `chunk` + `dev` + `fixtures`, **by `tokenmill backends --show-licenses`** | 104 | **Every one permissive.** `tld` resolves through its disjunction rather than by exemption. This audit now runs on every CI cell rather than being performed by hand. |
+
+## The GPU tier (Phase 9)
+
+The largest licence surface in the project, and the one where `RESEARCH.md` was
+wrong twice more. Every entry below was read from the **published artefact** —
+the wheel's `METADATA` and the licence file it bundles — on 2026-08-27, except
+where it says otherwise.
+
+| Backend | Package and version | Verified licence | Tier | `RESEARCH.md` said |
+|---|---|---|---|---|
+| Marker | `marker-pdf` 2.0.0 | Apache-2.0 | permissive | GPL-3.0 |
+| Surya | `surya-ocr` 0.22.1 | Apache-2.0 | permissive | GPL-3.0 |
+| MinerU | `mineru` 3.4.5 | `LicenseRef-MinerU-Open-Source-License` | **restricted** | AGPL-3.0 |
+| olmOCR | `olmocr` 0.4.27 | Apache-2.0 | permissive | Apache-2.0 |
+| DeepSeek-OCR | *no package* | MIT **as reported**, not read | permissive | — |
+| dots.ocr | *no package* | MIT **as reported**, not read | permissive | — |
+
+The last two are a weaker claim than the first four and the table says so.
+DeepSeek-OCR and dots.ocr are model weights rather than Python packages, so
+there is no artefact to download; both projects state MIT and this environment
+cannot reach either repository to confirm it. "We read it" and "they say so" are
+different claims, and this project has been caught by the second five times now.
+
+### Two of them are permissive and still never imported
+
+Marker and Surya relicensed from GPL to Apache between the versions `RESEARCH.md`
+surveyed and today, so their **code could legally be imported**. It is not, and
+the reason is `CONTRIBUTING.md` **rule 1 rather than rule 2**: importing them
+would put PyTorch and a CUDA stack into tokenmill's dependency tree.
+
+This is the same distinction `backends/external/` already keeps for LibreOffice
+— permissive, out of process because it is C++ — and it is kept visible for the
+same reason: the isolation column would otherwise imply a licence constraint
+that is not there.
+
+### MinerU, and why there is a fourth tier
+
+`mineru` 3.4.5's metadata carries no SPDX-listed identifier:
+
+```
+License-Expression: LicenseRef-MinerU-Open-Source-License
+License-File: LICENSE.md
+```
+
+and the bundled `LICENSE.md` reads:
+
+> MinerU is licensed under Apache License 2.0 **and is subject to the additional
+> terms below.**
+>
+> **1. Commercial License and Thresholds.** [...] if you and your Affiliates, on
+> a consolidated basis, meet either of the following thresholds, you must obtain
+> a separate commercial license [...] a. monthly active users (MAU) exceed 100
+> million; or b. total monthly revenue exceeds USD 20 million.
+>
+> **2. Online Service Attribution Obligation.** If you provide online services
+> to third parties based on MinerU, you must clearly and prominently indicate
+> [...] that MinerU is used.
+>
+> **3. Termination.** [...] this License and all rights granted under this
+> License will terminate automatically [...]
+
+None of the three existing tiers described that:
+
+- **Not copyleft.** Nothing obliges anyone to publish source.
+- **Not non-commercial.** Commercial use is expressly allowed below the
+  thresholds.
+- **Not permissive**, and this is the one with a consequence a user can hit.
+  **`tokenmill gui --server` is an online service.** An operator converting
+  documents through MinerU behind it owes clause 2's attribution, and if
+  tokenmill had called this licence permissive it would have been the reason
+  nobody told them.
+
+So the adapter warns on **every** conversion, naming both obligations and
+pointing here. A licence term nobody is told about is one nobody complies with.
+
+`RESEARCH.md`'s AGPL entry was true of the predecessor: `magic-pdf` 1.3.12 on
+PyPI still reads `License: AGPL-3.0`.
+
+### Model weights are a separate licence, and none of them is verified
+
+An Apache-2.0 repository routinely ships weights under something else — a RAIL
+licence with use restrictions, a non-commercial clause, or a bespoke agreement.
+**Not one weights licence in this tier has been read**, because the host they
+are published on is denied at this environment's egress proxy.
+
+Every heavy adapter therefore records `weights_licence: unverified` on every
+result it produces, `tokenmill doctor` prints *"weights licence: NOT VERIFIED.
+The code's licence above is not the weights'; read the model card before relying
+on it"*, and a test asserts that stays true until somebody actually verifies one.
+
+`RESEARCH.md` reports Marker's weights as carrying use restrictions with a
+revenue threshold, and Jina's ReaderLM weights as CC-BY-NC. Both are recorded
+here **as reports**. The conservative rule stands meanwhile: weights reported
+non-commercial are excluded by default.
+
+### The PyPI name that is not the model
+
+`pip install deepseek-ocr` installs a third party's SDK for a hosted API:
+
+```
+Name: deepseek-ocr
+Version: 0.3.0
+Summary: A simple and efficient Python SDK for DeepSeek-OCR API
+License-Expression: MIT
+Project-URL: Repository, https://github.com/BukeLy/DeepSeek-OCR-SDK
+Copyright (c) 2025 Chengjie
+```
+
+MIT, and irrelevant: wrapping it would have shipped a **hosted-SaaS backend**,
+which this project's first constraint forbids outright, while appearing to have
+wrapped DeepSeek's model. A licence check alone would have waved it through —
+what caught it was reading the `Summary` line.
 
 ## What Phase 7 delivered, and what it still does not
 
