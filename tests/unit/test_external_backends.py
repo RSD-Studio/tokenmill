@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tokenmill.backends.isolated.base import (
+from tokenmill.backends.external.base import (
     ALLOWED_EXECUTABLES,
     ExecutableSpec,
     SubprocessConverter,

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from tokenmill.backends.isolated.service import ServiceConverter
+from tokenmill.backends.external.service import ServiceConverter
 from tokenmill.core.errors import BackendFailed, NetworkRequired, Timeout
 from tokenmill.core.models import (
     BackendInfo,

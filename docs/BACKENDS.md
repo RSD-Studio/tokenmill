@@ -1086,7 +1086,7 @@ turns the chain off entirely.
 | Backend | Why | Phase |
 |---|---|---|
 | llmlingua2 | Prompt compression | 6 |
-| pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Need the isolation layer; **never imported** | 7 |
+| pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Run outside this process; the copyleft two are **never imported** | 7 |
 | tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |
 | marker, mineru, olmocr, surya, deepseek-ocr | GPU tier, out of process | 9 |
 
@@ -1112,7 +1112,7 @@ Three backends that never enter the tokenmill process. Two are isolated because
 of their licence and one because it is not Python;
 [`docs/LICENSES.md`](LICENSES.md) keeps that distinction and it matters.
 
-Every claim below is asserted by `tests/integration/test_isolated_backends.py`.
+Every claim below is asserted by `tests/integration/test_external_backends.py`.
 
 ### `pymupdf4llm` — the best PDF converter here, and it costs the most to reach
 
@@ -1237,7 +1237,7 @@ Without a JRE it warns `failed to launch javaldx` and converts fine; the adapter
 surfaces that as a warning saying text extraction is unaffected, rather than
 swallowing it or failing on it.
 
-### What the isolation layer is not
+### What the external boundary is not
 
 **It is not a security boundary.** There is no sandboxing: no resource limits,
 no filesystem confinement, no network namespace. A tool run through it has the

@@ -467,7 +467,7 @@ repository and would let a budget silently do nothing. This is not hypothetical:
 code2prompt's format was guessed from repomix's and was wrong, and that warning
 is what surfaced it in minutes.
 
-### Subprocess isolation before Phase 7 owns it
+### Running out of process, before Phase 7 owns it
 
 `IsolationMode.SUBPROCESS` and `BackendFailed.stderr` have existed since Phase 1;
 the hardened `SubprocessConverter` is Phase 7. `tokenmill.backends._subprocess`
@@ -478,13 +478,14 @@ output, and every failure mapped into the taxonomy.
 What it does **not** do is as important, and is listed in its docstring and in
 `PROGRESS.md`: no sandboxing, no binary allow-list, no version probing, no
 streaming. The allow-list is the one that matters for Phase 7's real job —
-enforcing that a copyleft tool is *actually* isolated needs a checked list of
-what may be invoked, not an adapter's declaration that it behaves.
+enforcing that a copyleft tool *actually* stays out of this process needs a
+checked list of what may be invoked, not an adapter's declaration that it
+behaves.
 
 Note that these two backends run out of process because they are TypeScript and
 Rust, **not** because of their licences: both are MIT and could legally be
 imported if they were Python. That makes them useful practice for Phase 7, since
-getting the isolation wrong on them carries no licence risk.
+getting the boundary wrong on them carries no licence risk.
 
 ## The pipeline
 
@@ -795,10 +796,10 @@ and `TokenMeter` catches it explicitly for the reason given above.
 
 ---
 
-## Isolation, and what it is not
+## The external boundary, and what it is not
 
-`src/tokenmill/backends/isolated/`. Phase 1 designed the model, Phase 7
-implemented it.
+`src/tokenmill/backends/external/`. Phase 1 designed the model, Phase 7
+implemented it, Phase 9 builds the GPU tier on it.
 
 **Two different reasons put a backend out of process**, and conflating them is
 the mistake this package's docstring exists to prevent:
@@ -807,10 +808,31 @@ the mistake this package's docstring exists to prevent:
   `pymupdf4llm` and `pandoc`.
 - **Language.** A C++ application or a Node program cannot be imported at any
   price. `libreoffice`, `repomix`, `code2prompt` — all permissive, and their
-  isolation carries no licence meaning at all.
+  running out of process carries no licence meaning at all.
 
-The second group is useful practice: getting the isolation wrong on an MIT tool
+The second group is useful practice: getting the boundary wrong on an MIT tool
 costs a bug, not a licence problem.
+
+### Why the package is called `external` (defect N9)
+
+It was `backends/isolated/` until Phase 9. "Isolation" is the word an operating
+system uses for *containment*, and this layer contains nothing: no resource
+limits, no filesystem confinement, no network namespace. A tool launched through
+it runs with exactly the access the user has. The name invited a security
+reading it does not deserve, and the evidence that it did is that three
+documents had each grown a paragraph explaining what the layer is *not*.
+
+`external` says the true thing — the converter runs outside this process — and
+claims nothing about safety, so the apologetic paragraph is no longer load
+bearing. It was renamed before the Phase 9 adapters landed on top of it, because
+renaming afterwards costs seven more subclasses.
+
+**`IsolationMode` and `BackendInfo.isolation` did not change.** Their values —
+`in-process`, `subprocess`, `service` — already name a *mechanism* rather than a
+protection, they are printed by `tokenmill backends` and carried in `--json`
+output that somebody may already parse, and renaming a field of the Phase 1
+contract is a breaking change with no user-visible gain. The package and the
+prose were what oversold; those are what changed.
 
 ### What enforces it
 
@@ -832,8 +854,8 @@ version probe recorded as provenance, an **allow-list** of every program
 tokenmill may launch, list arguments with `shell=False` always, timeout and
 kill, and a workspace removed on every exit path including timeout and failure.
 
-The allow-list is what makes isolation *enforced* rather than declared: without
-one, "this AGPL tool runs out of process" is a claim an adapter makes about
+The allow-list is what makes the boundary *enforced* rather than declared:
+without one, "this AGPL tool runs out of process" is a claim an adapter makes about
 itself. With one, the set of programs tokenmill will start is a single
 reviewable table, and an adapter naming anything else fails before the process
 starts.
@@ -852,7 +874,7 @@ No service backend is registered, and a test asserts that stays true: a row for
 a container nobody is running is a permanently-unavailable backend in every
 user's listing.
 
-### What the isolation layer is not
+### What the external boundary is not
 
 **It is not a security boundary.** No sandboxing, no resource limits, no
 filesystem confinement, no network namespace. A tool run through it has the same

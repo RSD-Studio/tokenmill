@@ -57,7 +57,7 @@ circumstances. All in `tests/unit/test_license_isolation.py`.
 | 1 | Every backend declares a licence and a tier, and a non-permissive one declares out-of-process isolation | An adapter lying about itself |
 | 2 | No copyleft distribution is installed at all | A copyleft package arriving through a transitive requirement nobody read |
 | 3 | No module in `src/tokenmill` mentions a copyleft module, **parsed rather than executed** | An adapter importing a tool that is *not installed here* — which is every CI machine |
-| 4 | After a copyleft backend converts a document, its module is not in `sys.modules` | The isolation being observed rather than inferred |
+| 4 | After a copyleft backend converts a document, its module is not in `sys.modules` | The boundary being observed rather than inferred |
 
 Check 3 is the one that will actually catch a Phase 9 adapter written in a
 hurry, and it required two design decisions:
@@ -194,7 +194,7 @@ Five backends run out of process; only two of them do so because of a licence:
 
 Recorded because the isolation column would otherwise imply a licence
 constraint that is not there — and because the three that are isolated for
-language reasons are safe practice for the mechanism: getting the isolation
+language reasons are safe practice for the mechanism: getting the boundary
 wrong on an MIT or MPL tool carries no licence risk.
 
 ### `pymupdf4llm` runs in an interpreter of its own, and that is the point
@@ -327,7 +327,7 @@ Delivered:
 
 Still outstanding, and deliberately so:
 
-- **No sandboxing.** A tool run through the isolation layer has the same
+- **No sandboxing.** A tool run through `backends/external/` has the same
   filesystem and network access the user does. There are no resource limits, no
   filesystem confinement and no network namespace. The boundary is a licence and
   language boundary, **not** a security boundary, and nothing in this project

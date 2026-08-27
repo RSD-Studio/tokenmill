@@ -17,7 +17,7 @@ No version probing           :meth:`SubprocessConverter.probe_version`,
 No allow-list                :data:`ALLOWED_EXECUTABLES`. An adapter may
                              only invoke a name declared here, checked at
                              launch. This is what makes a copyleft tool's
-                             isolation *enforced* rather than declared.
+                             boundary *enforced* rather than declared.
 No temp-file lifecycle       :meth:`SubprocessConverter.workspace`, which
                              removes the directory on every path including
                              the failure and timeout ones.
@@ -28,7 +28,7 @@ No streaming                 Still not done, and still recorded. See below.
 name any executable, so "this AGPL tool runs out of process" is a claim the
 adapter makes about itself. With one, the set of programs tokenmill will launch
 is a fixed, reviewable list in a single file, and an adapter that tried to
-invoke something else fails before the process starts. The licence isolation
+invoke something else fails before the process starts. The licence enforcement
 tests read this table.
 
 **What is still not done.** Output is buffered whole, so a tool that emits a
@@ -210,8 +210,9 @@ class SubprocessConverter(BaseConverter):
         Raises:
             BackendFailed: If the backend names an executable that is not on the
                 allow-list. A programming error in the adapter, and deliberately
-                loud: the allow-list is what makes isolation enforced rather than
-                declared, so slipping past it must not be possible by accident.
+                loud: the allow-list is what makes the boundary enforced rather
+                than declared, so slipping past it must not be possible by
+                accident.
         """
         try:
             return ALLOWED_EXECUTABLES[self.executable]
@@ -430,7 +431,7 @@ class SubprocessConverter(BaseConverter):
     ) -> str:
         """Do the conversion, given a scratch directory that will be cleaned up.
 
-        This is the only method an isolated adapter has to write.
+        This is the only method an external adapter has to write.
 
         Args:
             source: The input to convert.

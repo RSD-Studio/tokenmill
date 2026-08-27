@@ -19,9 +19,9 @@ from typing import Any
 
 import pytest
 
-from tokenmill.backends.isolated.libreoffice_doc import LibreOfficeConverter
-from tokenmill.backends.isolated.pandoc_doc import PandocConverter
-from tokenmill.backends.isolated.pymupdf4llm_pdf import PyMuPDF4LLMConverter
+from tokenmill.backends.external.libreoffice_doc import LibreOfficeConverter
+from tokenmill.backends.external.pandoc_doc import PandocConverter
+from tokenmill.backends.external.pymupdf4llm_pdf import PyMuPDF4LLMConverter
 from tokenmill.core.errors import BackendFailed, ConversionError, CorruptSource
 from tokenmill.core.models import (
     AvailabilityStatus,

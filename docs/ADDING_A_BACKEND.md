@@ -557,7 +557,7 @@ Subclass `SubprocessConverter` rather than `BaseConverter`, declare which
 allow-listed program you launch, and write one method:
 
 ```python
-from tokenmill.backends.isolated.base import SubprocessConverter
+from tokenmill.backends.external.base import SubprocessConverter
 
 class MyToolConverter(SubprocessConverter):
     info = BackendInfo(

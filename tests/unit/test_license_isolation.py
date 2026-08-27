@@ -224,7 +224,7 @@ class TestNoInProcessAdapterImportsCopyleft:
             "copyleft modules are imported into the tokenmill process:\n  "
             + "\n  ".join(offenders)
             + "\nInvoke the tool as a child process through "
-            "tokenmill.backends.isolated instead"
+            "tokenmill.backends.external instead"
         )
 
     def test_no_in_process_backend_reaches_a_copyleft_distribution(

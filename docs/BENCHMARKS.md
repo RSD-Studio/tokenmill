@@ -433,7 +433,7 @@ honest recommendation is to measure it on your own documents before enabling it.
 (`report.docx` repeats a "detail" paragraph per section) and correctly finds
 none where there is none.
 
-## The isolated backends (Phase 7)
+## The external backends (Phase 7)
 
 Measured 2026-08-27, `--tokenizer bytes`, fidelity beside every figure.
 
@@ -483,7 +483,7 @@ marker is gone. A benchmark sorted by size recommends it.
 This is why `tokenmill compare` is not sorted by size and why the GUI's
 comparison table has no sortable columns.
 
-### What the isolation costs
+### What the process boundary costs
 
 | Backend | `tables.pdf` | Why |
 |---|---|---|

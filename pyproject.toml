@@ -267,10 +267,10 @@ kreuzberg = "tokenmill.backends.documents.kreuzberg_adapter:KreuzbergConverter"
 docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 # Phase 7 — out of process. The first two are copyleft and may never be
 # imported; LibreOffice is MPL-2.0 and is isolated only because it is not
-# Python. tokenmill.backends.isolated.__init__ keeps that distinction.
-pymupdf4llm = "tokenmill.backends.isolated.pymupdf4llm_pdf:PyMuPDF4LLMConverter"
-pandoc = "tokenmill.backends.isolated.pandoc_doc:PandocConverter"
-libreoffice = "tokenmill.backends.isolated.libreoffice_doc:LibreOfficeConverter"
+# Python. tokenmill.backends.external.__init__ keeps that distinction.
+pymupdf4llm = "tokenmill.backends.external.pymupdf4llm_pdf:PyMuPDF4LLMConverter"
+pandoc = "tokenmill.backends.external.pandoc_doc:PandocConverter"
+libreoffice = "tokenmill.backends.external.libreoffice_doc:LibreOfficeConverter"
 
 [project.entry-points."tokenmill.postprocessors"]
 # Exactly one of these is non-destructive, and that is the whole default chain.

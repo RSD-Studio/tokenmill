@@ -18,7 +18,7 @@ probe records which Pandoc produced a result, and an unsupported format comes
 back as Pandoc's own error rather than a guess made here.
 
 **Security.** ``--`` is not accepted by Pandoc before positionals, so the path is
-passed through :meth:`~tokenmill.backends.isolated.base.SubprocessConverter.path_argument`,
+passed through :meth:`~tokenmill.backends.external.base.SubprocessConverter.path_argument`,
 which refuses a path beginning with ``-`` outright rather than hoping. Arguments
 are a list; there is no shell anywhere.
 
@@ -36,7 +36,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from tokenmill.backends.isolated.base import SubprocessConverter
+from tokenmill.backends.external.base import SubprocessConverter
 from tokenmill.core.errors import BackendFailed
 from tokenmill.core.models import (
     BackendInfo,

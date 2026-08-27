@@ -1,12 +1,12 @@
-r"""LibreOffice headless, MPL-2.0, isolated because it is not Python.
+r"""LibreOffice headless, MPL-2.0, out of process because it is not Python.
 
-**This backend's isolation carries no licence meaning**, and saying so is the
-point of putting it beside the other two. LibreOffice is MPL-2.0 — file-level
+**This backend's process boundary carries no licence meaning**, and saying so is
+the point of putting it beside the other two. LibreOffice is MPL-2.0 — file-level
 copyleft, the same shape as ``certifi``, and perfectly importable if it were a
 Python library. It is out of process because it is a 400 MB C++ application, and
 for no other reason. ``repomix`` and ``code2prompt`` are the same case.
 
-That makes it useful practice: getting the isolation wrong here costs a bug, not
+That makes it useful practice: getting the boundary wrong here costs a bug, not
 a licence problem.
 
 **What it is for.** The legacy Office formats nothing else in this project reads
@@ -64,7 +64,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from tokenmill.backends.isolated.base import SubprocessConverter
+from tokenmill.backends.external.base import SubprocessConverter
 from tokenmill.core.errors import BackendFailed
 from tokenmill.core.models import (
     Availability,
