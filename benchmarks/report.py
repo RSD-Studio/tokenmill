@@ -70,6 +70,8 @@ _CSV_COLUMNS: tuple[str, ...] = (
     "spread_ratio",
     "peak_python_kb",
     "peak_rss_kb",
+    "baseline_rss_kb",
+    "added_rss_kb",
     "memory_method",
     "empty_output",
     "backend_version",
@@ -183,6 +185,7 @@ def load_results(path: Path) -> tuple[list[CellResult], dict[str, object]]:
             durations_ms=tuple(row.get("durations_ms") or ()),
             peak_python_kb=row.get("peak_python_kb"),
             peak_rss_kb=row.get("peak_rss_kb"),
+            baseline_rss_kb=row.get("baseline_rss_kb"),
             memory_method=row.get("memory_method", "none"),
             warnings=tuple(row.get("warnings") or ()),
             empty_output=row.get("empty_output", False),
@@ -428,10 +431,18 @@ def _timing_section(results: Sequence[CellResult], manifest: RunManifest) -> lis
     ]
     if "proc-sampling" in methods:
         out += [
-            "`peak RSS` is the resident set of this process **and its descendants**,",
-            "sampled every 5 ms. A peak between two samples is missed, so it is a",
-            "lower bound. It is the only figure that means anything for a subprocess",
-            "backend.",
+            "`added RSS` is how much resident memory the conversion added to this",
+            "process **and its descendants**, sampled every 5 ms: the peak during the",
+            "cell minus the reading taken immediately before it. It is the only",
+            "figure here that means anything for a subprocess backend, and the only",
+            "one that is comparable between rows.",
+            "",
+            "`peak RSS` is the raw peak, published beside it so the subtraction is",
+            "checkable. **Do not compare peaks between rows.** A Python process's",
+            "resident set does not shrink, so the peak column climbs through the run",
+            "as each cell inherits every library the earlier cells imported; the last",
+            "row's peak is mostly the first fifty rows' imports. Both figures are",
+            "lower bounds: a peak occurring between two samples is missed.",
             "",
         ]
     if "tracemalloc-only" in methods:
@@ -446,16 +457,18 @@ def _timing_section(results: Sequence[CellResult], manifest: RunManifest) -> lis
         "everything else. The two are different measurements and neither is *the*",
         "memory used.",
         "",
-        "| Fixture | Backend | Median | Min | Max | Spread | Peak RSS | Peak Python | Version |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Fixture | Backend | Median | Min | Max | Spread | Added RSS | Peak RSS |"
+        " Peak Python | Version |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
+        added = "n/a" if row.added_rss_kb is None else f"{row.added_rss_kb / 1024:,.0f} MiB"
         rss = "n/a" if row.peak_rss_kb is None else f"{row.peak_rss_kb / 1024:,.0f} MiB"
         python_kb = "n/a" if row.peak_python_kb is None else f"{row.peak_python_kb / 1024:,.1f} MiB"
         out.append(
             f"| `{row.fixture}` | `{row.backend}` | "
             f"{row.median_ms:,.0f} ms | {row.min_ms:,.0f} ms | {row.max_ms:,.0f} ms | "
-            f"{row.spread_ratio:.1f}x | {rss} | {python_kb} | "
+            f"{row.spread_ratio:.1f}x | {added} | {rss} | {python_kb} | "
             f"{row.backend_version or '—'} |"
         )
     out.append("")

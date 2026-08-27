@@ -261,6 +261,7 @@ def run_cell(
         durations_ms=tuple(durations),
         peak_python_kb=memory.reading.peak_python_kb,
         peak_rss_kb=memory.reading.peak_rss_kb,
+        baseline_rss_kb=memory.reading.baseline_rss_kb,
         memory_method=memory.reading.method,
         warnings=tuple(result.warnings),
         empty_output=not result.text.strip(),

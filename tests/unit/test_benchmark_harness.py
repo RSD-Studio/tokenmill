@@ -427,3 +427,66 @@ class TestTheManifestRecordsVersionsItActuallySaw:
             assert manifest["backend_versions"].get(backend), (
                 f"{backend} produced rows with a version but the manifest records none"
             )
+
+
+class TestMemoryIsComparableBetweenRows:
+    """A peak resident set is not a per-cell figure and must not read as one.
+
+    The first committed run's memory column climbed from 50 MiB on the first
+    row to 375 MiB on the last, in step order rather than in any order related
+    to the backends. That is what a process-tree peak does: a Python process's
+    resident set does not shrink, so every cell inherits the imports of every
+    cell before it. The peak stays in the report — it is what was measured —
+    but the comparable figure beside it is the difference from a baseline read
+    immediately before the cell.
+    """
+
+    def test_the_added_figure_subtracts_the_baseline(self) -> None:
+        row = _cell(peak_rss_kb=736 * 1024, baseline_rss_kb=370 * 1024)
+        assert row.added_rss_kb == 366 * 1024
+
+    def test_a_cell_that_freed_more_than_it_took_reports_zero_not_a_negative(self) -> None:
+        row = _cell(peak_rss_kb=100, baseline_rss_kb=140)
+        assert row.added_rss_kb == 0
+
+    def test_an_unsampled_platform_reports_none_rather_than_zero(self) -> None:
+        assert _cell(peak_rss_kb=None, baseline_rss_kb=None).added_rss_kb is None
+        assert _cell(peak_rss_kb=1000, baseline_rss_kb=None).added_rss_kb is None
+
+    def test_the_report_publishes_both_and_warns_against_comparing_peaks(
+        self, tmp_path: Path
+    ) -> None:
+        rows = [_cell(peak_rss_kb=736 * 1024, baseline_rss_kb=370 * 1024)]
+        write_results(tmp_path, rows, _manifest())
+        text = (tmp_path / "report.md").read_text(encoding="utf-8")
+        assert "Added RSS" in text
+        assert "Do not compare peaks between rows" in text
+        assert "366 MiB" in text
+        assert "736 MiB" in text
+
+    def test_the_baseline_survives_a_round_trip(self, tmp_path: Path) -> None:
+        write_results(tmp_path, [_cell(peak_rss_kb=500, baseline_rss_kb=200)], _manifest())
+        loaded, _ = load_results(tmp_path / "results.json")
+        assert loaded[0].baseline_rss_kb == 200
+        assert loaded[0].added_rss_kb == 300
+
+    def test_a_real_measurement_records_a_baseline_below_its_peak(self) -> None:
+        """Not a stub: allocate and check the sampler saw the growth."""
+        from benchmarks.memory import measure_memory, sampling_supported
+
+        if not sampling_supported():
+            pytest.skip("no /proc on this platform, so there is no baseline to record")
+        with measure_memory() as measured:
+            ballast = bytearray(64 * 1024 * 1024)
+            ballast[::4096] = b"\x01" * (len(ballast) // 4096)
+        reading = measured.reading
+        assert reading.baseline_rss_kb is not None
+        assert reading.peak_rss_kb is not None
+        assert reading.peak_rss_kb >= reading.baseline_rss_kb
+        # The 64 MiB is touched page by page, so it is resident, and it is still
+        # alive when the sampler takes its closing reading. Half of it is a floor
+        # loose enough to survive a differently-tuned allocator and tight enough
+        # that a sampler which never ran would fail.
+        assert reading.added_rss_kb is not None
+        assert reading.added_rss_kb > 32 * 1024
+        del ballast

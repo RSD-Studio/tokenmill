@@ -84,6 +84,10 @@ class CellResult:
         peak_rss_kb: Peak resident set of this process and its descendants
             during the last repeat, or ``None`` where that could not be
             sampled. See :attr:`memory_method`.
+        baseline_rss_kb: The process tree's resident set just before the
+            instrumented pass. ``peak_rss_kb`` on its own climbs across a matrix
+            run because a Python process's resident set does not shrink, so the
+            interesting figure is :attr:`added_rss_kb`, the difference.
         memory_method: How ``peak_rss_kb`` was obtained, so the number can be
             read correctly rather than trusted.
         warnings: What the conversion warned about — an empty document, a
@@ -112,10 +116,25 @@ class CellResult:
     durations_ms: tuple[float, ...] = ()
     peak_python_kb: int | None = None
     peak_rss_kb: int | None = None
+    baseline_rss_kb: int | None = None
     memory_method: str = "none"
     warnings: tuple[str, ...] = ()
     empty_output: bool = False
     backend_version: str | None = None
+
+    @property
+    def added_rss_kb(self) -> int | None:
+        """Resident memory this cell added over what the process already held.
+
+        Returns:
+            ``peak_rss_kb - baseline_rss_kb``, or ``None`` when either is
+            unknown. This — not the peak — is the figure to compare between
+            backends, because the peak carries every import made by every cell
+            that ran before it.
+        """
+        if self.peak_rss_kb is None or self.baseline_rss_kb is None:
+            return None
+        return max(0, self.peak_rss_kb - self.baseline_rss_kb)
 
     @property
     def n(self) -> int:
@@ -213,6 +232,8 @@ class CellResult:
             "spread_ratio": None if self.spread_ratio is None else round(self.spread_ratio, 2),
             "peak_python_kb": self.peak_python_kb,
             "peak_rss_kb": self.peak_rss_kb,
+            "baseline_rss_kb": self.baseline_rss_kb,
+            "added_rss_kb": self.added_rss_kb,
             "memory_method": self.memory_method,
             "empty_output": self.empty_output,
             "backend_version": self.backend_version,
@@ -253,6 +274,8 @@ class CellResult:
             "spread_ratio": self.spread_ratio,
             "peak_python_kb": self.peak_python_kb,
             "peak_rss_kb": self.peak_rss_kb,
+            "baseline_rss_kb": self.baseline_rss_kb,
+            "added_rss_kb": self.added_rss_kb,
             "memory_method": self.memory_method,
             "warnings": list(self.warnings),
             "empty_output": self.empty_output,

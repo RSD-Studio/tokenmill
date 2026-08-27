@@ -14,6 +14,13 @@ labels which is which, and reports ``None`` where it could measure neither.
   descendants**, sampled during the run. This is the number that means something
   for a subprocess backend, and it is only available where the platform lets us
   sample it.
+* ``baseline_rss_kb`` — the same figure read *once, immediately before* the
+  block. Without it ``peak_rss_kb`` is close to uninterpretable in a matrix run:
+  a Python process's resident set only grows, so by the fiftieth cell the peak
+  is dominated by every library the previous forty-nine imported and the column
+  reads as a slow climb rather than as a property of the backend. The difference
+  between the two is what this cell actually added, and it is the difference
+  that belongs in a report.
 
 **Why sampling rather than :func:`resource.getrusage`.** ``ru_maxrss`` is a
 high-water mark for the life of the process, not for an interval, so the
@@ -79,6 +86,8 @@ class MemoryReading:
         peak_python_kb: Peak Python allocations, from tracemalloc.
         peak_rss_kb: Peak resident set of this process and its descendants, or
             ``None`` where sampling is not available.
+        baseline_rss_kb: The same figure just before the block, or ``None``.
+            :attr:`added_rss_kb` is the pair's whole point.
         method: ``"proc-sampling"`` or ``"tracemalloc-only"``, so the number
             can be read correctly rather than trusted.
     """
@@ -86,6 +95,21 @@ class MemoryReading:
     peak_python_kb: int | None
     peak_rss_kb: int | None
     method: str
+    baseline_rss_kb: int | None = None
+
+    @property
+    def added_rss_kb(self) -> int | None:
+        """How much resident memory this block added over what was already held.
+
+        Returns:
+            ``peak - baseline``, or ``None`` when either is unknown. Clamped at
+            zero: a block that freed more than it allocated added nothing, and a
+            negative "memory used" would be read as a measurement error rather
+            than as the true answer.
+        """
+        if self.peak_rss_kb is None or self.baseline_rss_kb is None:
+            return None
+        return max(0, self.peak_rss_kb - self.baseline_rss_kb)
 
 
 def sampling_supported() -> bool:
@@ -103,6 +127,7 @@ class _Sampler:
     def __init__(self) -> None:
         """Start with nothing sampled."""
         self.peak_kb = 0
+        self.baseline_kb = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -112,6 +137,8 @@ class _Sampler:
         Returns:
             Self, so the peak can be read after the block.
         """
+        self.baseline_kb = _tree_rss_kb()
+        self.peak_kb = self.baseline_kb
         self._thread = threading.Thread(target=self._run, name="tokenmill-rss", daemon=True)
         self._thread.start()
         return self
@@ -252,13 +279,16 @@ class measure_memory:  # noqa: N801 - a context manager used as `with measure_me
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         rss: int | None = None
+        baseline: int | None = None
         method = "tracemalloc-only"
         if self._sampler is not None:
             self._sampler.__exit__()
             rss = self._sampler.peak_kb or None
+            baseline = self._sampler.baseline_kb or None
             method = "proc-sampling"
         self.reading = MemoryReading(
             peak_python_kb=peak // 1024,
             peak_rss_kb=rss,
             method=method,
+            baseline_rss_kb=baseline,
         )
