@@ -73,7 +73,12 @@ jobs:
       # also keeps `warn_unused_ignores` honest — the two `type: ignore`s in
       # the kreuzberg adapter exist because that package's shipped stubs
       # disagree with the package, and mypy can only see that with it present.
-      - run: uv sync --extra dev --extra fixtures --extra documents
+      # `--extra gui` for the same reason `--extra documents` is here: without
+      # nicegui installed, mypy cannot find it and `src/tokenmill/gui/app.py`
+      # fails to check at all. Run 94 failed exactly this way — one job of 25,
+      # with the whole test matrix green — because the GUI landed with the
+      # extra added to the test job and not to this one.
+      - run: uv sync --extra dev --extra fixtures --extra documents --extra gui
       - run: uv run mypy
 
   test:
