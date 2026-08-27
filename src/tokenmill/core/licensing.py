@@ -254,10 +254,19 @@ def _read_expression(dist: Distribution) -> tuple[str, str]:
     """
     meta = dist.metadata
 
-    # Indexing rather than .get(): the PackageMetadata protocol declares
-    # __getitem__ and not get, and the underlying email.message.Message
-    # returns None for an absent header either way.
-    expression = meta["License-Expression"]
+    # `.get()` rather than indexing, and the type: ignore is the price.
+    #
+    # `PackageMetadata.__getitem__` returning None for a missing header is
+    # deprecated — "Implicit None on return values is deprecated and will raise
+    # KeyErrors" — and under this project's `filterwarnings = ["error"]` that is
+    # not a warning, it is a failure. Indexing was the first thing written here
+    # because typeshed's PackageMetadata protocol declares `__getitem__` and not
+    # `get`, so mypy accepted it; CI failed five tests on py3.12 and py3.13 with
+    # it. The runtime object is an `email.message.Message` and has `.get()`.
+    #
+    # Trap 2 in the handover, exactly: mypy pushed towards the deprecated API and
+    # only the matrix caught it.
+    expression = meta.get("License-Expression")  # type: ignore[attr-defined]
     if expression and expression.strip():
         return expression.strip(), "License-Expression"
 
@@ -269,7 +278,7 @@ def _read_expression(dist: Distribution) -> tuple[str, str]:
     if classifiers:
         return " AND ".join(classifiers), "Classifier"
 
-    legacy = meta["License"]
+    legacy = meta.get("License")  # type: ignore[attr-defined]
     if legacy and legacy.strip():
         # A free-text License field is sometimes the entire licence body. Only
         # the first line is a name; the rest is the text of the licence and

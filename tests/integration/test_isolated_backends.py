@@ -276,17 +276,38 @@ class TestPandocIsIsolatedBecauseOfItsLicence:
         assert "+---" not in result.text, "that is a Pandoc grid table, not GFM"
         assert ":::" not in result.text, "that is a Pandoc fenced div, not GFM"
 
-    def test_it_refuses_pdf_because_pandoc_cannot_read_pdf(self, fixture_dir: Path) -> None:
+    def test_it_does_not_claim_pdf_because_pandoc_cannot_read_pdf(self, fixture_dir: Path) -> None:
         """DOCUMENTED FAILURE MODE, and it is a refusal rather than a failure.
 
         Pandoc has no PDF *reader* at all — it writes PDF and does not read it —
-        so the format is simply not claimed, and the user gets the format list
-        rather than a Pandoc error about a file it never opened.
+        so the format is simply not claimed and no Pandoc process is ever
+        started for one.
+
+        Asserted against `supports()` rather than through `convert()`, and the
+        difference matters. `BaseConverter.convert` checks **availability before
+        format support**, so on a machine without Pandoc installed the end-to-end
+        route raises `BackendUnavailable` and never reaches the format check.
+        This test asserted the format message and passed here, where Pandoc is
+        installed, then failed on every CI cell, where it is not — the same
+        one-machine blindness the handover's trap 1 names.
+
+        The format claim is a property of the adapter and is true either way.
         """
+        source = Source.from_path(fixture_dir / "simple.pdf")
+
+        assert not PandocConverter().supports(source)
+        assert "pdf" not in PandocConverter().info.input_formats
+
+    @requires_pandoc
+    def test_asking_for_pdf_anyway_names_the_formats_it_does_handle(
+        self, fixture_dir: Path
+    ) -> None:
+        """The end-to-end half, gated on Pandoc being there to reach it."""
         with pytest.raises(ConversionError) as caught:
             convert(fixture_dir / "simple.pdf", "pandoc")
 
         assert "does not handle pdf" in str(caught.value)
+        assert "epub" in (caught.value.hint or "")
 
 
 class TestLibreOfficeIsIsolatedOnlyBecauseItIsNotPython:
