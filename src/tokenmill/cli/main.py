@@ -51,7 +51,7 @@ from tokenmill.cli.format import (
 )
 from tokenmill.core.compare import compare_backends, compare_formats
 from tokenmill.core.config import load_config
-from tokenmill.core.errors import TokenmillError
+from tokenmill.core.errors import ConfigError, TokenmillError
 from tokenmill.core.models import (
     ConversionResult,
     Domain,
@@ -1260,6 +1260,17 @@ def gui(
             help="Bind 0.0.0.0 for LAN or headless use, and do not open a browser.",
         ),
     ] = False,
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help=(
+                "Shared token --server requires on every request. Defaults to "
+                "$TOKENMILL_SERVER_TOKEN, then the config file's server_token, "
+                "then a freshly generated one printed at start-up."
+            ),
+        ),
+    ] = None,
     native: Annotated[
         bool, typer.Option("--native", help="Open a desktop window instead of a browser tab.")
     ] = False,
@@ -1270,12 +1281,13 @@ def gui(
 
     Binds localhost by default. `--server` binds every interface, which is a
     decision about somebody's network and so has to be typed rather than
-    defaulted into.
+    defaulted into — and it now requires a shared token on every request.
     """
     _configure_logging(verbose)
 
     try:
         from tokenmill.gui.app import run as run_gui
+        from tokenmill.gui.auth import QUERY_PARAM, resolve_server_token
     except ImportError as exc:
         # The same contract every optional backend has: a missing dependency is
         # an actionable message, never a traceback.
@@ -1284,14 +1296,40 @@ def gui(
         raise typer.Exit(code=1) from exc
 
     where = "0.0.0.0" if server else host  # noqa: S104 - reported, not bound, here
-    print(f"tokenmill gui on http://{where}:{port}", file=sys.stderr)
-    if server:
-        print(
-            "warning: --server binds every network interface. tokenmill has no "
-            "authentication; do not expose it to a network you do not trust.",
-            file=sys.stderr,
-        )
-    run_gui(host=host, port=port, server=server, native=native, show=not no_show)
+    if not server:
+        print(f"tokenmill gui on http://{where}:{port}", file=sys.stderr)
+        run_gui(host=host, port=port, server=False, native=native, show=not no_show)
+        return
+
+    try:
+        secret = resolve_server_token(token, configured=load_config().server_token)
+    except (ValueError, ConfigError) as exc:
+        _fail(str(exc))
+
+    # The URL carries the token because a browser cannot be asked to set a
+    # header, and printing a bare token beside a bare URL is an instruction
+    # nobody follows correctly. One line to copy.
+    print(
+        f"tokenmill gui on http://{where}:{port}/?{QUERY_PARAM}={secret.value}",
+        file=sys.stderr,
+    )
+    print(f"server token ({secret.origin}): {secret.value}", file=sys.stderr)
+    print(
+        "note:  --server binds every network interface and requires this token "
+        "on every request. It is not TLS, not user accounts and not an audit "
+        "trail: it stops another machine on your network reading your "
+        "documents, and nothing more. Tunnel over SSH or put HTTPS in front of "
+        "it if the network is not one you trust.",
+        file=sys.stderr,
+    )
+    run_gui(
+        host=host,
+        port=port,
+        server=True,
+        token=secret.value,
+        native=native,
+        show=not no_show,
+    )
 
 
 def _show_licenses(*, as_json: bool) -> None:

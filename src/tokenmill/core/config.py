@@ -70,6 +70,12 @@ class Config:
         user_agent: Overrides the ``User-Agent`` used when fetching.
         timeout_s: Default per-conversion time budget in seconds.
         max_bytes: Default maximum input size in bytes.
+        server_token: The shared token ``tokenmill gui --server`` requires on
+            every request. Not a conversion setting — it never reaches
+            :class:`~tokenmill.core.models.ConvertOptions` — and it is here
+            because this is where a user already keeps settings and because
+            ``$TOKENMILL_SERVER_TOKEN`` then works with no extra code. Leaving
+            it unset is safe: the interface generates one and prints it.
         source_path: The config file these settings came from, if any. Recorded
             so ``tokenmill config`` can say where a surprising value came from.
     """
@@ -88,6 +94,7 @@ class Config:
     user_agent: str | None = None
     timeout_s: float = 120.0
     max_bytes: int = 256 * 1024 * 1024
+    server_token: str | None = None
     source_path: Path | None = None
 
     def to_options(self, **overrides: Any) -> ConvertOptions:
@@ -274,7 +281,7 @@ def _coerce(key: str, value: Any, origin: str) -> Any:
             if isinstance(value, str):
                 return tuple(part.strip() for part in value.split(",") if part.strip())
             return tuple(str(item) for item in value)
-        if key == "backend":
+        if key in {"backend", "server_token"}:
             text = str(value)
             return text or None
         return str(value)

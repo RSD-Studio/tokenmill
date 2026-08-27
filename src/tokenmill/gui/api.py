@@ -31,7 +31,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from tokenmill.core.compare import BackendComparison, FormatComparison, compare_backends
 from tokenmill.core.compare import compare_formats as _compare_formats
@@ -57,6 +57,9 @@ from tokenmill.post.base import default_post_registry
 from tokenmill.tokens.registry import default_tokenizer_registry
 
 __all__ = [
+    "MAX_STAGED_AGE_S",
+    "MAX_STAGED_FILES",
+    "UPLOAD_DIR",
     "BackendChoice",
     "ConversionRequest",
     "ConversionSummary",
@@ -70,8 +73,23 @@ __all__ = [
     "estimate_cost",
     "format_choices",
     "post_processor_choices",
+    "prune_uploads",
+    "stage_upload",
     "tokenizer_choices",
 ]
+
+#: Where the interface stages a file somebody dropped on it.
+#:
+#: Under the user's own cache directory rather than the system temp area,
+#: because a conversion may be started minutes after the upload and a
+#: tmp-reaper deleting the file in between would look like a tokenmill bug.
+UPLOAD_DIR: Final = Path.home() / ".cache" / "tokenmill" / "uploads"
+
+#: How long a staged upload may sit here before it is removed, in seconds.
+MAX_STAGED_AGE_S: Final = 24 * 60 * 60
+
+#: How many staged uploads are kept, newest first, regardless of age.
+MAX_STAGED_FILES: Final = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,3 +608,107 @@ def estimate_cost(tokens: int, rate_per_million: float, currency: str = "$") -> 
         currency=currency,
         cost=tokens / 1_000_000 * rate_per_million,
     )
+
+
+def stage_upload(name: str, data: bytes, *, directory: Path | None = None) -> Path:
+    """Write an uploaded file where a conversion can find it, and prune.
+
+    **The name is not trusted.** A browser sends a base name; a caller that is
+    not a browser sends whatever it likes, and with ``--server`` that caller is
+    something on the network rather than the person at the keyboard.
+    :attr:`pathlib.PurePath.name` discards every separator on both platforms,
+    which handles ``../../.ssh/authorized_keys``.
+
+    It does **not** handle everything, and the gap is worth naming because a
+    test found it rather than a review: ``Path("..").name`` is ``".."``, not the
+    empty string, so taking the base name alone would have resolved to the
+    *parent* directory. ``"."``, ``".."`` and an empty result are therefore
+    replaced outright, and a NUL byte — which no filesystem accepts and which
+    would otherwise surface as a ``ValueError`` from deep inside ``open`` — is
+    stripped.
+
+    Args:
+        name: What the uploader called the file.
+        data: Its bytes.
+        directory: Where to stage it; :data:`UPLOAD_DIR` when omitted.
+
+    Returns:
+        The path written.
+    """
+    target_dir = directory if directory is not None else UPLOAD_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / _safe_upload_name(name)
+    target.write_bytes(data)
+    prune_uploads(directory=target_dir)
+    return target
+
+
+def _safe_upload_name(name: str) -> str:
+    """Reduce an uploader's filename to something that cannot escape a directory.
+
+    Args:
+        name: What the uploader called the file.
+
+    Returns:
+        A base name that names a file inside the staging directory and nowhere
+        else. ``"upload"`` where nothing usable survives.
+    """
+    base = Path(name.replace("\x00", "")).name.strip()
+    if base in {"", ".", ".."}:
+        return "upload"
+    return base
+
+
+def prune_uploads(*, directory: Path | None = None) -> tuple[Path, ...]:
+    """Remove staged uploads that are too old, then the oldest of what is left.
+
+    Defect N14: Phase 8 staged every file anybody dropped on the interface and
+    removed none of them, so a long-running ``--server`` instance accumulated
+    other people's documents indefinitely — on disk, unencrypted, for as long as
+    the machine lived.
+
+    **Both bounds, because either alone leaves a hole.** An age bound alone lets
+    a burst of large uploads fill a disk inside the window. A count bound alone
+    keeps yesterday's documents on an idle server forever, which is the privacy
+    half of the same defect. So: anything older than :data:`MAX_STAGED_AGE_S`
+    goes, and then the oldest go until at most :data:`MAX_STAGED_FILES` remain.
+
+    A file that cannot be removed is skipped rather than raised on. This runs
+    inside an upload, and failing somebody's upload because a stale file was
+    locked by another process would trade a disk-space problem for a broken
+    feature.
+
+    Args:
+        directory: Where to prune; :data:`UPLOAD_DIR` when omitted.
+
+    Returns:
+        The files that were removed, oldest first.
+    """
+    target_dir = directory if directory is not None else UPLOAD_DIR
+    if not target_dir.is_dir():
+        return ()
+
+    entries: list[tuple[float, Path]] = []
+    for path in target_dir.iterdir():
+        if not path.is_file():
+            continue
+        try:
+            entries.append((path.stat().st_mtime, path))
+        except OSError:  # pragma: no cover - removed by someone else mid-scan
+            continue
+    entries.sort()
+
+    now = time.time()
+    doomed = [path for mtime, path in entries if now - mtime > MAX_STAGED_AGE_S]
+    surviving = [path for mtime, path in entries if now - mtime <= MAX_STAGED_AGE_S]
+    if len(surviving) > MAX_STAGED_FILES:
+        doomed.extend(surviving[: len(surviving) - MAX_STAGED_FILES])
+
+    removed: list[Path] = []
+    for path in doomed:
+        try:
+            path.unlink()
+        except OSError:  # pragma: no cover - locked, or already gone
+            continue
+        removed.append(path)
+    return tuple(removed)

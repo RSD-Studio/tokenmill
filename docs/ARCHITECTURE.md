@@ -1001,6 +1001,58 @@ documents to C libraries or external binaries.
   should report a mangled character, not abort, but it must not measure mojibake
   silently.
 
+### `gui --server` and its shared token
+
+`src/tokenmill/gui/auth.py`. Defect N15: Phase 8 shipped `--server` binding
+`0.0.0.0` with no authentication, printing a warning and calling that a
+mitigation. It is not one.
+
+Every request now carries a token — `Authorization: Bearer`, an
+`X-Tokenmill-Token` header, a `tokenmill_server_token` cookie, or `?token=` on
+the first page load, which is how the token reaches a browser at all and which
+sets the cookie for everything after. Comparison is `hmac.compare_digest`.
+Without a token: `401` for HTTP, and a `1008` close for a WebSocket, because
+answering a WebSocket scope with an HTTP response is a protocol error.
+
+**The guard is raw ASGI, not a Starlette middleware, and that is the load-
+bearing decision.** The interface runs over a WebSocket; a guard that saw only
+`http` would leave the channel every conversion actually travels on wide open.
+A raw middleware sees both scopes. Verified against a running server: `403` on
+the WebSocket handshake without the cookie, `101` with it.
+
+**When no token is configured, one is generated and printed** with the URL to
+paste. There is no way to run `--server` without one. `--token` beats
+`$TOKENMILL_SERVER_TOKEN` beats the config file's `server_token`, matching the
+layering in `core/config.py`, and a token under eight characters is *refused*
+rather than accepted — an empty shell variable would otherwise disable the check
+in silence.
+
+**What it is not**, stated in the module, the CLI's start-up message and the
+README rather than left to be inferred: not TLS, not user accounts, not an audit
+trail, not a rate limit. It stops a machine on the same network reading your
+documents. The cookie is deliberately **not** `Secure`, because there is no TLS
+to attach it to and a `Secure` cookie over plain HTTP is discarded — the
+appearance of safety costing the actual feature. `SameSite=Lax` is the CSRF
+answer.
+
+### Staged uploads are bounded
+
+Defect N14. Phase 8 wrote every uploaded file to `~/.cache/tokenmill/uploads`
+and removed none of them, so a long-running `--server` accumulated everything
+anybody had ever dropped on it.
+
+`api.prune_uploads()` applies **both** bounds: anything older than 24 hours
+goes, then the oldest go until at most 200 files remain. Either alone leaves a
+hole — an age bound lets a burst fill a disk inside the window, a count bound
+keeps yesterday's documents on an idle server forever, and the second of those
+is the privacy half of the same defect. It runs after each upload and again when
+a page is built, so a server that is loaded and then left alone still sheds.
+
+Staging lives in `gui/api.py` rather than in `app.py` because it is testable
+logic, which is the rule the whole GUI layer is built on. That is how a test
+found the hole in the name sanitiser: `Path("..").name` is `".."`, not the empty
+string, so taking the base name alone resolved to the *parent* directory.
+
 ---
 
 ## Third-party libraries that misbehave, and where that is handled

@@ -344,9 +344,15 @@ desktop window with `--native`) with the token panel as its centrepiece: before,
 after, the delta, the per-stage breakdown, and fidelity beside all of it.
 Unavailable backends are greyed out with an install hint rather than hidden, and
 it works on a core install with no extras. Screenshots in
-[`docs/images/`](docs/images/). `--server` binds every interface for LAN use and
-has **no authentication** — it says so at startup, and that is the only
-protection it has.
+[`docs/images/`](docs/images/).
+
+`--server` binds every interface for LAN use and requires a **shared token** on
+every request — generated and printed with the URL to open when you have not set
+one, so the secure path is the default path. Be clear about what that is and is
+not: it stops another machine on your network converting your documents and
+reading the results. There is no TLS, no user accounts and no audit trail. Put
+HTTPS in front of it, or tunnel over SSH, if the network is not one you would
+trust with the documents themselves.
 
 ```console
 $ pip install "tokenmill[gui]"
