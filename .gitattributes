@@ -13,3 +13,8 @@
 # `core.autocrlf=true` rewrites LF to CRLF on checkout, which changes both. That
 # is what made every Windows test job fail on the first run CI ever performed.
 tests/fixtures/** -text
+
+# Phase 8 — GUI screenshots for the documentation. Binary, so never diffed and
+# never line-ending-normalised; a PNG that git "fixed" the line endings of is a
+# PNG that no longer opens.
+*.png binary

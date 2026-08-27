@@ -82,8 +82,45 @@ backend 'pypdf' declares itself permissive but reaches 'pymupdf4llm', which is c
 — and the violation was reverted. Synthetic violations remain as permanent
 tests. `PROGRESS.md` records the run.
 
-**The copyleft allow-list is empty**, and adding to it costs a paragraph on this
-page: a test asserts that every exempted name appears here.
+**The copyleft allow-list has exactly one entry**, and adding to it costs a
+paragraph on this page — a test asserts that every exempted name appears here,
+and it caught the omission when `docutils` was added.
+
+### `docutils` — the one exemption
+
+**How it arrives:** `nicegui` → `docutils`, a direct dependency, in the `gui`
+extra added in Phase 8. It is not in the core install.
+
+**Why it is flagged:** its metadata carries no SPDX expression and three licence
+classifiers:
+
+```
+License :: Public Domain
+License :: OSI Approved :: BSD License
+License :: OSI Approved :: GNU General Public License (GPL)
+```
+
+`classify()` joins multiple classifiers **conservatively**, as a conjunction, and
+therefore reads this as copyleft. That is the right default for a licence
+checker: a false positive costs a documented exemption, and a false negative
+costs a licence violation. It is not the right answer here.
+
+**Why the exemption is justified.** Reading the installed `COPYING.rst` of
+docutils 0.23 rather than a summary of it: most of the project is public domain,
+several files are BSD-2 or BSD-3, and the GPL applies to exactly one file —
+`tools/editors/emacs/rst.el`, an Emacs editing mode. **That file is not in the
+wheel.** Verified on 2026-08-26 against the installed package: no `.el` file
+anywhere under `site-packages/docutils/`, and no Python file in it containing
+the string "GNU General Public License".
+
+No GPL code is installed, so none can be imported, so the rule is not breached.
+
+**The exemption re-checks its own premise.**
+`test_the_docutils_exemption_is_still_for_the_reason_claimed` re-runs both
+checks against whatever version is installed. If a future docutils ships GPL
+Python code, that test fails and this paragraph has to be revisited rather than
+inherited — which is the failure mode of every allow-list that is written once
+and trusted forever.
 
 ## Running the audit yourself
 

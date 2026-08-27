@@ -52,17 +52,25 @@ from tokenmill.core.registry import Registry
 
 #: Distributions allowed to classify as copyleft and still be installed.
 #:
-#: Empty, and it is meant to stay that way. It exists so that the check has a
-#: documented escape rather than a commented-out assertion, and
-#: `test_every_exemption_is_documented` makes adding one cost a paragraph in
-#: `docs/LICENSES.md`.
+#: One entry, and each one costs a paragraph in `docs/LICENSES.md` —
+#: `test_every_exemption_is_documented` enforces that. An undocumented exemption
+#: is a waived rule.
 #:
-#: `tld` is *not* here and must not be: it ships
+#: **`docutils`** arrives as a direct dependency of `nicegui`, in the `gui`
+#: extra. Its metadata carries three licence classifiers and no SPDX
+#: expression — Public Domain, BSD, and *GNU General Public License (GPL)* —
+#: which `classify()` joins conservatively and reads as copyleft. Reading the
+#: installed `COPYING.rst` of 0.23 shows the GPL applies to exactly one file,
+#: `tools/editors/emacs/rst.el`, which is Emacs Lisp and **is not in the
+#: wheel**: the installed package contains no `.el` file and no GPL text
+#: anywhere. Verified here on 2026-08-26, not read from a summary.
+#:
+#: `tld` is *not* here and must not be. It ships
 #: `MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`, a disjunction the recipient
 #: resolves, and tokenmill takes the MPL-1.1 branch. `classify()` reads it as
-#: permissive without an exemption, which is the correct answer rather than a
-#: waived one.
-ALLOWED_COPYLEFT: frozenset[str] = frozenset()
+#: permissive **without** an exemption, which is the correct answer rather than
+#: a waived one, and a test asserts the distinction.
+ALLOWED_COPYLEFT: frozenset[str] = frozenset({"docutils"})
 
 #: The source tree, for the static scan.
 SRC = Path(__file__).resolve().parents[2] / "src" / "tokenmill"
@@ -178,6 +186,39 @@ class TestNoCopyleftPackageIsInstalled:
         """
         assert "tld" not in {n.lower() for n in ALLOWED_COPYLEFT}
         assert classify("MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later") is LicenseTier.PERMISSIVE
+
+    def test_the_docutils_exemption_is_still_for_the_reason_claimed(self) -> None:
+        """Re-checks the exemption's premise against the installed package.
+
+        The claim is that docutils' GPL classifier covers one Emacs Lisp file
+        that is not shipped in the wheel. If a future release starts shipping
+        GPL Python code, this fails and the exemption has to be revisited rather
+        than inherited.
+
+        Skipped where docutils is absent — it arrives with the `gui` extra, and
+        a core-only install has nothing to check.
+        """
+        import importlib.util
+
+        spec = importlib.util.find_spec("docutils")
+        if spec is None or spec.origin is None:
+            pytest.skip("docutils is not installed here; it comes with the gui extra")
+
+        package = Path(spec.origin).parent
+
+        assert not list(package.rglob("*.el")), (
+            "docutils now ships Emacs Lisp in the wheel; the exemption in "
+            "ALLOWED_COPYLEFT assumed it did not"
+        )
+        offenders = [
+            path.name
+            for path in package.rglob("*.py")
+            if "GNU General Public License" in path.read_text(encoding="utf-8", errors="replace")
+        ]
+        assert not offenders, (
+            f"docutils now ships Python files claiming the GPL: {offenders}. The "
+            f"exemption in ALLOWED_COPYLEFT is no longer justified"
+        )
 
     def test_every_exemption_is_documented(self) -> None:
         """Adding to the allow-list must cost a paragraph, not a line."""

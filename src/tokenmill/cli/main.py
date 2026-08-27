@@ -1247,6 +1247,53 @@ if __name__ == "__main__":  # pragma: no cover
     main()
 
 
+@app.command()
+def gui(
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on.")] = 8080,
+    host: Annotated[
+        str, typer.Option("--host", help="Address to bind. Ignored with --server.")
+    ] = "127.0.0.1",
+    server: Annotated[
+        bool,
+        typer.Option(
+            "--server",
+            help="Bind 0.0.0.0 for LAN or headless use, and do not open a browser.",
+        ),
+    ] = False,
+    native: Annotated[
+        bool, typer.Option("--native", help="Open a desktop window instead of a browser tab.")
+    ] = False,
+    no_show: Annotated[bool, typer.Option("--no-show", help="Do not open a browser.")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
+) -> None:
+    """Launch the graphical interface.
+
+    Binds localhost by default. `--server` binds every interface, which is a
+    decision about somebody's network and so has to be typed rather than
+    defaulted into.
+    """
+    _configure_logging(verbose)
+
+    try:
+        from tokenmill.gui.app import run as run_gui
+    except ImportError as exc:
+        # The same contract every optional backend has: a missing dependency is
+        # an actionable message, never a traceback.
+        print("the graphical interface needs the `gui` extra", file=sys.stderr)
+        print('hint:  pip install "tokenmill[gui]"', file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    where = "0.0.0.0" if server else host  # noqa: S104 - reported, not bound, here
+    print(f"tokenmill gui on http://{where}:{port}", file=sys.stderr)
+    if server:
+        print(
+            "warning: --server binds every network interface. tokenmill has no "
+            "authentication; do not expose it to a network you do not trust.",
+            file=sys.stderr,
+        )
+    run_gui(host=host, port=port, server=server, native=native, show=not no_show)
+
+
 def _show_licenses(*, as_json: bool) -> None:
     """Audit the licence of every installed distribution and report it.
 

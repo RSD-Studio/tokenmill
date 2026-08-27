@@ -193,8 +193,20 @@ ocr = []
 # out of process and must never become a declared dependency of tokenmill.
 heavy = []
 
-# Phase 8 — GUI (nicegui + fastapi).
-gui = []
+# Phase 8 — the graphical interface.
+#
+# NiceGUI over the FastAPI it already runs on, per the plan's stack decision.
+# MIT, verified from installed metadata (3.16.0, read 2026-08-26). Its tree is
+# 55 distributions and about 129 MB: light next to docling but far too much for
+# a core install that promises to stay light, so it is an extra, and
+# `tokenmill gui` reports what to install when it is absent.
+#
+# One dependency needs a note. nicegui requires `docutils`, whose classifiers
+# include "GNU General Public License (GPL)" alongside Public Domain and BSD.
+# The GPL covers one Emacs Lisp file that is not shipped in the wheel; it is the
+# single entry on the copyleft allow-list and docs/LICENSES.md explains it. A
+# test re-checks that premise against whatever version is installed.
+gui = ["nicegui>=2.0"]
 
 # Phase 1 — the HuggingFace tokenizer adapter (`--tokenizer hf:<model>`).
 # Apache-2.0 and light, but counting Llama tokens is not something every user

@@ -98,13 +98,20 @@ jobs:
       # tests silently skipped on all nine cells while passing locally for
       # anyone who happened to have those extras.
       #
-      # Everything here is CPU-only, permissively licensed and
-      # wheel-installable on all three platforms. `docling`, `crawl4ai` and
-      # `compress` stay out — multi-gigabyte, and each has its own job or is
-      # covered by a stub.
+      # Everything here is CPU-only and wheel-installable on all three
+      # platforms. `docling`, `crawl4ai` and `compress` stay out —
+      # multi-gigabyte, and each has its own job or is covered by a stub.
+      #
+      # `gui` is here for one specific test rather than for the interface: the
+      # GUI's own suite deliberately imports no UI toolkit and runs without it.
+      # What needs the extra is
+      # `test_the_docutils_exemption_is_still_for_the_reason_claimed`, which
+      # re-checks the premise of the single entry on the copyleft allow-list
+      # against whatever docutils nicegui resolved to. An exemption nobody
+      # re-checks is an exemption that outlives its reason.
       - run: >
           uv sync --extra dev --extra fixtures --extra documents
-          --extra web --extra repo --extra chunk
+          --extra web --extra repo --extra chunk --extra gui
       - name: Run tests
         run: uv run pytest -q --cov=tokenmill --cov-report=term-missing -rs
 
@@ -122,7 +129,7 @@ jobs:
       # different set of installed backends is not the suite's coverage.
       - run: >
           uv sync --extra dev --extra fixtures --extra documents
-          --extra web --extra repo --extra chunk
+          --extra web --extra repo --extra chunk --extra gui
       # DEVELOPMENT_PLAN.md §4 sets a >=85% target on core and tokens
       # specifically; adapters elsewhere are thin wrappers and are allowed to be
       # lower. Gating the two packages the target names stops the number
