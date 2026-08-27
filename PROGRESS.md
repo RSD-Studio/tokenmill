@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-26 by Claude Code_
+_Last updated: 2026-08-27 by Claude Code_
 
 ## Status at a glance
 
@@ -12,15 +12,37 @@ _Last updated: 2026-08-26 by Claude Code_
 | 3 | Web backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 4 | Repository backends | ✅ Complete | passed 2026-08-22 (local; CI cannot schedule runners) |
 | 5 | Post-processing, formats, measurement depth | ✅ Complete | passed 2026-08-24 (local; CI cannot schedule runners) |
-| 6 | Prompt compression (optional tier) | 🟨 **Implemented; success path unverified** | ⚠️ gate NOT passed — see 2026-08-24 entry |
-| 7 | Isolation layer and license enforcement | ⬜ Not started | — |
-| 8 | GUI (FastAPI + NiceGUI) | ⬜ Not started | — |
+| 6 | Prompt compression (optional tier) | 🟨 **Implemented; success path unverified** | ⚠️ gate NOT passed. A CI job that would close it was added on 2026-08-26 and is itself unverified: dispatching a workflow returns 403 for this integration |
+| 7 | Isolation layer and license enforcement | ✅ Complete | passed 2026-08-26 |
+| 8 | GUI (FastAPI + NiceGUI) | ✅ Complete | passed 2026-08-27 |
 | 9 | Heavy backends (GPU tier, install-docs-only) | ⬜ Not started | — |
 | 10 | Benchmark harness | 🟨 **Fidelity-scoring slice complete** (2026-08-24); the harness itself not started | slice gate passed 2026-08-24 |
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
-## Re-evaluation: `docs/REVIEW_PHASES_0_6.md`
+## Re-evaluation: `docs/REVIEW_PHASES_0_8.md`
+
+Written at the end of the Phase 7/8 session, superseding
+`docs/REVIEW_PHASES_0_6.md` (which stays in the repository, for the same reason
+the one before it did). It carries the whole-corpus table, the status of every
+defect, seven new ones, and a recommendation **to start Phase 9** after one
+repair — `tokenmill gui --server` has no authentication, and Phase 9 is the
+phase whose backends live on other machines.
+
+**The three results that matter most**, all from this session:
+
+1. **Defect D3 is closed.** `boilerplate.html` through `trafilatura` is
+   **3,716 → 629 `o200k_base` tokens, −83.1%**, read out of CI run 85's log.
+   Six phases of "we cannot say this in the unit the claim is about" ends here.
+2. **The byte figures were optimistic and now we know by how much.** CSV saves
+   60.2% of JSON's bytes and **36.0%** of its tokens; TOON 55.8% and **29.9%**.
+   Neither published claim reproduces on our data in its own unit, and the two
+   units do not even rank the formats in the same order.
+3. **The AGPL tool was worth its isolation.** PyMuPDF4LLM is the most faithful
+   backend in the corpus on all three scorable PDFs, and on `twocolumn.pdf` it
+   scores 0.972 where the previous ceiling was 0.667.
+
+## Previous re-evaluation: `docs/REVIEW_PHASES_0_6.md`
 
 Written at the end of this session, superseding `docs/REVIEW_PHASES_0_4.md`
 (which stays in the repository — its defect numbering is referenced everywhere,
@@ -2615,6 +2637,200 @@ fix is verified on POSIX only (present tool runs and keeps its bare name in
 provenance; absent tool still raises `BackendUnavailable` with the actionable
 hint); its Windows behaviour is asserted by CI and nowhere else.
 
+### 2026-08-27 — Phases 7 and 8 exit gate
+
+**CI run 97 on `claude/phases-7-8-734pty` (commit `49076d0`): all 25 jobs
+green.** That is the branch's first fully green run and it is the one the exit
+gate rests on. The route there, because the failures are the useful part:
+
+| Run | Result | What it found |
+|---|---|---|
+| 88 | ✅ success | the repomix npx-timeout fix; `Main`'s red cell resolved |
+| 89 | ❌ 1 job | the byte/token orderings disagree — a **finding**, not a bug |
+| 90 | ❌ 11 jobs | a deprecated metadata API under `-W error`; an environment-dependent test |
+| 93 | ❌ | the same two, before the fix landed |
+| 94 | ❌ 1 job | Type check: the `gui` extra was on the test job and not on that one |
+| 97 | ✅ **success** | — |
+
+Pasted, not summarised.
+
+```console
+$ uv run tokenmill convert tests/fixtures/tables.pdf --backend pymupdf4llm --tokenizer bytes
+Figures are illustrative placeholders for structural testing and are not measurements of any real backend.
+source:   tables.pdf
+backend:  pymupdf4llm
+format:   markdown
+duration: 1573 ms
+post:     normalize_whitespace
+tokens:   553  (bytes)
+size:     2.1 KiB in, no comparable before
+
+$ uv run tokenmill backends --show-licenses   # tail
+
+138 installed distributions audited from their own metadata.
+1 is not simply permissive: docutils (Public Domain AND BSD License AND GNU General Public License (GPL))
+
+$ uv run python -c "import sys, tokenmill; assert 'fitz' not in sys.modules; print(...)"
+fitz not imported
+
+$ uv run tokenmill compare tests/fixtures/tables.pdf --backends pdfplumber,pymupdf4llm,kreuzberg --tokenizer bytes --corpus tests/fixtures
+comparing tables.pdf across 3 backend(s)
+counts in bytes
+
+backend      tokens  vs best  time     fidelity  components
+-----------  ------  -------  -------  --------  ----------
+pdfplumber   599     +29%     101 ms   0.667     3 scored
+pymupdf4llm  553     +19%     1538 ms  0.848     3 scored
+kreuzberg    466     base     21 ms    0.500     3 scored
+
+cheapest:      kreuzberg (466)
+most faithful: pymupdf4llm (0.848)
+The cheapest option is NOT the most faithful one. A token saving without a fidelity number is not a result.
+
+$ uv run pytest -q tests/unit/test_license_isolation.py tests/unit/test_subprocess.py tests/unit/test_isolated.py tests/unit/test_service_backend.py
+.....................................................................    [100%]
+69 passed in 13.80s
+
+$ uv run pytest -q tests/integration/test_gui_api.py tests/unit/test_gui_boundary.py
+............................................                             [100%]
+44 passed in 5.48s
+
+$ curl -sf localhost:8082 >/dev/null && echo "UI up"
+UI up
+```
+
+Full gate:
+
+```console
+$ uv run ruff check .
+All checks passed!
+$ uv run ruff format --check .
+147 files already formatted
+$ uv run mypy
+Success: no issues found in 121 source files
+$ uv run pytest -q --cov=tokenmill
+1252 passed, 61 skipped
+$ uv run python scripts/make_fixtures.py --check
+OK: 24 files reproduced byte-for-byte
+```
+
+**And the same suite with the tools taken away**, because a well-equipped
+machine hides a class of bug. `/usr/bin/pandoc` and `/usr/bin/soffice` moved
+aside, `HOME` pointed away from the pymupdf4llm virtualenv:
+
+```console
+$ env HOME=/tmp/fakehome uv run pytest -q
+1234 passed, 79 skipped in 63.93s
+```
+
+That is how CI run 90's Pandoc failure was reproduced in a minute rather than
+waited for.
+
+### 2026-08-26 — Phase 7: the licence check catching a real violation
+
+The acceptance criterion is that the test be *seen* to fail. A real
+`import pymupdf4llm` was added inside `pypdf_pdf.py`'s `_convert` — a lazy
+import inside a real in-process adapter, which is the shape rule 3 requires and
+the shape a naive scanner misses. Three of the four checks failed:
+
+```
+E  AssertionError: backend 'pypdf' declares itself permissive but reaches
+   'pymupdf4llm', which is copyleft
+E  AssertionError: copyleft modules are imported into the tokenmill process:
+E      src/tokenmill/backends/documents/pypdf_pdf.py imports 'pymupdf4llm'
+E    Invoke the tool as a child process through tokenmill.backends.isolated instead
+E  AssertionError: backend 'pypdf' runs in-process and imports 'pymupdf4llm',
+   which is copyleft
+FAILED tests/unit/test_license_isolation.py::...::test_the_declared_licence_agrees_with_the_installed_metadata
+FAILED tests/unit/test_license_isolation.py::...::test_no_module_in_the_package_imports_a_known_copyleft_module
+FAILED tests/unit/test_license_isolation.py::...::test_no_in_process_backend_reaches_a_copyleft_distribution
+3 failed, 14 passed in 2.28s
+```
+
+Reverted; 20 passed. The synthetic violations remain as permanent tests.
+
+### 2026-08-26 — A licence classifier defect, found by reading real metadata
+
+`RESEARCH.md` records PyMuPDF4LLM as AGPL-3.0. The installed package (1.28.2)
+says:
+
+```
+License: Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License
+```
+
+The disjunction rule took the most permissive branch, which is right for `tld`
+and wrong here — the other branch has to be **bought**. Worse, the split was
+case-sensitive, so the free-text "or" did not split at all and got the right
+answer by luck, while the SPDX spelling of the identical licence returned
+*permissive*:
+
+```
+'AGPL-3.0-only OR LicenseRef-Artifex-Commercial'  -> permissive   (WRONG)
+'AGPL-3.0 OR Commercial'                          -> permissive   (WRONG)
+'GPL-3.0-only OR Proprietary'                     -> permissive   (WRONG)
+```
+
+For the flagship copyleft tool the whole phase exists to isolate. Fixed both
+ways. After the fix all three classify copyleft, `tld` still classifies
+permissive by resolving its own disjunction, and all installed distributions
+still classify as they did.
+
+### 2026-08-27 — Phase 8: the 20-file batch, measured
+
+```
+20-file batch in 3.10s; caller polled 362 times while it ran
+total=20 done=20 failed=0 cancelled=0
+aggregate check: before True, after True
+```
+
+And the bug that measurement found. The first aggregate summed `tokens_after`
+over every item and `tokens_before` over only the items that had one — and a
+binary document has no comparable before-count. The corpus reported:
+
+```
+tokens 35020 -> 40854  ratio=-0.16659051970302685
+```
+
+A 20-file batch that appeared to have **grown by 16.7%**. It had not; the
+denominator was missing four PDFs and three Office files the numerator
+included. After the fix:
+
+```
+comparable=6/20  before=35020 after=14348
+ratio = 0.5903  (59.0%)
+tokens_produced (all items) = 40854
+```
+
+### 2026-08-26 — Start-of-session probes
+
+```
+huggingface.co                       000 (blocked)
+openaipublic.blob.core.windows.net   000 (blocked)
+download.pytorch.org                 000 (blocked)
+registry.npmjs.org                   200
+pypi.org                             200
+```
+
+Unchanged from the last three sessions. Locally available: `node`, `npx`,
+`java`, `soffice`. `pandoc` was absent and was installed for Phase 7
+verification, as was `libreoffice-writer` — the container had
+`libreoffice-core` only, so `soffice` was on `PATH` and could convert nothing.
+That is now a documented failure mode with a test.
+
+### 2026-08-26 — Core install weight (defect D4), decided
+
+```
+core install: 140.6 MB of site-packages (ceiling 250 MB)
+40 packages
+```
+
+Where it is, and it is not where you would guess: `babel` 33 MB via
+`trafilatura` → `courlan`; `cryptography` 16 MB and `pillow` 21 MB via the two
+PDF backends; `lxml` 12 MB via trafilatura's tree. Six direct dependencies and a
+localisation library three levels down is the largest single item.
+
+Ceiling **250 MB**, enforced on all nine `clean-core-install` cells.
+
 ## Backend status
 
 Two backends exist and are wired, tested and verified. The rest are the planned
@@ -2635,16 +2851,45 @@ to overstate:
 | `pypdf` | ✅ all four PDF fixtures, output read | ✅ 9 cells | — |
 | `markitdown` | ✅ pdf, docx, pptx, xlsx, unicode, output read | ✅ 9 cells | — |
 | `kreuzberg` | ✅ pdf, docx, pptx, xlsx, unicode, output read | ✅ 9 cells | — |
-| `docling` | ✅ **Office formats only** — docx, pptx, xlsx, unicode | ❌ not in the default matrix | ⚠️ **its PDF path has never been run anywhere** |
+| `docling` | ✅ **Office formats only** — docx, pptx, xlsx, unicode | ✅ **PDF path verified**, CI run 81 | — |
+
+**Docling's PDF path is verified.** Unverified since Phase 2; CI run 81
+(`workflow_dispatch` on `Main`, commit `bac4dfa7`, job 98294307563) went green
+including the step that downloads layout models from `huggingface.co`:
+
+```
+Office formats (no model download needed):   6 passed, 2 skipped, 53 deselected in 10.33s
+PDF path (downloads layout models):          2 passed, 1124 deselected in 22.24s
+```
 
 **Where each Phase 3 backend was verified:**
 
 | Backend | Verified locally | Verified in CI | Unverified |
 |---|---|---|---|
-| `trafilatura` | ✅ both HTML fixtures, output read; failure modes reproduced | ❌ CI cannot schedule runners | ⚠️ **its figure in model tokens**; live URLs |
-| `readability` | ✅ both HTML fixtures, output read | ❌ | ⚠️ live URLs |
+| `trafilatura` | ✅ both HTML fixtures, output read; failure modes reproduced | ✅ 9 cells, **and its model-token figure in run 85** | ⚠️ live URLs |
+| `readability` | ✅ both HTML fixtures, output read | ✅ 9 cells | ⚠️ live URLs |
 | `crawl4ai` | ✅ **rendered `jsrendered.html` in a real Chromium**; 8 browser tests pass | ❌ never in the matrix | ⚠️ live URLs; any browser but this sandbox's Chromium 1194 |
-| URL fetcher | ✅ 29 tests against a real loopback HTTP server | ❌ | ⚠️ **the live-internet path has never run** — `example.com` is blocked |
+| URL fetcher | ✅ 29 tests against a real loopback HTTP server | ✅ 9 cells | ⚠️ **the live-internet path has never run** — `example.com` is blocked |
+
+**Where each Phase 7 backend was verified:**
+
+| Backend | Verified locally | Verified in CI | Unverified |
+|---|---|---|---|
+| `pymupdf4llm` | ✅ all five PDF fixtures, output read; **most faithful backend in the corpus on all three scorable PDFs**; `sys.modules` checked after conversion | ⚠️ its *absence* is verified on 9 cells; the AGPL environment is not built there | ⚠️ **it has only ever run on this container** |
+| `pandoc` | ✅ docx, html, md; the dropped-title failure mode found and fixed | ⚠️ absence only | ⚠️ only this container; only 3.1.3 |
+| `libreoffice` | ✅ docx, unicode.docx; the exits-zero and missing-filter failure modes reproduced | ⚠️ absence only | ⚠️ only this container; only 24.2.7 |
+| `ServiceConverter` | ✅ 11 tests against a real loopback `http.server`, including 500, non-JSON and timeout | ✅ 9 cells | ⚠️ **no real service has ever been talked to** |
+
+Being explicit about the middle column, because it is the honest weakness of
+Phase 7: **CI verifies that these three backends report themselves unavailable
+and skip cleanly.** It does not verify that they convert anything, because
+GitHub's runners have no Pandoc, no LibreOffice and no AGPL virtualenv. Their
+conversion paths have been exercised on exactly one machine — which is the
+condition the previous review complained about for the whole project, now
+narrowed to three backends.
+
+Installing them in CI would fix that. It was not done here because it changes
+what the matrix is for; noted as an open question.
 
 **Where each Phase 4 backend was verified:**
 
@@ -2686,11 +2931,16 @@ to overstate:
 | `links` | yes | no (opt-in) | 200 | ✅ | ✅ | −5.4% strip / **+0.5% reference**, fidelity 0.955 |
 | `dedupe_blocks` | yes | no (opt-in) | 250 | ✅ | ✅ | **−11.4%, fidelity 1.000** |
 | `normalize_headings` | yes | no (opt-in) | 400 | ✅ | ✅ | −0.3%, **fidelity 0.750** |
-| `chunk` | yes¹ | no (opt-in) | 700 | ✅ | ✅ | **+1.8%** on `long_context.md` |
+| `chunk` | **no**¹ | no (opt-in) | 700 | ✅ | ✅ | **+1.8%** on `long_context.md` |
 | `compress` | yes | no (opt-in) | 900 | ✅ | ⚠️² | **never run — no ratio exists** |
 
-¹ `chunk` loses nothing; it is flagged so it stays out of the default chain. See
-Decisions and Open question 2.
+¹ `chunk` loses nothing and is still out of the default chain, and since Phase 7
+those are **two separate declarations**: `destructive = False` and
+`in_default_chain = False`, both true, which the old single flag could not
+express. `chunk` is the processor that made the case for splitting it. The
+default chain is still exactly `normalize_whitespace`, and `default_chain()`
+reads **both** flags so a third-party post-processor written against the Phase 1
+contract still behaves as it did.
 
 ² `compress`'s refusal, error, import-time and arithmetic paths are tested; its
 success path has never been executed anywhere, because the model host is denied
@@ -2718,6 +2968,44 @@ over the whole registry rather than per processor.
 | `bytes` | ours | Apache-2.0 | **UTF-8 bytes, not model tokens** | ✅ | ✅ | Download-free. Golden vectors hand-checked |
 
 ## Decisions made
+
+### Phases 7 and 8 (2026-08-26/27)
+
+- **PyMuPDF4LLM runs in a separate interpreter, not `sys.executable`.** Running
+  an AGPL package out of process is only isolation if it is not also installed
+  here where anything can import it — which the licence suite's environment
+  check would rightly fail on. It is therefore **never a tokenmill extra**, and
+  the driver that touches it is a string constant passed to `python -c` rather
+  than a `.py` file, so this repository contains no `import pymupdf4llm` for the
+  static scan to find.
+- **A disjunctive licence branch that must be bought is not a branch we hold.**
+  Found by reading PyMuPDF4LLM's real metadata. Without this rule the flagship
+  copyleft tool of the whole phase classified as permissive.
+- **Multiple licence classifiers are joined conservatively**, as a conjunction.
+  A false positive costs a documented exemption; a false negative costs a
+  licence violation. `docutils` is the one exemption and it re-checks its own
+  premise.
+- **The copyleft allow-list lives in `core/licensing.py`, not in a test.**
+  It was in the test file first, and running `tokenmill backends --show-licenses`
+  found the consequence within a minute: the CLI reported a violation and exited
+  non-zero while the suite passed. A policy with two homes has two answers.
+- **Pandoc gets `--standalone`**, costing 42 bytes, because without it the DOCX
+  title is silently discarded. Fidelity scored 0.841 either way — the metric has
+  no component for metadata loss (N8) — so the choice was made on principle and
+  a test guards it.
+- **The batch queue is one worker thread.** Not a preference; `Pipeline.run`
+  cannot safely go on a thread pool while defect D2 stands. A process pool is
+  the eventual answer and would add a sixth kind of process-global concern
+  today. Recorded with the measurement that killed the argument I first reached
+  for: worker start-up is 0.133 s, not the several tenths I assumed.
+- **The GUI's boundary is asserted over the import graph.** `app.py` may reach
+  `gui.api`, `gui.batch`, `core.models` and `core.registry`, and nothing else.
+- **No rate table ships, ever.** Cost estimation takes the user's own number,
+  asserted by a test on the signature rather than merely intended.
+- **No service backend is registered**, and a test keeps that deliberate: a row
+  for a container nobody is running is a permanently-unavailable backend in
+  every user's listing.
+
 
 ### Phase 5 (2026-08-24)
 
@@ -3200,6 +3488,29 @@ closed; these are the decisions and what changed.
 
 ## Deferred / future work
 
+### From Phases 7 and 8
+
+- **No sandboxing in the isolation layer** (N9). No resource limits, no
+  filesystem confinement, no network namespace. A tool run through it has the
+  user's access. It is a licence and language boundary and nothing more, and
+  three documents say so.
+- **No output streaming from a child process.** stdout is buffered whole, so a
+  tool emitting a gigabyte holds a gigabyte. Bounded only by the input size cap.
+- **No batch parallelism**, because of defect D2. One worker thread, conversions
+  serialised. Fixing D2 — making the four adapters stop reaching for
+  `warnings.catch_warnings` and the root logger — is what unlocks it, and it is
+  the highest-value item on the defect list.
+- **Uploads are never cleaned up** (N14). `~/.cache/tokenmill/uploads` grows for
+  the life of a `--server` instance.
+- **`--server` has no authentication** (N15). See Open questions.
+- **A persistent child for `pymupdf4llm`.** It costs ~1.6 s of interpreter
+  start-up per conversion against pdfplumber's 100 ms. The plan says measure
+  before adding a batch mode, and that is the measurement that would justify
+  one. Phase 10.
+- **No service backend is registered.** `ServiceConverter` is tested against a
+  real local server and nothing subclasses it yet; Phase 9 does.
+
+
 ### From Phase 6
 
 - **The compressor's success path.** Not deferred by choice — deferred by an
@@ -3468,6 +3779,92 @@ closed; these are the decisions and what changed.
   because publishing does not exist yet.
 
 ## Open questions for the owner
+
+**Answered and implemented this session:** §3.1 (publish the token figure — done,
+D3 closed), §3.2 (`in_default_chain` — done), §3.3 (`--format toon` stays
+unimplemented, plan amended), §3.4 (one Markdown table parser — done), §3.5
+(core ceiling — 250 MB, enforced), §3.7 (the `compress` job — added; see below).
+
+**1. Only you can dispatch a workflow, and two things are waiting on it.**
+
+`POST /actions/workflows/ci.yml/dispatches` returns
+`403 Resource not accessible by integration` for this session, as it did for the
+previous one. Two jobs are gated to `workflow_dispatch` or the Sunday schedule
+and neither has run against this branch:
+
+- **`compress`** — added this session. It is the thing that would close Phase 6,
+  the largest verification hole in the repository, and it is itself unverified.
+  I believe it fits: the extra is 63 packages and ~4.7 GB, and the `docling` job
+  beside it installs 122 packages and ~5.2 GB with torch and passed run 81 in
+  85 seconds on the same runner with the same free-disk-space step. That is
+  evidence rather than certainty.
+- **`docling`** — passed on `Main` in run 81, but has not run against this
+  branch's changes.
+
+Actions → CI → Run workflow, against `claude/phases-7-8-734pty`. Tell me what
+they show and I will record it.
+
+**2. `tokenmill gui --server` has no authentication. How far should that go?**
+
+It binds `0.0.0.0`, has no login, no CSRF protection and no rate limit, and its
+upload endpoint writes to disk. It prints a warning at startup and that is the
+only mitigation. Nobody should run it outside a trusted network as it stands.
+
+Phase 9 is the phase whose backends live on other machines, which makes this the
+wrong thing to leave open going into it. Three options:
+
+- **A shared token in a header**, read from config or an environment variable,
+  refusing every request without it. An hour, and enough for a LAN.
+- **Bind localhost only and document an SSH tunnel** as the supported remote
+  story. Nothing to build, and it makes `--server` almost pointless.
+- **Leave it, with the warning.** Cheapest, and I would not.
+
+My recommendation is the first. It is not security in any strong sense — no TLS,
+no user accounts — and it stops a machine on the same network converting files
+and reading the results, which is the actual exposure.
+
+**3. Should CI install Pandoc and LibreOffice?**
+
+Phase 7's three isolated backends have had their *conversion* paths exercised on
+exactly one machine — this container — because GitHub's runners have neither
+tool and the AGPL virtualenv is not built there. CI verifies only that they
+report themselves unavailable and skip.
+
+That is precisely the condition the last review complained about, now narrowed
+to three backends. `apt install pandoc libreoffice-writer` on the ubuntu cell
+would fix two of them for about ninety seconds of install time; the AGPL one
+needs a virtualenv built in a step, which is cheap but is a deliberate decision
+to install an AGPL package in CI.
+
+I did not do it because it changes what the test matrix is for — from "our code
+on nine platforms" to "our code plus a system-package installation" — and that
+is your call, not mine.
+
+**4. Defect N2 — should `PostProcessor.process` take a context?**
+
+Proposed, not done, as instructed. A post-processor cannot warn or attach
+metadata: `process(text, options) -> str` is the whole contract, where a backend
+gets a `ConversionContext`. The GUI made this concrete — the compressor can
+report its achieved ratio only through the per-stage measurement, and a
+post-processor that wanted to say "this document had no front matter to strip"
+has no channel at all.
+
+The change is `process(text, options, context) -> str`, mirroring
+`_convert`. It is a breaking change to the Phase 1 contract and every
+third-party post-processor. If you want it, the cheapest shape is a new optional
+parameter with the registry passing a context only to processors that declare
+they accept one — uglier, and it does not break anyone.
+
+**5. What should the isolation layer be called?**
+
+Minor and real. Defect N9: it is a licence and language boundary with **no
+sandboxing** — no resource limits, no filesystem confinement, no network
+namespace. "Isolation" invites the security reading, and three documents now
+carry a paragraph saying it is not that. A name that did not need the paragraph
+would be better, and renaming it after Phase 9 subclasses it will be expensive.
+
+### Previously open, now closed
+
 
 Phase 2's three questions were answered on 2026-08-22 and the answers are
 implemented; see Decisions for each, and the table below. One new question has

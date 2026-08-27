@@ -407,7 +407,15 @@ converter aggregator.
 
 **Sandbox verification**
 ```bash
-uv run tokenfold convert tests/fixtures/tables.pdf --format toon --show-stages
+# Amended in Phase 7 (owner's decision, 2026-08-26). This line originally read
+# `convert tests/fixtures/tables.pdf --format toon --show-stages`, and that
+# command is deliberately not implemented. TOON encodes the JSON data model; a
+# prose document is not that, so a whole-document TOON would be a shape nobody
+# can read. The encoders re-serialise a *table*, which is what all of
+# RESEARCH.md Category 7's evidence is about, and `compare --formats` is the
+# equivalent. `OutputFormat` keeps its two members.
+uv run tokenfold convert tests/fixtures/tables.pdf --show-stages
+uv run tokenfold compare tests/fixtures/tables.pdf --formats markdown,csv,toon,json
 uv run tokenfold compare tests/fixtures/report.docx --backends markitdown,docling,kreuzberg
 uv run tokenfold compare tests/fixtures/data.xlsx --formats markdown,csv,toon,json
 uv run pytest -q tests/unit/test_formats.py tests/unit/test_post.py

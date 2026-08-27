@@ -1,7 +1,7 @@
 """Phase 5's post-processors, and the invariant that governs all of them.
 
 The one test in here that matters most is
-:meth:`TestTheDestructiveContract.test_the_default_chain_contains_nothing_destructive`.
+:meth:`TestTheDestructiveContract.test_nothing_destructive_can_reach_the_default_chain`.
 It is asserted over the **whole registry** rather than per processor, because
 the risk Phase 5 introduces is not that one of these is wrong — it is that the
 sixth one somebody adds forgets the flag and quietly joins the default chain.
@@ -58,23 +58,59 @@ def structured(fixture_dir: Path) -> str:
 
 
 class TestTheDestructiveContract:
-    """The invariant that keeps the default pipeline safe by construction."""
+    """The invariant that keeps the default pipeline safe by construction.
 
-    def test_the_default_chain_contains_nothing_destructive(self) -> None:
+    Phase 7 split the flag in two on the owner's sign-off: `in_default_chain` is
+    now the mechanism `default_chain()` reads, and `destructive` went back to
+    being an honest description of what a step can lose. So the invariant is now
+    stated as an implication — **destructive implies out of the chain** — rather
+    than as an identity, and the converse is deliberately not asserted: `chunk`
+    loses nothing and is still out, which is the case the rename exists for.
+    """
+
+    def test_nothing_destructive_can_reach_the_default_chain(self) -> None:
         # Asserted over the registry, not per processor: the failure mode is a
         # new post-processor forgetting the flag, and a per-processor test
         # cannot catch one that was never written.
         for processor in default_post_registry().default_chain():
             assert processor.destructive is False, (
-                f"{processor.id} is in the default chain and declares itself "
-                f"destructive; default_chain() excludes destructive processors, "
-                f"so this means the flag changed without the chain being rechecked"
+                f"{processor.id} runs by default and declares itself destructive. "
+                f"default_chain() now reads in_default_chain rather than destructive, "
+                f"so the two flags have to be kept consistent by this test rather "
+                f"than by construction: set in_default_chain = False on it"
             )
 
+    def test_every_destructive_processor_declares_itself_out_of_the_chain(self) -> None:
+        """The same implication from the other end, over the whole registry.
+
+        The test above can only see processors that made it into the chain. This
+        one sees every registered processor, so a destructive step that set
+        `in_default_chain = True` fails here even if some other bug kept it out
+        of the chain anyway.
+        """
+        for processor in default_post_registry():
+            if processor.destructive:
+                assert processor.in_default_chain is False, (
+                    f"{processor.id} can lose information and declares itself in the "
+                    f"default chain; destructive steps are opt-in (CONTRIBUTING.md)"
+                )
+
     def test_the_default_chain_is_still_only_whitespace_normalisation(self) -> None:
-        # Phase 5 added five post-processors and none of them may have widened
-        # what `tokenmill convert` does by default.
+        # The invariant the owner named when signing off the rename: whatever
+        # the flags are called, `tokenmill convert` must still do exactly this.
         assert [p.id for p in default_post_registry().default_chain()] == ["normalize_whitespace"]
+
+    def test_chunk_is_the_processor_the_rename_exists_for(self) -> None:
+        """Not destructive, and still not in the default chain.
+
+        Under the old single flag this combination could not be expressed, so
+        `chunk` claimed to be destructive in order to stay out. If this ever
+        goes back to `destructive is True`, the rename was undone.
+        """
+        chunk = default_post_registry().get("chunk")
+
+        assert chunk.destructive is False
+        assert chunk.in_default_chain is False
 
     @pytest.mark.parametrize("processor_id", PHASE_5_IDS)
     def test_every_phase_5_post_processor_declares_itself_destructive(
@@ -95,6 +131,7 @@ class TestTheDestructiveContract:
             assert processor.name
             assert processor.description
             assert isinstance(processor.destructive, bool)
+            assert isinstance(processor.in_default_chain, bool)
 
     def test_orders_are_unique_so_the_chain_is_deterministic(self) -> None:
         orders = [p.order for p in default_post_registry()]

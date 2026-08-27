@@ -56,6 +56,7 @@ from tokenmill.core.models import (
     ConversionResult,
     Domain,
     ImageHandling,
+    LicenseTier,
     LinkHandling,
     OutputFormat,
     Source,
@@ -1006,12 +1007,23 @@ def backends(
     domain: Annotated[
         Domain | None, typer.Option("--domain", "-d", help="Only backends serving this domain.")
     ] = None,
+    show_licenses: Annotated[
+        bool,
+        typer.Option(
+            "--show-licenses",
+            help="Audit every installed package's licence, not just the backends'.",
+        ),
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Emit JSON on stdout.")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
 ) -> None:
     """List the installed backends with their licence and availability."""
     _configure_logging(verbose)
     registry = default_registry()
+
+    if show_licenses:
+        _show_licenses(as_json=as_json)
+        return
 
     rows: list[list[str]] = []
     payload: list[dict[str, Any]] = []
@@ -1233,3 +1245,124 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+
+
+@app.command()
+def gui(
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on.")] = 8080,
+    host: Annotated[
+        str, typer.Option("--host", help="Address to bind. Ignored with --server.")
+    ] = "127.0.0.1",
+    server: Annotated[
+        bool,
+        typer.Option(
+            "--server",
+            help="Bind 0.0.0.0 for LAN or headless use, and do not open a browser.",
+        ),
+    ] = False,
+    native: Annotated[
+        bool, typer.Option("--native", help="Open a desktop window instead of a browser tab.")
+    ] = False,
+    no_show: Annotated[bool, typer.Option("--no-show", help="Do not open a browser.")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
+) -> None:
+    """Launch the graphical interface.
+
+    Binds localhost by default. `--server` binds every interface, which is a
+    decision about somebody's network and so has to be typed rather than
+    defaulted into.
+    """
+    _configure_logging(verbose)
+
+    try:
+        from tokenmill.gui.app import run as run_gui
+    except ImportError as exc:
+        # The same contract every optional backend has: a missing dependency is
+        # an actionable message, never a traceback.
+        print("the graphical interface needs the `gui` extra", file=sys.stderr)
+        print('hint:  pip install "tokenmill[gui]"', file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    where = "0.0.0.0" if server else host  # noqa: S104 - reported, not bound, here
+    print(f"tokenmill gui on http://{where}:{port}", file=sys.stderr)
+    if server:
+        print(
+            "warning: --server binds every network interface. tokenmill has no "
+            "authentication; do not expose it to a network you do not trust.",
+            file=sys.stderr,
+        )
+    run_gui(host=host, port=port, server=server, native=native, show=not no_show)
+
+
+def _show_licenses(*, as_json: bool) -> None:
+    """Audit the licence of every installed distribution and report it.
+
+    The backend table shows what each adapter *declares*. This shows what is
+    actually installed, which is the other half: a declaration can be wrong, and
+    a copyleft package can arrive through a transitive requirement nobody read.
+
+    Everything is read from the installed distribution's own metadata at the
+    moment this runs, never from ``docs/research/RESEARCH.md``.
+
+    Args:
+        as_json: Emit JSON rather than a table.
+    """
+    from tokenmill.core.licensing import (
+        ALLOWED_COPYLEFT,
+        audit_installed,
+        copyleft_violations,
+    )
+
+    records = audit_installed()
+    violations = copyleft_violations(records, allowed=ALLOWED_COPYLEFT)
+
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "distributions": [
+                        {
+                            "name": r.name,
+                            "version": r.version,
+                            "license": r.expression,
+                            "tier": r.tier.value,
+                            "read_from": r.source,
+                        }
+                        for r in records
+                    ],
+                    "copyleft_violations": [r.name for r in violations],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    notable = [r for r in records if r.tier is not LicenseTier.PERMISSIVE]
+    print(
+        format_table(
+            ["distribution", "version", "licence", "tier", "read from"],
+            [
+                [r.name, r.version, r.expression or "unstated", r.tier.value, r.source]
+                for r in records
+            ],
+        )
+    )
+    print()
+    print(f"{len(records)} installed distributions audited from their own metadata.")
+    if notable:
+        plural = "is" if len(notable) == 1 else "are"
+        print(
+            f"{len(notable)} {plural} not simply permissive: "
+            + ", ".join(f"{r.name} ({r.expression})" for r in notable)
+        )
+    else:
+        print("Every one is permissive. No AGPL or GPL package is importable from this process.")
+    if violations:
+        print(file=sys.stderr)
+        print(
+            "LICENCE VIOLATION: copyleft packages are installed and therefore "
+            "importable: " + ", ".join(f"{r.name} {r.version}" for r in violations),
+            file=sys.stderr,
+        )
+        print("see CONTRIBUTING.md rule 2 and docs/LICENSES.md", file=sys.stderr)
+        raise typer.Exit(code=1)

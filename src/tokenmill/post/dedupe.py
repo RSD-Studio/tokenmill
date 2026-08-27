@@ -58,6 +58,7 @@ class DuplicateBlockRemover(BasePostProcessor):
         "occurrence; never touches fenced code; ignores short blocks."
     )
     destructive = True
+    in_default_chain = False
     order = 250
 
     def process(self, text: str, options: ConvertOptions) -> str:

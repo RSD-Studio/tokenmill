@@ -538,12 +538,24 @@ the outcome does not depend on discovery order. Reserved ranges:
 An explicit `--post a,b,c` runs **in the order the user gave**, overriding
 declared order, because somebody naming a chain by hand means that sequence.
 
-### Destructive is a structural property
+### Two flags: one is the mechanism, one is the description
 
-A post-processor that can lose information the user might have wanted sets
-`destructive = True`, and `default_chain()` is built by excluding them. The
-default pipeline therefore *cannot* damage a document — not by convention, by
-construction.
+A post-processor declares `in_default_chain`, and `default_chain()` is built
+from exactly that. It separately declares `destructive` — whether it can lose
+information the user might have wanted — which is shown to the user and is
+never branched on.
+
+The default pipeline still *cannot* damage a document — by construction, not by
+convention. `default_chain()` reads both flags: a processor runs by default only
+if it declares `in_default_chain` **and** is not destructive. The second half is
+redundant against a correctly declared processor and is kept precisely so that
+splitting the flag did not weaken anything, including for a third-party plugin
+written against the old contract that sets `destructive = True` and knows
+nothing about the new field.
+
+A processor declaring both is a contradiction rather than a preference, so
+`tests/unit/test_post_phase5.py` asserts the implication over the whole registry
+from both ends and it fails loudly instead of being quietly resolved.
 
 `normalize_whitespace` earns its non-destructive claim literally: it leaves
 fenced code blocks entirely alone, and it preserves Markdown hard line breaks
@@ -551,21 +563,26 @@ fenced code blocks entirely alone, and it preserves Markdown hard line breaks
 Stripping those would quietly change how a document renders, and a
 "non-destructive" step that quietly changes rendering is not one.
 
-Phase 5 made this flag load-bearing in a way it was not before. Phase 1 shipped
-one destructive post-processor; there are now six, and the default chain is
-still exactly `normalize_whitespace`. The risk is no longer that one of them is
-wrong — it is that the seventh forgets the flag and quietly joins the default
-chain, so the invariant is asserted **over the whole registry** rather than per
-processor.
+Phase 5 made this load-bearing in a way it was not before. Phase 1 shipped one
+destructive post-processor; there are now eight processors in total, and the
+default chain is still exactly `normalize_whitespace`. The risk is not that one
+of the eight is wrong — it is that the ninth forgets, so the invariant is
+asserted **over the whole registry** rather than per processor.
 
-**`chunk` stretches the flag, and the stretch is deliberate.** It deletes
-nothing; it inserts chunk markers. It is marked destructive because that is the
-only mechanism keeping a post-processor out of the default chain, and a
-conversion that silently grew boundaries nobody asked for is exactly the
-surprise the flag exists to prevent. So the flag now carries two meanings — "can
-lose information" and "changes the document's shape" — and `PROGRESS.md` records
-that as a question for the owner rather than hiding it behind a convenient
-reading.
+**Why the split happened, and what `chunk` proved.** `chunk` deletes nothing; it
+inserts chunk markers. Under the single flag it had to declare itself
+destructive anyway, because that was the only mechanism keeping a processor out
+of the default chain — so the flag carried two meanings at once, "can lose
+information" and "changes the document's shape", and for `chunk` the first was
+simply false. Phase 7 split them on the owner's sign-off: `chunk` now declares
+`destructive = False` and `in_default_chain = False`, both true, which the old
+contract could not express.
+
+This is a breaking change to the Phase 1 post-processor contract, made with the
+owner's sign-off. A third-party post-processor written against the old contract
+keeps working unchanged: it sets `destructive = True`, and `default_chain()`
+reads that too, so it stays out exactly as it did before.
+`docs/ADDING_A_BACKEND.md` carries the migration note.
 
 ---
 
@@ -778,23 +795,70 @@ and `TokenMeter` catches it explicitly for the reason given above.
 
 ---
 
-## Isolation (design now, implementation in Phase 7)
+## Isolation, and what it is not
 
-Nothing in Phase 1 runs out of process, but the model is already in place so
-that Phase 7 adds an implementation rather than a concept:
+`src/tokenmill/backends/isolated/`. Phase 1 designed the model, Phase 7
+implemented it.
+
+**Two different reasons put a backend out of process**, and conflating them is
+the mistake this package's docstring exists to prevent:
+
+- **Licence.** AGPL and GPL tools are never imported (`CONTRIBUTING.md` rule 2).
+  `pymupdf4llm` and `pandoc`.
+- **Language.** A C++ application or a Node program cannot be imported at any
+  price. `libreoffice`, `repomix`, `code2prompt` — all permissive, and their
+  isolation carries no licence meaning at all.
+
+The second group is useful practice: getting the isolation wrong on an MIT tool
+costs a bug, not a licence problem.
+
+### What enforces it
 
 - `IsolationMode` is `IN_PROCESS`, `SUBPROCESS` or `SERVICE`.
-- `BackendInfo` refuses the illegal combination (non-permissive + in-process) at
-  construction time, and the registry refuses it again at registration.
-- The conformance suite asserts, for every installed backend, that a
-  non-permissive licence implies out-of-process isolation. A copyleft adapter
-  added in any later phase is caught by a test that already exists.
-- `BackendFailed` already carries a `stderr` field, which is what a subprocess
-  backend needs to report a failure usefully.
+- `BackendInfo.__post_init__` refuses the illegal combination (non-permissive +
+  in-process) at construction, and the registry refuses it again at
+  registration. A violating adapter cannot be built.
+- `core/licensing.py` reads every installed distribution's own metadata and
+  classifies it, and `tests/unit/test_license_isolation.py` makes four
+  independent checks — declaration, environment, **static imports** and runtime
+  `sys.modules`. The static one is the load-bearing one, because it works on a
+  machine where the copyleft package was never installed, which is every machine
+  CI runs on. `docs/LICENSES.md` has the reasoning.
 
-Phase 7 adds `SubprocessConverter`: binary discovery, version probe, argument
-construction as a list (never `shell=True`), timeout and kill, temp-file
-lifecycle, and stderr capture.
+### `SubprocessConverter`
+
+Binary discovery beyond `PATH` (the macOS LibreOffice bundle is never on it), a
+version probe recorded as provenance, an **allow-list** of every program
+tokenmill may launch, list arguments with `shell=False` always, timeout and
+kill, and a workspace removed on every exit path including timeout and failure.
+
+The allow-list is what makes isolation *enforced* rather than declared: without
+one, "this AGPL tool runs out of process" is a claim an adapter makes about
+itself. With one, the set of programs tokenmill will start is a single
+reviewable table, and an adapter naming anything else fails before the process
+starts.
+
+### `ServiceConverter`
+
+The HTTP mode, and the pattern Phase 9's GPU backends subclass. Nothing is
+auto-discovered and nothing is auto-started: a service backend is unavailable
+until the user says where it is, because a converter that probes localhost on a
+range of ports is doing something nobody asked for. A probe is a real request,
+so "available" means it answered. Talking to it needs `--allow-network` even on
+loopback. stdlib `urllib` only, so a service adapter is not what drags an HTTP
+client into the core install.
+
+No service backend is registered, and a test asserts that stays true: a row for
+a container nobody is running is a permanently-unavailable backend in every
+user's listing.
+
+### What the isolation layer is not
+
+**It is not a security boundary.** No sandboxing, no resource limits, no
+filesystem confinement, no network namespace. A tool run through it has the same
+access the user does. It is a licence and language boundary, and no document in
+this repository should be read as claiming more. Output is also buffered whole
+rather than streamed. Both are recorded in `PROGRESS.md` under deferred work.
 
 ---
 
@@ -825,6 +889,77 @@ options) -> str` is the whole contract — unlike a backend, which gets a
 ratio through the per-stage measurement the pipeline already does rather than
 attaching it to the result. That is a real gap and `PROGRESS.md` records it:
 Phase 8's GUI will want a post-processor to be able to say something.
+
+## The graphical interface
+
+`src/tokenmill/gui/`. Three modules, and the split is the phase's stated risk
+mitigation rather than tidiness: `api.py` is every action the interface can
+perform, `batch.py` is the queue, `app.py` is layout and event handlers and
+nothing else.
+
+### Why NiceGUI
+
+The plan's stack decision, and the reasoning it asked to have recorded:
+
+- **Event-driven, not Streamlit's full-script-rerun model.** A batch queue that
+  updates twenty rows as they finish, and a token counter that moves while a
+  conversion runs, both fight a framework that re-executes the whole script on
+  every interaction.
+- **FastAPI in-process.** The same application can expose an HTTP API and
+  orchestrate the subprocess and service backends Phase 7 added, without a
+  second server. `api.py` is already shaped as that API.
+- **`native` mode is a desktop window without leaving Python.** A PySide6 shell
+  remains a Phase 11 option for offline distribution.
+
+MIT, verified from installed metadata (3.16.0). Its tree brings `docutils`,
+which is the single entry on the copyleft allow-list; `docs/LICENSES.md`
+explains why and a test re-checks the premise.
+
+### The GUI may only call the public library API
+
+The plan names this phase's risk as *GUI logic creeping into the UI layer*. A
+rule in a docstring is a habit, so `tests/unit/test_gui_boundary.py` asserts it
+over the **import graph**: `app.py` may reach `gui.api`, `gui.batch`,
+`core.models` (constructing a `Source` is how input enters the system) and
+`core.registry` (one `supports()` question). Not `core.pipeline`, not
+`backends`, not `post`, not `fidelity`.
+
+The consequence worth stating: `api.py` imports no UI toolkit, so its 35 tests
+run on a core-only install and on every CI cell, rather than only where a
+browser happens to be.
+
+### The batch queue runs one conversion at a time, and that is defect D2
+
+`Pipeline.run` touches process-global state that is not thread-safe — four uses
+of `warnings.catch_warnings`, plus `os.environ`, the root logger's handlers and
+level, and loguru's activation registry. `catch_warnings` saves and restores a
+*module-global* filter list, so two threads inside it interleave their save and
+restore and the loser leaves the process with the other's filters. Under
+`filterwarnings = ["error"]` that turns a forwarded warning into a raised
+exception somewhere else entirely.
+
+So there is one worker thread and conversions are serialised. The interface
+stays responsive because the work is off the event loop; correctness holds
+because only one conversion touches the global state at a time.
+
+A process pool would be safe *and* parallel, and is deliberately not used yet:
+`ConversionResult` would cross a pickle boundary carrying the whole converted
+text, and child-process lifecycle would be a sixth kind of global concern in a
+project already tracking that count as a defect. **Fixing D2 is what unlocks
+parallelism**, and until then batch throughput is bounded by a defect rather
+than by the work.
+
+### `None` is not zero, in the one place users see it most
+
+A binary document has no comparable before-count, so the token panel renders
+`n/a` and the batch aggregate counts it separately. Getting this wrong produced
+a real bug: summing `tokens_after` over every item while summing `tokens_before`
+over only the ones that had one reported a 20-file batch at **−16.7%**, a batch
+that appeared to have grown. `BatchTotals` now carries `comparable` and
+`tokens_produced` so the two questions — "what did this cost" and "what did it
+save" — have separate answers.
+
+---
 
 ## Security posture
 

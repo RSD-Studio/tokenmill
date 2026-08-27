@@ -213,6 +213,22 @@ class TestPostProcessorRegistry:
 
         assert all(not p.destructive for p in registry.default_chain())
 
+    def test_a_plugin_written_before_the_flag_split_still_stays_out(self) -> None:
+        """The reason `default_chain()` reads both flags rather than the new one.
+
+        `Shouty` is a third-party post-processor written against the Phase 1
+        contract: it sets `destructive = True` and has never heard of
+        `in_default_chain`, which `BasePostProcessor` defaults to `True`. Reading
+        only the new flag would have silently promoted it into the default chain
+        on upgrade — a post-processor that uppercases the entire document, now
+        running for people who asked for nothing.
+        """
+        registry = PostProcessorRegistry()
+        registry.register(Shouty())
+
+        assert Shouty.in_default_chain is True, "the legacy shape: it never set this"
+        assert "shouty" not in [p.id for p in registry.default_chain()]
+
     def test_an_explicit_chain_runs_in_the_order_the_user_gave(self) -> None:
         """Someone naming a chain by hand means that sequence."""
         registry = PostProcessorRegistry()

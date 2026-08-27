@@ -105,6 +105,7 @@ class HeadingNormalizer(BasePostProcessor):
         "and rewrite setext headings as ATX."
     )
     destructive = True
+    in_default_chain = False
     order = 400
 
     def process(self, text: str, options: ConvertOptions) -> str:  # noqa: ARG002

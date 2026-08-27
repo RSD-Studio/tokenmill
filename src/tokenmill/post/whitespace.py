@@ -55,6 +55,7 @@ class WhitespaceNormalizer(BasePostProcessor):
         "lines, leaving fenced code blocks and hard line breaks intact."
     )
     destructive = False
+    in_default_chain = True
     order = 100
 
     def process(self, text: str, options: ConvertOptions) -> str:  # noqa: ARG002

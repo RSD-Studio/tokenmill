@@ -65,6 +65,7 @@ class AggressiveWhitespaceCleaner(BasePostProcessor):
         "indentation. Leaves fenced code, list nesting and indented code alone."
     )
     destructive = True
+    in_default_chain = False
     order = 150
 
     def process(self, text: str, options: ConvertOptions) -> str:  # noqa: ARG002

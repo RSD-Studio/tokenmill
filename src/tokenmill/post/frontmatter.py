@@ -50,6 +50,7 @@ class FrontMatterStripper(BasePostProcessor):
         "Metadata for a site generator, not content for a model."
     )
     destructive = True
+    in_default_chain = False
     order = 50
 
     def process(self, text: str, options: ConvertOptions) -> str:  # noqa: ARG002

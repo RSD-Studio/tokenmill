@@ -512,28 +512,94 @@ shouty = "my_package.shouty:Shouty"
 yaml = "my_package.yaml_table:YamlTableEncoder"
 ```
 
-### If your post-processor can lose anything, say so
+### Two flags, and they answer different questions
 
 ```python
 class Shouty(BasePostProcessor):
     id = "shouty"
     name = "Shouty"
     description = "Upper-cases everything."
-    destructive = True  # <- keeps it out of the default chain
+    destructive = True  # <- what it can lose; shown to the user
+    in_default_chain = False  # <- whether it runs when nobody asked; the mechanism
     order = 300
 
     def process(self, text: str, options: ConvertOptions) -> str:
         return text.upper()
 ```
 
-`default_chain()` is built by **excluding** destructive post-processors, so the
-default pipeline cannot damage a document by construction rather than by
-convention. A post-processor that changes the document's shape — even without
-losing information — should set the flag too; `chunk` does.
+`default_chain()` reads **`in_default_chain` and nothing else**. `destructive`
+is documentation: it is what the CLI's `post` listing and the GUI show someone
+deciding whether to switch a step on, and no code branches on it.
+
+Answer them separately:
+
+- **`destructive`** — can this discard information the user might have wanted?
+  If yes, `in_default_chain` must be `False`, and a registry-wide test in
+  `tests/unit/test_post_phase5.py` enforces that implication in both directions.
+- **`in_default_chain`** — should this run when the user names no chain? A step
+  that loses nothing can still answer no, because it *reshapes* the document.
+  `chunk` is exactly that case: it inserts markers, discards nothing, and nobody
+  who did not ask for chunking should get chunk boundaries.
+
+Until Phase 7 there was only `destructive`, and it did both jobs. That forced
+`chunk` to declare itself destructive purely to stay out of the default chain —
+a lie of convenience that the owner signed off splitting. If you find yourself
+setting `destructive` for a reason that is not "this can lose information", you
+want `in_default_chain` instead.
 
 Pick an `order` inside the band that matches what you do; `docs/ARCHITECTURE.md`
 lists them. Two post-processors sharing an order is not an error but does make
 the chain depend on id ordering, so avoid it.
+
+### If your tool is copyleft or is not Python, it runs out of process
+
+Subclass `SubprocessConverter` rather than `BaseConverter`, declare which
+allow-listed program you launch, and write one method:
+
+```python
+from tokenmill.backends.isolated.base import SubprocessConverter
+
+class MyToolConverter(SubprocessConverter):
+    info = BackendInfo(
+        id="mytool",
+        ...,
+        license="GPL-3.0-or-later",
+        license_tier=LicenseTier.COPYLEFT,   # BackendInfo refuses this
+        isolation=IsolationMode.SUBPROCESS,  # with IN_PROCESS
+    )
+    executable = "mytool"   # must be a key of ALLOWED_EXECUTABLES
+
+    def run_conversion(self, source, options, context, workspace) -> str:
+        result = self.run(
+            ["--to", "markdown", self.path_argument(source.path)],
+            options=options,
+            cwd=workspace,
+        )
+        return result.stdout
+```
+
+You get discovery, the availability probe, version probing, the timeout, and a
+`workspace` directory removed on every exit path — including when your
+conversion raises and when the child times out.
+
+**Add your program to `ALLOWED_EXECUTABLES` first**, with an install hint and
+the platform search paths. An executable that is not in that table cannot be
+launched, and that is the point: it makes the set of programs tokenmill will
+start one reviewable list rather than a claim each adapter makes about itself.
+
+**Read the licence from the installed package, at the moment you write the
+adapter.** Not from `RESEARCH.md`, not from a README. Phase 7 found
+PyMuPDF4LLM's real metadata says `Dual Licensed - GNU AFFERO GPL 3.0 or Artifex
+Commercial License` where `RESEARCH.md` says "AGPL-3.0" — and the difference
+broke the licence classifier.
+
+**A copyleft Python package does not go in an extra.** Installing it here makes
+it importable here, which the licence tests correctly reject. Give it an
+environment of its own and find an interpreter for it, as
+`pymupdf4llm_pdf.py` does.
+
+**For an HTTP service**, subclass `ServiceConverter` and write `call_service`.
+Take the address from `--extra <id>_url=` and never guess at one.
 
 ### If your encoder cannot represent something, raise
 
