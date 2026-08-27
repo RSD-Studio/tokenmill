@@ -486,9 +486,16 @@ def format_format_comparison(comparison: FormatComparison) -> str:
         )
 
     table = comparison.table
+    # "table 2 of 3" rather than nothing: a report that shows one table without
+    # saying how many the document had is defect N4's silence in a new place.
+    which = (
+        ""
+        if comparison.table_count <= 1
+        else f" (table {comparison.table_index + 1} of {comparison.table_count})"
+    )
     out = [
         f"comparing {len(comparison.rows)} serialisation(s) of a "
-        f"{len(table.rows)}x{len(table.headers)} table from {comparison.source_name}",
+        f"{len(table.rows)}x{len(table.headers)} table from {comparison.source_name}{which}",
         f"counts in {comparison.tokenizer_id}",
         "",
         format_table(["format", "tokens", "vs best", "size"], rows),

@@ -277,16 +277,43 @@ class TestTheComparisonView:
     def test_the_format_comparison_re_encodes_a_table(self, request_for: MakeRequest) -> None:
         summary = api.convert(request_for("tables.pdf", backend="pdfplumber"))
 
-        comparison = api.compare_across_formats(
+        comparisons = api.compare_across_formats(
             summary.text,
             ["markdown", "csv", "toon", "json"],
             tokenizer=BYTES,
             source_name="tables.pdf",
         )
 
+        assert len(comparisons) == 1
+        comparison = comparisons[0]
         assert len(comparison.rows) == 4
         assert comparison.cheapest is not None
         assert comparison.cheapest.format_id == "csv"
+
+    def test_every_table_in_a_document_is_compared(self, request_for: MakeRequest) -> None:
+        """Defect N4, at the layer the GUI actually calls.
+
+        `tables.pdf` has one table, so the fixture corpus cannot fail the old
+        behaviour — which is precisely why the defect survived five phases. The
+        text is supplied directly here instead.
+        """
+        del request_for
+        text = (
+            "# Report\n\n"
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n"
+            "Prose between the tables.\n\n"
+            "| x | y | z |\n| --- | --- | --- |\n| 3 | 4 | 5 |\n| 6 | 7 | 8 |\n"
+        )
+
+        comparisons = api.compare_across_formats(
+            text, ["markdown", "csv"], tokenizer=BYTES, source_name="report.md"
+        )
+
+        assert len(comparisons) == 2
+        assert [c.table_index for c in comparisons] == [0, 1]
+        assert {c.table_count for c in comparisons} == {2}
+        assert len(comparisons[0].table.rows) == 1
+        assert len(comparisons[1].table.rows) == 2
 
 
 class TestTheBatchQueue:

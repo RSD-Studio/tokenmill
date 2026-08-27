@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from tokenmill.cli.format import format_backend_comparison
@@ -22,14 +23,16 @@ from tokenmill.cli.main import app
 from tokenmill.core.compare import (
     BackendComparison,
     ComparisonRow,
+    FormatComparison,
     compare_backends,
+    compare_format_tables,
     compare_formats,
 )
 from tokenmill.core.models import ConvertOptions, Source, TokenCount
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.core.registry import Registry
 from tokenmill.fidelity.models import ComponentScore, FidelityScore
-from tokenmill.formats.base import default_format_registry
+from tokenmill.formats.base import TableError, default_format_registry
 
 runner = CliRunner()
 OFFLINE = ["--tokenizer", "bytes"]
@@ -396,3 +399,89 @@ class TestTheCommand:
 
         assert payload["cheapest"] != payload["most_faithful"]
         assert payload["cheapest_is_most_faithful"] is False
+
+
+class TestEveryTableIsCompared:
+    """Defect N4: `--formats` re-encoded the first table and stopped.
+
+    Invisible on this corpus, because `tables.pdf` has exactly one table — which
+    is why the defect survived five phases and why the input here is written by
+    hand rather than taken from a fixture. Adding a three-table fixture to make
+    the bug visible would be a fixture added to flatter a test, which
+    `CONTRIBUTING.md` and the handover both rule out.
+    """
+
+    TEXT = (
+        "# Report\n\n"
+        "| Region | Q1 | Q2 |\n| --- | --- | --- |\n| North | 120 | 140 |\n"
+        "| South | 90 | 95 |\n\n"
+        "Prose between the tables.\n\n"
+        "| Team | People |\n| --- | --- |\n| Platform | 12 |\n| Data | 7 |\n\n"
+        "More prose.\n\n"
+        "| Date | Severity |\n| --- | --- |\n| 2026-01-04 | high |\n"
+    )
+
+    def _compare(self, text: str) -> tuple[FormatComparison, ...]:
+        """Compare every table in `text` across two formats.
+
+        Args:
+            text: The Markdown to read.
+
+        Returns:
+            One comparison per table.
+        """
+        return compare_format_tables(
+            text,
+            ["markdown", "csv"],
+            registry=default_format_registry(),
+            count=len,
+            tokenizer_id="bytes",
+            source_name="report.md",
+        )
+
+    def test_a_three_table_document_produces_three_comparisons(self) -> None:
+        comparisons = self._compare(self.TEXT)
+
+        assert len(comparisons) == 3
+
+    def test_each_comparison_knows_which_table_it_is(self) -> None:
+        """So a report can say "table 2 of 3" rather than showing one silently."""
+        comparisons = self._compare(self.TEXT)
+
+        assert [c.table_index for c in comparisons] == [0, 1, 2]
+        assert [c.table_count for c in comparisons] == [3, 3, 3]
+
+    def test_the_tables_are_the_right_ones_in_document_order(self) -> None:
+        comparisons = self._compare(self.TEXT)
+
+        assert [len(c.table.headers) for c in comparisons] == [3, 2, 2]
+        assert [len(c.table.rows) for c in comparisons] == [2, 2, 1]
+        assert comparisons[0].table.headers == ("Region", "Q1", "Q2")
+        assert comparisons[2].table.headers == ("Date", "Severity")
+
+    def test_tables_of_different_shapes_can_have_different_cheapest_formats(self) -> None:
+        """The reason comparing only the first is wrong, not merely incomplete.
+
+        A document's tables do not share an answer: the cheapest serialisation
+        depends on the shape, so reporting the first table's verdict as the
+        document's is a measurement of a question nobody asked.
+        """
+        comparisons = self._compare(self.TEXT)
+
+        assert all(c.cheapest is not None for c in comparisons)
+        sizes = [c.cheapest.characters for c in comparisons if c.cheapest]
+        assert len(set(sizes)) > 1, (
+            "every table encoded to the same size, so this input cannot "
+            "demonstrate that the tables are independently compared"
+        )
+
+    def test_a_single_table_document_still_reports_a_count_of_one(self) -> None:
+        """The common case keeps its shape; nothing says "table 1 of 1"."""
+        comparisons = self._compare("| a | b |\n| --- | --- |\n| 1 | 2 |\n")
+
+        assert len(comparisons) == 1
+        assert comparisons[0].table_count == 1
+
+    def test_text_with_no_table_still_raises(self) -> None:
+        with pytest.raises(TableError, match="no Markdown table"):
+            self._compare("Just prose, no tables at all.\n")

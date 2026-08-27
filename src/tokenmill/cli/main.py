@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Final, NoReturn
 
@@ -49,7 +50,7 @@ from tokenmill.cli.format import (
     format_result_report,
     format_table,
 )
-from tokenmill.core.compare import compare_backends, compare_formats
+from tokenmill.core.compare import compare_backends, compare_format_tables
 from tokenmill.core.config import load_config
 from tokenmill.core.errors import ConfigError, TokenmillError
 from tokenmill.core.models import (
@@ -804,23 +805,26 @@ def compare(
         if formats_option
         else []
     )
-    format_comparison = None
+    format_comparisons: tuple[Any, ...] = ()
     if formats:
-        format_comparison = _compare_formats_for(comparison, formats, options)
+        format_comparisons = _compare_formats_for(comparison, formats, options)
 
     if as_json:
         payload: dict[str, Any] = {"backends": _comparison_to_json(comparison)}
-        if format_comparison is not None:
-            payload["formats"] = _format_comparison_to_json(format_comparison)
+        if format_comparisons:
+            # A list, one entry per table, because a document with three tables
+            # has three answers (defect N4). Before Phase 9 this was a single
+            # object holding the first table's, silently.
+            payload["formats"] = [_format_comparison_to_json(fc) for fc in format_comparisons]
         print(json.dumps(payload, indent=2))
     else:
         print(format_backend_comparison(comparison))
-        if format_comparison is not None:
+        for format_comparison in format_comparisons:
             print()
             print(format_format_comparison(format_comparison))
 
     if write is not None:
-        _write_variants(write, comparison, format_comparison)
+        _write_variants(write, comparison, format_comparisons)
 
 
 def _resolve_truth(
@@ -860,23 +864,26 @@ def _resolve_truth(
     return name, dict(truth)
 
 
-def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> Any:
-    """Re-encode the best available converted table in several formats.
+def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> tuple[Any, ...]:
+    """Re-encode **every** converted table in several formats.
+
+    Defect N4: this used to compare the first table and stop, which is invisible
+    on a one-table fixture and wrong on a real report.
 
     Args:
         comparison: The backend comparison, whose first successful row supplies
-            the table.
+            the text.
         formats: The format ids to encode in.
         options: The conversion options, for the tokenizer.
 
     Returns:
-        The format comparison, or ``None`` when no backend produced a table.
+        One comparison per table, empty when no backend produced any output.
     """
     from tokenmill.formats.base import TableError, default_format_registry
 
     row = next((r for r in comparison.rows if r.ok and r.text), None)
     if row is None:
-        return None
+        return ()
 
     registry = default_tokenizer_registry()
     try:
@@ -886,7 +893,7 @@ def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> A
         counter = None
 
     try:
-        return compare_formats(
+        return compare_format_tables(
             row.text,
             formats,
             registry=default_format_registry(),
@@ -954,6 +961,8 @@ def _format_comparison_to_json(comparison: Any) -> dict[str, Any]:
         "tokenizer": comparison.tokenizer_id,
         "counts": unit[0],
         "is_model_tokenizer": unit[1],
+        "table_index": comparison.table_index,
+        "table_count": comparison.table_count,
         "table_rows": len(comparison.table.rows),
         "table_columns": len(comparison.table.headers),
         "cheapest": comparison.cheapest.format_id if comparison.cheapest else None,
@@ -969,13 +978,18 @@ def _format_comparison_to_json(comparison: Any) -> dict[str, Any]:
     }
 
 
-def _write_variants(directory: Path, comparison: Any, format_comparison: Any) -> None:
+def _write_variants(
+    directory: Path, comparison: Any, format_comparisons: Sequence[Any] = ()
+) -> None:
     """Write every variant to disk so a person can read them side by side.
 
     Args:
         directory: Where to write.
         comparison: The backend comparison.
-        format_comparison: The format comparison, or ``None``.
+        format_comparisons: One per table in the document. A document with
+            several tables writes ``table1.csv``, ``table2.csv`` and so on;
+            a document with one writes ``table.csv``, so the common case keeps
+            the name it had.
     """
     directory.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -987,11 +1001,16 @@ def _write_variants(directory: Path, comparison: Any, format_comparison: Any) ->
             continue
         (directory / f"{row.backend_id}.md").write_text(row.text, encoding="utf-8", newline="")
         written += 1
-    if format_comparison is not None:
+    for format_comparison in format_comparisons:
+        stem = (
+            "table"
+            if format_comparison.table_count == 1
+            else f"table{format_comparison.table_index + 1}"
+        )
         for row in format_comparison.rows:
             if row.text is None:
                 continue
-            (directory / f"table.{row.format_id}").write_text(
+            (directory / f"{stem}.{row.format_id}").write_text(
                 row.text, encoding="utf-8", newline=""
             )
             written += 1

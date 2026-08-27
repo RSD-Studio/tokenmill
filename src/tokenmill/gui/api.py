@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from tokenmill.core.compare import BackendComparison, FormatComparison, compare_backends
-from tokenmill.core.compare import compare_formats as _compare_formats
+from tokenmill.core.compare import compare_format_tables as _compare_format_tables
 from tokenmill.core.errors import ConversionError, TokenizerError
 from tokenmill.core.models import (
     Availability,
@@ -540,17 +540,20 @@ def compare_across_formats(
     *,
     tokenizer: str,
     source_name: str,
-) -> FormatComparison:
-    """Re-encode the first table in some converted text in several formats.
+) -> tuple[FormatComparison, ...]:
+    """Re-encode **every** table in some converted text in several formats.
+
+    Defect N4: this compared the first table and stopped, so a report with three
+    of them got one answer presented as the document's.
 
     Args:
-        text: Converted Markdown containing a table.
+        text: Converted Markdown containing tables.
         format_ids: The encoders to try.
         tokenizer: What to count in.
-        source_name: What the table came from.
+        source_name: What the tables came from.
 
     Returns:
-        The comparison.
+        One comparison per table, in document order.
 
     Raises:
         TableError: If the text carries no table.
@@ -566,7 +569,7 @@ def compare_across_formats(
         count = None
         tokenizer_id = tokenizer
 
-    return _compare_formats(
+    return _compare_format_tables(
         text,
         format_ids,
         registry=default_format_registry(),

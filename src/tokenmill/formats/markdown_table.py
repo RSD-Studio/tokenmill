@@ -221,16 +221,38 @@ class MarkdownTableEncoder(BaseTableEncoder):
         Raises:
             TableError: If no pipe table with a delimiter row is present.
         """
+        tables = self.decode_all(text, limit=1)
+        if not tables:
+            msg = "no Markdown table found: a header row must be followed by a delimiter row"
+            raise TableError(msg)
+        return tables[0]
+
+    def decode_all(self, text: str, *, limit: int | None = None) -> tuple[Table, ...]:
+        """Read every pipe table out of ``text``, in document order.
+
+        Defect N4: ``compare --formats`` re-encoded only the first table in a
+        document, which is fine on a fixture with one and wrong on a real
+        report. Nothing about reading a table was ever limited to the first —
+        :func:`scan_tables` has always found them all — so this is the function
+        :meth:`decode` should have been built on.
+
+        Args:
+            text: Markdown that may contain tables.
+            limit: Stop after this many. ``None`` finds all of them.
+
+        Returns:
+            The tables, in the order they appear. Empty when there are none;
+            unlike :meth:`decode` this does not raise, because "how many tables
+            are in here" is a question with a legitimate answer of zero.
+        """
         # split("\n"), never splitlines(): the latter also breaks on U+0085,
         # U+2028, U+2029, \x0b and \x0c, which are ordinary cell content and
         # would be torn across rows. Found by the round-trip property test.
         lines = [line for line in text.split("\n") if line.strip()]
-        found = scan_tables(lines, unescape=True, limit=1)
-        if not found:
-            msg = "no Markdown table found: a header row must be followed by a delimiter row"
-            raise TableError(msg)
-        headers, *body = found[0]
-        return Table.of(list(headers), [list(row) for row in body])
+        return tuple(
+            Table.of(list(rows[0]), [list(row) for row in rows[1:]])
+            for rows in scan_tables(lines, unescape=True, limit=limit)
+        )
 
 
 def _escape(cell: str) -> str:
