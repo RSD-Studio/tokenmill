@@ -49,6 +49,7 @@ import warnings
 from typing import Any, Final
 
 from tokenmill.core.errors import BackendUnavailable, NetworkRequired
+from tokenmill.core.globalstate import process_global_state
 from tokenmill.core.models import ConvertOptions
 from tokenmill.post.base import BasePostProcessor, PostProcessContext
 
@@ -298,10 +299,12 @@ def _import_llmlingua() -> Any:
         BackendUnavailable: If it is not installed.
     """
     try:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            import llmlingua
-        for entry in caught:
+        with process_global_state("importing llmlingua"):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                import llmlingua
+            collected = list(caught)
+        for entry in collected:
             _log.warning("%s: %s", entry.category.__name__, entry.message)
     except ImportError as exc:
         msg = "prompt compression needs LLMLingua, which is not installed"

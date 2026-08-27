@@ -483,6 +483,60 @@ about a tool that has improved.
 (`report.docx` repeats a "detail" paragraph per section) and correctly finds
 none where there is none.
 
+## Batch parallelism, and the workload that decides it (Phase 9, defect D2)
+
+Phase 8's batch queue ran one conversion at a time, because the adapters reach
+for process-global state that two threads cannot share. Phase 9 put that state
+behind one lock and — the part that mattered — narrowed the blocks first, so for
+most backends the lock covers an *import* rather than a conversion. See
+`docs/ARCHITECTURE.md`.
+
+**Whether the resulting thread pool helps depends entirely on the backend.**
+Measured on this container (4 cores, Python 3.11.15), 12 files, median of 5
+runs, 2026-08-27, `--tokenizer bytes`:
+
+| Batch | Serial | 4 workers | Speedup |
+|---|---|---|---|
+| In-process (pdfplumber, markitdown, trafilatura — auto-selected) | 1.13 s | 1.25 s | **0.91x** |
+| `pymupdf4llm` (a separate Python interpreter per conversion) | 14.59 s | 9.50 s | **1.54x** |
+| `pandoc` + `libreoffice` (real external programs) | 11.89 s | 3.82 s | **3.12x** |
+
+And the 20-file corpus batch the Phase 8 acceptance criterion used, N=7 runs per
+cell:
+
+| Workers | Median | Min | Max | Speedup |
+|---|---|---|---|---|
+| 1 | 2.07 s | 1.98 | 4.28 | 1.00x |
+| 2 | 2.46 s | 2.30 | 2.51 | 0.84x |
+| 4 | 2.40 s | 2.31 | 2.63 | 0.86x |
+| 8 | 2.61 s | 2.36 | 2.90 | 0.79x |
+
+**The honest headline is that parallelism made the published batch slower**, and
+the reason is the GIL rather than the lock. That 20-file batch is entirely
+in-process backends parsing documents in Python; every one of them holds the
+interpreter lock, so threads add contention and overlap nothing. A subprocess
+backend spends its time in `wait()` with the GIL released, and four really do
+run at once — which is where the 3.12x comes from.
+
+**The default is 4 workers anyway.** It costs 9% of 1.13 s on the cheapest
+workload and saves 8 seconds on the expensive one; nobody notices the first and
+everybody notices the second. `BatchRunner(..., workers=1)` restores the Phase 8
+behaviour exactly.
+
+**Two backends still serialise against themselves** whatever the worker count,
+because their global-state block covers the whole conversion rather than an
+import: `docling` (its deprecation filter fires while the document is being
+converted) and `gitingest` (pathspec warns while it builds ignore rules, loguru's
+registry must stay set while it logs, and `GITHUB_TOKEN` is read at the top of
+the call).
+
+**Limitations of these figures.** One machine, one core count, a warm page
+cache, and a corpus of small files — the largest is 81 KB. A batch of
+hundred-page PDFs would shift every row, and the in-process case would shift
+furthest, because per-conversion overhead stops dominating. The numbers say what
+happens on *this* workload on *this* box, which is the only thing a single
+machine can say.
+
 ## The external backends (Phase 7)
 
 Measured 2026-08-27, `--tokenizer bytes`, fidelity beside every figure.
