@@ -15,10 +15,34 @@ _Last updated: 2026-08-27 by Claude Code_
 | 6 | Prompt compression (optional tier) | 🟨 **Implemented; success path unverified** | ⚠️ gate NOT passed. A CI job that would close it was added on 2026-08-26 and is itself unverified: dispatching a workflow returns 403 for this integration |
 | 7 | Isolation layer and license enforcement | ✅ Complete | passed 2026-08-26 |
 | 8 | GUI (FastAPI + NiceGUI) | ✅ Complete | passed 2026-08-27 |
-| 9 | Heavy backends (GPU tier, install-docs-only) | ⬜ Not started | — |
-| 10 | Benchmark harness | 🟨 **Fidelity-scoring slice complete** (2026-08-24); the harness itself not started | slice gate passed 2026-08-24 |
+| 9 | Heavy backends (GPU tier, install-docs-only) | 🟨 **Complete; nothing run on hardware** | gate passed 2026-08-27 for the CPU-only path, which is the criterion. No heavy backend has converted a document: no GPU here, and the weight host is denied |
+| 10 | Benchmark harness | 🟨 **Fidelity-scoring slice complete** (2026-08-24); the harness itself in progress | slice gate passed 2026-08-24 |
 | 11 | Packaging, distribution, release | ⬜ Not started | — |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
+
+## Current session: the repairs, then Phases 9–12
+
+The owner's §3 decisions are implemented and each is a commit. **Ten repairs**
+— nine asked for, one found on arrival — then Phase 9. Highlights, all measured
+rather than argued:
+
+1. **N5 is reversed.** `aggressive_whitespace` was to be deleted unless it could
+   be shown to earn its place. Measured across all fifty backend-by-fixture
+   cells rather than three, it saves **18.3% on `tables.pdf` through
+   `markitdown` at unchanged fidelity** — MarkItDown pads its table columns and
+   that padding is 18% of the document.
+2. **D6 was a correctness bug, not a tidiness one.** A repository containing a
+   document that *quotes* repomix's file marker made the adapter invent a file
+   that does not exist. `--style json` removes the ambiguity.
+3. **D2 is fixed and the parallelism it unlocks makes the published batch
+   slower.** 0.86x on the 20-file corpus batch, 3.12x on a subprocess-backend
+   batch. The GIL explains both, and the null result is published first.
+4. **`RESEARCH.md` was wrong about two more licences**, and this time in the
+   safe direction: Marker and Surya are Apache-2.0, not GPL-3.0. MinerU is
+   neither — Apache plus a revenue threshold and an online-service attribution
+   obligation, which needed a fourth `LicenseTier`.
+5. **The licence classifier called SSPL, BUSL and Elastic-2.0 permissive.** Same
+   shape as the Phase 7 defect, found the same way.
 
 ## Re-evaluation: `docs/REVIEW_PHASES_0_8.md`
 
@@ -2637,6 +2661,391 @@ fix is verified on POSIX only (present tool runs and keeps its bare name in
 provenance; absent tool still raises `BackendUnavailable` with the actionable
 hint); its Windows behaviour is asserted by CI and nowhere else.
 
+### 2026-08-27 — The six repairs, before Phase 9
+
+The owner's §3 decided all of them. Each is a commit, and each was run rather
+than reasoned about.
+
+**R0 — LibreOffice: an install with no filters is not an available backend.**
+Not on the owner's list; found in the first ten minutes by running the suite on
+a fresh container. **Six tests failed where they should have skipped**, because
+this container ships `libreoffice-core` without `libreoffice-writer`, so
+`soffice` is on PATH and converts nothing. Phase 7 knew about the condition and
+reported it as a *conversion* failure, leaving the availability probe saying
+"available" on the grounds that a filter set has no predictable path.
+
+It has one: LibreOffice describes each document component in its configuration
+registry as `writer.xcd`, `calc.xcd` and friends. The probe now looks, and only
+ever downgrades on **positive** evidence — a registry directory that was found
+and contains no component. An unrecognised layout keeps the old answer.
+
+Verified in both directions, which is the strongest form available:
+
+```console
+$ uv run tokenmill backends --all | grep libre     # before apt install
+libreoffice  ...  LibreOffice at /usr/bin/soffice has no document components installed
+$ apt-get install -y libreoffice-writer libreoffice-calc libreoffice-impress
+$ uv run tokenmill backends --all | grep libre     # after
+libreoffice  documents  MPL-2.0  permissive  subprocess  available
+```
+
+This is trap 1 from the handover firing on day one: *a well-equipped machine is
+worse at catching this class of bug than a bare one.*
+
+**R1 — the boundary layer is renamed** (N9, §3.4). `backends/isolated/` becomes
+`backends/external/`. The evidence that "isolation" misled is that three
+documents had each grown a paragraph explaining what the layer is *not*.
+`IsolationMode` and `BackendInfo.isolation` are unchanged — their values name a
+mechanism rather than a protection, and renaming a Phase 1 field would be a
+breaking change with no user-visible gain. Done before Phase 9 landed six more
+subclasses on top.
+
+**R2 — `gui --server` requires a shared token** (N15, §3.1). Verified against a
+running server rather than asserted:
+
+```console
+$ uv run tokenmill gui --server --port 8099 --token EXAMPLE-TOKEN-NOT-A-REAL-SECRET
+tokenmill gui on http://0.0.0.0:8099/?token=EXAMPLE-TOKEN-NOT-A-REAL-SECRET
+server token (--token): EXAMPLE-TOKEN-NOT-A-REAL-SECRET
+note:  --server binds every network interface and requires this token on every
+       request. It is not TLS, not user accounts and not an audit trail: it stops
+       another machine on your network reading your documents, and nothing more.
+
+1. no token                        status=401
+2. wrong token                     status=401
+3. ?token=... in the URL           HTTP/1.1 200 OK
+   set-cookie: tokenmill_server_token=...; Path=/; HttpOnly; SameSite=Lax
+4. Authorization: Bearer ...       status=200
+5. the cookie alone                status=200
+6. a static asset, no token        status=401
+7. websocket handshake, no token   status=403
+8. websocket handshake, cookie     status=101
+```
+
+Rows 7 and 8 are the load-bearing pair. The interface runs over a WebSocket, and
+a guard that saw only HTTP would have left the channel every conversion travels
+on wide open — which is why the guard is raw ASGI rather than a Starlette
+middleware. The token above is a deliberate placeholder; nothing real is
+recorded anywhere (trap 9).
+
+**R3 — staged uploads are bounded** (N14, §3.6). Both age (24 h) and count
+(200), because either alone leaves a hole: an age bound lets a burst fill a disk
+inside the window, a count bound keeps yesterday's documents on an idle server
+forever. Moving staging into `gui/api.py`, where a test can drive it without a
+browser, immediately found a hole in the name sanitiser: **`Path("..").name` is
+`".."`, not the empty string**, so taking the base name alone resolved to the
+*parent* directory.
+
+**R4 — a post-processor can say something** (N2, §3.3). `PostProcessContext` as
+an optional third parameter; the registry reads each processor's own signature
+once and calls it with two arguments or three. A post-processor written against
+the Phase 1 contract is called exactly as it was.
+
+One thing was got wrong first and mypy caught it in nine files:
+`BasePostProcessor.process` was given the third parameter too. That is a
+*narrowing* override for every existing two-parameter subclass — undoing the
+entire point. The base keeps two; a subclass widens.
+
+**R5 — repomix asks for JSON** (D6, §3.6). Filed as "use `--style json` or
+delete the note"; it turned out to be a correctness bug. The Markdown-parsing
+regex can be fooled by a repository containing a document that *quotes* the file
+marker, which is what a README explaining repomix packs looks like:
+
+```console
+$ # a two-file repo whose notes.md contains the line "## File: totally/made/up.py"
+repomix really packed 2 files: notes.md, real.py
+our splitter found 3 sections:
+   -> notes.md
+   -> totally/made/up.py      <- does not exist
+   -> real.py
+metadata file_count = 3
+```
+
+The phantom takes bytes in the per-directory breakdown and a token budget could
+have "dropped" it, cutting a real file in half. `--style json` returns an exact
+`{path: content}` mapping, so finding a boundary is a dictionary lookup. The
+pack is rendered from it in repomix's own shape; the fixture pack is **3,786
+bytes** where markdown style gave 3,978, and the 192 bytes are entirely
+repomix's own boilerplate.
+
+**R6 — `compare --formats` compares every table** (N4, §3.6). Invisible on this
+corpus because `tables.pdf` has exactly one table, which is why it survived five
+phases. Run on a three-table document, and the result is why the fix was worth
+having: CSV is cheapest for all three, but **TOON's overhead over it varies with
+shape — +36%, +40%, +12%** — so the tables genuinely do not share one answer.
+
+**R7 — `aggressive_whitespace` earns its place, and N5 is reversed** (§3.6). The
+owner leaned towards deleting it. The measurement says keep it.
+
+The published claim, "close to worthless on this corpus", rested on three cells.
+Measured across **all fifty backend-by-fixture cells the corpus has**:
+
+```
+tables.pdf       markitdown     769 ->   628   -18.34%   fidelity 0.606 -> 0.606
+article.html     kreuzberg    3,063 -> 2,957    -3.46%   fidelity 1.000 -> 1.000
+article.html     pandoc       3,072 -> 2,966    -3.45%   fidelity 1.000 -> 1.000
+structured.md    pandoc       1,609 -> 1,571    -2.36%   fidelity 0.977 -> 0.977
+boilerplate.html kreuzberg    6,120 -> 6,014    -1.73%   fidelity 0.750 -> 0.750
+cells measured: 50; cells where it saved anything: 10
+```
+
+MarkItDown pads its table columns so they line up in a text editor. That
+alignment is pure presentation and on `tables.pdf` it is 18% of the bytes;
+collapsing it leaves a valid Markdown table, which is why fidelity does not
+move. The earlier claim was not a lie — it was three cells generalised to a
+corpus, and the three were ones where every backend already emits tidy Markdown.
+
+**R8 — defect D2, and the measurement that did not flatter it** (§3.2). Every
+global-state block now runs under one process-wide reentrant lock, and the
+blocks were **narrowed first** — for the document and web adapters
+`warnings_as_conversion_warnings` covers an *import*, which after the first
+conversion is a `sys.modules` lookup.
+
+Two of the three concurrency tests were watched going red with the lock removed:
+
+```
+E  AssertionError: assert [KeyError('TOKENMILL_D2_PROBE'), ...] == []
+E    Left contains 13 more items, first extra item: KeyError('TOKENMILL_D2_PROBE')
+
+E  assert root.handlers == before_handlers
+E    Left contains 117 more items, first extra item: <NullHandler (NOTSET)>
+```
+
+`os.environ.pop(name, None)` raising `KeyError` from inside a call given a
+default so it could not raise, and **117 leaked root-logger handlers from one
+run**. The warning-filter test is the weak one and says so — that race appeared
+once in a sweep, at a 1e-4 switch interval, and not at 1e-5 or 1e-6. At
+CPython's default 5 ms interval **none of the three reproduces**, which is
+exactly why this survived five phases.
+
+**And the parallelism measurement, which is a null result on the headline
+number.** 12 files, 4 cores, median of 5 runs:
+
+```
+in-process (pdfplumber, markitdown, trafilatura)   1.13s ->  1.25s   0.91x
+pymupdf4llm (a separate interpreter per file)     14.59s ->  9.50s   1.54x
+pandoc + libreoffice (real external programs)     11.89s ->  3.82s   3.12x
+```
+
+And the 20-file corpus batch the Phase 8 criterion used got **slower**: 2.07 s
+serial, 2.40 s at four workers, **0.86x**, N=7. The GIL explains both ends — an
+in-process backend parsing a PDF holds it, a subprocess backend waits with it
+released. The default stays at 4 because it costs 9% of a 1.13 s batch and saves
+8 seconds of an 11.9 s one, and `workers=1` restores Phase 8 exactly.
+
+**R9 — CI installs Pandoc, LibreOffice and the AGPL environment** (§3.5).
+**CI run 108 on this branch: green.** Phase 7's three out-of-process backends
+had their conversion paths exercised on exactly one machine; now they run on the
+ubuntu cells of the test matrix and the coverage job. Both jobs, not one — trap
+7 is that mistake made once already.
+
+### 2026-08-27 — Phase 9 exit gate
+
+```console
+$ uv run ruff check .
+All checks passed!
+
+$ uv run ruff format --check .
+164 files already formatted
+
+$ uv run mypy
+Success: no issues found in 138 source files
+
+$ uv run pytest -q --cov=tokenmill
+1493 passed, 85 skipped in 152.50s (0:02:32)
+
+$ uv run python scripts/make_fixtures.py --check
+OK: 24 files reproduced byte-for-byte
+
+$ uv run tokenmill backends --tier heavy
+id            domains    license                                            tier        isolation   availability
+------------  ---------  -------------------------------------------------  ----------  ----------  --------------------------------------------------
+deepseek_ocr  documents  MIT (reported; unverified — see docs/LICENSES.md)  permissive  service     no address configured for the DeepSeek-OCR service
+dots_ocr      documents  MIT (reported; unverified — see docs/LICENSES.md)  permissive  service     no address configured for the dots.ocr service
+marker        documents  Apache-2.0                                         permissive  subprocess  missing binary: marker_single
+mineru        documents  LicenseRef-MinerU-Open-Source-License              restricted  subprocess  missing binary: mineru
+olmocr        documents  Apache-2.0                                         permissive  subprocess  missing binary: olmocr
+surya         documents  Apache-2.0                                         permissive  subprocess  missing binary: surya_ocr
+
+$ uv run pytest -q -m heavy   # expected: skipped without a GPU, and that is a pass
+=========================== short test summary info ============================
+SKIPPED [2] tests/conftest.py:66: needs the optional dependency 'docling'; install it with an extra (see pyproject.toml) to run this test
+2 skipped, 1576 deselected in 1.60s
+```
+
+**`tokenmill doctor` on this sandbox, which is the acceptance criterion:**
+
+```console
+tokenmill doctor
+
+python:    3.11.15 (/home/user/tokenmill/.venv/bin/python3)
+platform:  Linux 6.18.44-fc-v22 on x86_64
+gpu:       none — No GPU found. Every heavy backend will be unavailable
+
+external tools
+tool         location
+-----------  --------------------
+pandoc       /usr/bin/pandoc
+soffice      /usr/bin/soffice
+node         /opt/node22/bin/node
+npx          /opt/node22/bin/npx
+code2prompt  not found
+nvidia-smi   not found
+docker       /usr/bin/docker
+
+backends (13 of 22 available)
+id                tier        needs  status
+----------------  ----------  -----  ----------------------------------------------
+code2prompt       permissive  cpu    missing binary: code2prompt
+crawl4ai          permissive  cpu    missing dependency: crawl4ai
+deepseek_ocr      permissive  gpu    no address configured for the DeepSeek-OCR se…
+docling           permissive  cpu    missing dependency: docling
+dots_ocr          permissive  gpu    no address configured for the dots.ocr service
+gitingest         permissive  cpu    available
+kreuzberg         permissive  cpu    available
+libreoffice       permissive  cpu    available
+markdownify_html  permissive  cpu    available
+marker            permissive  gpu    missing binary: marker_single
+markitdown        permissive  cpu    available
+mineru            restricted  gpu    missing binary: mineru
+olmocr            permissive  gpu    missing binary: olmocr
+pandoc            copyleft    cpu    available
+pdfplumber        permissive  cpu    available
+plaintext         permissive  cpu    available
+pymupdf4llm       copyleft    cpu    available
+pypdf             permissive  cpu    available
+readability       permissive  cpu    available
+repomix           permissive  cpu    available
+surya             permissive  gpu    missing binary: surya_ocr
+trafilatura       permissive  cpu    available
+
+how to install the GPU tier
+
+  DeepSeek-OCR (deepseek_ocr) — MIT (reported; unverified — see docs/LICENSES.md)
+    weights licence: NOT VERIFIED. The code's licence above is not the weights'; read the model card before relying on it.
+    start the service and pass --extra deepseek_ocr_url=http://localhost:5001 (and --allow-network, since talking to it is a network call)
+    note: this machine has no usable GPU, so it will be very slow or will fail at model load
+    note: nothing to install locally: run the model yourself and pass --extra deepseek_ocr_url=http://host:8000
+
+  dots.ocr (dots_ocr) — MIT (reported; unverified — see docs/LICENSES.md)
+    weights licence: NOT VERIFIED. The code's licence above is not the weights'; read the model card before relying on it.
+    start the service and pass --extra dots_ocr_url=http://localhost:5001 (and --allow-network, since talking to it is a network call)
+    note: this machine has no usable GPU, so it will be very slow or will fail at model load
+    note: nothing to install locally: run the model yourself and pass --extra dots_ocr_url=http://host:8000
+
+  Marker (marker) — Apache-2.0
+    weights licence: NOT VERIFIED. The code's licence above is not the weights'; read the model card before relying on it.
+    $ python -m venv /root/.local/share/tokenmill/marker
+    $ /root/.local/share/tokenmill/marker/bin/pip install marker-pdf
+    note: this machine has no usable GPU, so it will be very slow or will fail at model load
+
+  MinerU (mineru) — LicenseRef-MinerU-Open-Source-License
+    weights licence: NOT VERIFIED. The code's licence above is not the weights'; read the model card before relying on it.
+    $ python -m venv /root/.local/share/tokenmill/mineru
+    $ /root/.local/share/tokenmill/mineru/bin/pip install 'mineru[core]'
+    note: this machine has no usable GPU, so it will be very slow or will fail at model load
+
+  olmOCR (olmocr) — Apache-2.0
+    weights licence: NOT VERIFIED. The code's licence above is not the weights'; read the model card before relying on it.
+    $ python -m venv /root/.local/share/tokenmill/olmocr
+    $ /root/.local/share/tokenmill/olmocr/bin/pip install olmocr[gpu]
+    note: this machine has no usable GPU, so it will be very slow or will fail at model load
+
+  Surya (surya) — Apache-2.0
+    weights licence: NOT VERIFIED. The code's licence above is not the weights'; read the model card before relying on it.
+    $ python -m venv /root/.local/share/tokenmill/surya
+    $ /root/.local/share/tokenmill/surya/bin/pip install surya-ocr
+    note: this machine has no usable GPU, so it will be very slow or will fail at model load
+
+note: No GPU. The heavy backends will install and will be too slow to use; the light tier (pdfplumber, markitdown, kreuzberg) and the external tier (pandoc, LibreOffice, PyMuPDF4LLM) are what this machine is for.
+```
+
+**Acceptance criteria, honestly:**
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Every heavy adapter degrades cleanly to "unavailable + how to install" on a CPU-only machine | ✅ **Verified.** Six adapters, each unavailable with either two install commands or the `--extra` key that configures it. Asserted over all six in `tests/integration/test_heavy_backends.py` |
+| 2 | `tokenmill doctor` output is accurate on the sandbox | ✅ **Verified**, pasted above. No GPU, 13 of 22 backends available, every external tool correctly located or reported absent |
+| 3 | At least one heavy backend verified working if the sandbox has a GPU; if not, say so plainly | ❌ **NOT VERIFIED — no GPU, and no route to the weights.** Said plainly here, in `backends/heavy/__init__.py`, in `docs/BACKENDS.md` and in the README |
+| 4 | *(gate)* CPU-only degradation verified | ✅ |
+| 5 | *(gate)* Unverified-on-hardware items explicitly flagged | ✅ Every adapter records `weights_licence: unverified`, and a test fails if one ever claims otherwise without evidence |
+
+**Phase 9 is amber**, for the same reason Phase 6 is: the success path needs
+hardware and a host this environment does not have. That is the correct outcome
+rather than a failure, and the handover said so in advance.
+
+**What was verified beyond "it is unavailable":**
+
+- **Argument construction and output reading**, against a real stub executable
+  written to disk and made executable — not a patched `subprocess.run`. A patch
+  proves the adapter called a function; a child process proves the arguments
+  survived, the workspace existed when the tool looked for it, and the output
+  was found where the tool put it.
+- **The HTTP path end to end**, against a real local server: the OpenAI
+  chat-completions shape, the image inline as a `data:` URL, `temperature: 0` so
+  a measurement taken through it is reproducible, the service's own token counts
+  namespaced `service_*`, the refusal without `--allow-network`, and a clear
+  failure when the address points at something that is not the model.
+- **`doctor`'s four ways of lying about hardware**, each against a stub
+  `nvidia-smi`: software-without-a-device, a driver error, an `[N/A]` VRAM
+  figure, and Apple Silicon.
+
+**The licence surface, which is the largest in the project and where
+`RESEARCH.md` was wrong twice more.** Read from each published wheel:
+
+| Backend | Package | Verified | `RESEARCH.md` said |
+|---|---|---|---|
+| Marker | `marker-pdf` 2.0.0 | **Apache-2.0** (11,358 bytes of Apache text bundled) | GPL-3.0 |
+| Surya | `surya-ocr` 0.22.1 | **Apache-2.0** (9,135 bytes bundled) | GPL-3.0 |
+| MinerU | `mineru` 3.4.5 | **`LicenseRef-MinerU-Open-Source-License`** | AGPL-3.0 |
+| olmOCR | `olmocr` 0.4.27 | Apache-2.0 | Apache-2.0 |
+
+Marker and Surya relicensed; MinerU's AGPL entry was true of its predecessor
+`magic-pdf`, which still reads `License: AGPL-3.0` on PyPI. **The fourth and
+fifth licence corrections in this project**, and the first in the *safe*
+direction.
+
+**A classifier defect this found, and it is the same shape as Phase 7's.**
+`classify` returned **permissive** for `BUSL-1.1`, `Elastic-2.0`, `SSPL-1.0` and
+every unrecognised `LicenseRef-`. SSPL is the alarming one — aggressively
+copyleft for anything offered as a service, treated as MIT-equivalent. And
+Elastic-2.0 matters here directly: `kreuzberg` is pinned `<5` because its
+successor line moved to it, and if that pin were removed this classifier would
+have said nothing.
+
+`LicenseTier.RESTRICTED` is the fourth tier. MinerU is why: Apache-2.0 plus a
+100M-MAU / USD 20M-revenue commercial threshold and an **attribution obligation
+for online services** — and `tokenmill gui --server` is an online service. The
+adapter warns on every conversion, because a licence term nobody is told about
+is one nobody complies with.
+
+**A trap worth recording.** `pip install deepseek-ocr` installs a *third
+party's* SDK for a hosted API — "Copyright (c) 2025 Chengjie",
+`BukeLy/DeepSeek-OCR-SDK` — not DeepSeek's model. Wrapping it would have shipped
+a hosted-SaaS backend, which constraint 1 forbids, while appearing to have
+wrapped the model. A licence check alone would have waved it through; what
+caught it was reading the `Summary` line.
+
+**`heavy = []` is still empty.** A clean core install is **40 packages, 141.2
+MB** against 140.6 MB before. The 0.6 MB is this phase's own source files —
+`tokenmill` itself is 2.04 MB of the total — not a dependency.
+
+**Granite-Docling is deliberately not a backend.** It is a model reached
+*through* Docling, which is already wrapped. A seventh adapter would have been a
+second route to an existing backend in order to pass a different `--model` flag,
+with its own row in every user's listing. Recorded rather than counted.
+
+**Two bugs found by reading output rather than by a test**, which is this
+project's recurring lesson:
+
+1. The service adapters were not recognised as heavy, so `doctor` silently gave
+   them no install instructions, no weights-licence line and no no-GPU note.
+   Fixed with a `HeavyTier` marker both families inherit.
+2. `if __name__ == "__main__": main()` sat halfway up `cli/main.py`, so under
+   `python -m` anything defined below it did not exist. Every command worked
+   because every command was above it; the first helper added below broke
+   `backends --all` with a `NameError`, through `python -m` only.
+
 ### 2026-08-27 — Phases 7 and 8 exit gate
 
 **CI run 97 on `claude/phases-7-8-734pty` (commit `49076d0`): all 25 jobs
@@ -2919,7 +3328,29 @@ what the matrix is for; noted as an open question.
 | pymupdf4llm | documents | **AGPL-3.0** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | pandoc | documents | **GPL-2.0+** | isolated | ❌ | ❌ | Phase 7; **never imported** |
 | libreoffice | documents | MPL-2.0 | isolated | ❌ | ❌ | Phase 7; subprocess |
-| marker / mineru / olmocr / surya / deepseek-ocr | documents | GPL-3.0 / varies / Apache-2.0 / GPL-3.0 / varies | heavy | ❌ | ❌ | Phase 9; GPU, out of process, **unverifiable in this sandbox** |
+| marker | documents | **Apache-2.0 (verified 2.0.0 — NOT GPL-3.0 as `RESEARCH.md` says)** | heavy | ✅ | ⚠️ | Phase 9. Absent path, argv and output reading tested; **never run**. Out of process for rule 1, not rule 2 |
+| surya | documents | **Apache-2.0 (verified 0.22.1 — NOT GPL-3.0)** | heavy | ✅ | ⚠️ | Phase 9. The backend that would move `scanned.pdf` off 0.000; **never run**, so 0.000 stands |
+| mineru | documents | **`LicenseRef-MinerU-Open-Source-License` (verified 3.4.5)** | heavy | ✅ | ⚠️ | Phase 9, **restricted tier**. Warns on every conversion about the attribution obligation `--server` triggers |
+| olmocr | documents | Apache-2.0 **(verified 0.4.27)** | heavy | ✅ | ⚠️ | Phase 9. Genuinely needs NVIDIA — vLLM has no CPU or Metal path |
+| deepseek_ocr | documents | MIT **(reported by DeepSeek; no artefact read)** | heavy | ✅ | ⚠️ | Phase 9, service. The optical-compression story; **our own ratio does not exist**. HTTP path verified against a real server |
+| dots_ocr | documents | MIT **(reported; no artefact read)** | heavy | ✅ | ⚠️ | Phase 9, service. 1.7B, the smallest of them |
+
+**Where each Phase 9 backend was verified:**
+
+| Backend | Verified locally | Verified in CI | Unverified |
+|---|---|---|---|
+| `marker` | ✅ absent path; argv and output reading against a real stub executable | ✅ absence, 9 cells | ❌ **every conversion.** No GPU, no route to the weights |
+| `surya` | ✅ same | ✅ absence | ❌ every conversion, including the `scanned.pdf` regression target |
+| `mineru` | ✅ same, plus the licence warning | ✅ absence | ❌ every conversion |
+| `olmocr` | ✅ same | ✅ absence | ❌ every conversion |
+| `deepseek_ocr` | ✅ **the whole HTTP path against a real local server** — request shape, temperature 0, usage accounting, refusals, a wrong-endpoint failure | ✅ 9 cells | ❌ that a real DeepSeek-OCR deployment answers this way. **No compression ratio of ours exists** |
+| `dots_ocr` | ✅ same | ✅ 9 cells | ❌ same |
+| `doctor` | ✅ output read on this sandbox; four hardware-lie cases against a stub `nvidia-smi` | ✅ 9 cells | ⚠️ never run on a machine with a real GPU |
+
+Being explicit, because it is the honest weakness of the phase: **no heavy
+backend has converted a document.** What was verified is the path a user without
+a GPU takes, which is almost every user, plus everything about the adapters that
+does not need the model to run.
 
 ### Post-processors
 
