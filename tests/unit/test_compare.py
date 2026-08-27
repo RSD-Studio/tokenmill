@@ -341,6 +341,46 @@ class TestTheCommand:
             assert b"\r\n" not in written, row["backend"]
 
     def test_json_carries_the_verdict(self, fixture_dir: Path) -> None:
+        """Pinned to a fixed backend set, because the verdict depends on one.
+
+        This asked for *every available* backend until Phase 7, and the answer
+        changed the moment `pymupdf4llm` was registered: on `tables.pdf` it
+        scores 0.848 against pdfplumber's 0.667 and became the most faithful.
+        Nothing was wrong with either the old assertion or the new backend — the
+        test was reading an answer that depends on what happens to be installed,
+        which is the class of bug CI found twenty-one of when it first ran.
+
+        So the identities are asserted against a named set, and the property
+        that actually matters is asserted separately, over whatever is there.
+        """
+        result = runner.invoke(
+            app,
+            [
+                "compare",
+                str(fixture_dir / "tables.pdf"),
+                "--backends",
+                "pdfplumber,kreuzberg,pypdf",
+                "--corpus",
+                str(fixture_dir),
+                "--json",
+                *OFFLINE,
+            ],
+        )
+        payload = json.loads(result.stdout)
+        assert payload["backends"]["cheapest"] == "kreuzberg"
+        assert payload["backends"]["most_faithful"] == "pdfplumber"
+        assert payload["backends"]["cheapest_is_most_faithful"] is False
+
+    def test_the_cheapest_backend_is_not_the_most_faithful_whatever_is_installed(
+        self, fixture_dir: Path
+    ) -> None:
+        """The finding, over the real backend set rather than a pinned one.
+
+        `tables.pdf` exists to make this true: the cheapest converter gets there
+        by destroying the table. Which backend wins each half varies with what is
+        installed; that they are different backends does not, and it is the
+        reason `compare` is not sorted by size.
+        """
         result = runner.invoke(
             app,
             [
@@ -352,7 +392,7 @@ class TestTheCommand:
                 *OFFLINE,
             ],
         )
-        payload = json.loads(result.stdout)
-        assert payload["backends"]["cheapest"] == "kreuzberg"
-        assert payload["backends"]["most_faithful"] == "pdfplumber"
-        assert payload["backends"]["cheapest_is_most_faithful"] is False
+        payload = json.loads(result.stdout)["backends"]
+
+        assert payload["cheapest"] != payload["most_faithful"]
+        assert payload["cheapest_is_most_faithful"] is False
