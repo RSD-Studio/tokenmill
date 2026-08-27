@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 
 import pytest
-from benchmarks.harness import Cell, cells_for, run_cell
+from benchmarks.harness import Cell, _portable_message, cells_for, run_cell
 from benchmarks.models import CellResult, RunManifest
 from benchmarks.report import (
     ReportError,
@@ -490,3 +490,37 @@ class TestMemoryIsComparableBetweenRows:
         assert reading.added_rss_kb is not None
         assert reading.added_rss_kb > 32 * 1024
         del ballast
+
+
+class TestCommittedResultsAreMachineIndependent:
+    """Two runs of the same corpus on two machines should differ in timings only.
+
+    The first committed run recorded `/home/user/tokenmill/tests/fixtures/
+    corrupt.pdf` inside a pymupdf error message. Nothing secret, but it is the
+    accident of one checkout's location written into published data, and it
+    would make the identical failure read differently in the CI run whose rows
+    have to merge with these.
+    """
+
+    def test_the_checkout_root_is_replaced_in_error_text(self) -> None:
+        root = str(Path(__file__).resolve().parents[2])
+        message = f"Failed to open file '{root}/tests/fixtures/corrupt.pdf' as type pdf."
+        assert _portable_message(message) == (
+            "Failed to open file '<repo>/tests/fixtures/corrupt.pdf' as type pdf."
+        )
+
+    def test_a_path_outside_the_checkout_is_left_alone(self) -> None:
+        message = "could not find /usr/lib/libreoffice/program/soffice.bin"
+        assert _portable_message(message) == message
+
+    def test_the_committed_results_name_no_absolute_checkout_path(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        raw = (root / "benchmarks" / "results" / "2026-08-27" / "results.json").read_text(
+            encoding="utf-8"
+        )
+        assert str(root) not in raw
+
+    def test_the_committed_csv_uses_the_repositorys_line_endings(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        raw = (root / "benchmarks" / "results" / "2026-08-27" / "results.csv").read_bytes()
+        assert b"\r\n" not in raw

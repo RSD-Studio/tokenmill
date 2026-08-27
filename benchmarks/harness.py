@@ -46,7 +46,7 @@ import time
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from benchmarks.memory import measure_memory
 from benchmarks.models import CellResult
@@ -327,16 +327,41 @@ def _failure(cell: Cell, tokenizer: str, exc: BaseException) -> CellResult:
         exc: What went wrong.
 
     Returns:
-        The failed cell, carrying the error verbatim and its type.
+        The failed cell, carrying the error and its type. The message is
+        verbatim except that the checkout's own directory is replaced by
+        ``<repo>``: see :func:`_portable_message`.
     """
     return CellResult(
         fixture=cell.fixture,
         backend=cell.backend,
         tokenizer=tokenizer,
         ok=False,
-        error=str(exc),
+        error=_portable_message(str(exc)),
         error_type=type(exc).__name__,
     )
+
+
+#: This checkout's root, for stripping out of committed error text.
+_REPO_ROOT: Final = str(Path(__file__).resolve().parents[1])
+
+
+def _portable_message(message: str) -> str:
+    """Replace this checkout's path with a placeholder.
+
+    Several backends put the input's absolute path in their error text, which is
+    useful at the terminal and noise in a committed result file: it records where
+    one person's checkout happened to be, and it makes the same failure look
+    different in a local run and a CI run, so the two cannot be diffed. Only this
+    repository's own root is rewritten; a path elsewhere on the machine stays, on
+    the grounds that it is probably telling you something.
+
+    Args:
+        message: The error text.
+
+    Returns:
+        The text with the checkout root replaced by ``<repo>``.
+    """
+    return message.replace(_REPO_ROOT, "<repo>")
 
 
 def _score(

@@ -134,7 +134,12 @@ def write_csv(path: Path, results: Sequence[CellResult]) -> None:
         results: Every cell.
     """
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(_CSV_COLUMNS), extrasaction="ignore")
+        # LF, not the CSV module's default CRLF: this file is committed, and a
+        # checkout that rewrites its line endings makes every diff against it a
+        # whole-file diff.
+        writer = csv.DictWriter(
+            handle, fieldnames=list(_CSV_COLUMNS), extrasaction="ignore", lineterminator="\n"
+        )
         writer.writeheader()
         for result in results:
             writer.writerow(result.to_row())
