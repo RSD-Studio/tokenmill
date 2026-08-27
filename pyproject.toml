@@ -271,6 +271,22 @@ docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 pymupdf4llm = "tokenmill.backends.external.pymupdf4llm_pdf:PyMuPDF4LLMConverter"
 pandoc = "tokenmill.backends.external.pandoc_doc:PandocConverter"
 libreoffice = "tokenmill.backends.external.libreoffice_doc:LibreOfficeConverter"
+# Phase 9 — the GPU tier. Registered so `tokenmill backends` can show what
+# exists and how to install it; NEVER a dependency, and `heavy = []` above stays
+# empty forever. Each runs from an environment of its own or in a container.
+#
+# They are registered despite Phase 7's rule against "a row for a container
+# nobody is running", and the difference is that these are actionable: an
+# unavailable heavy backend carries the exact commands that would install it,
+# which is the whole deliverable of this phase. A ServiceConverter with no
+# address still says "you have not told me where it is", which is a different
+# and equally actionable sentence.
+marker = "tokenmill.backends.heavy.marker:MarkerConverter"
+surya = "tokenmill.backends.heavy.surya:SuryaConverter"
+mineru = "tokenmill.backends.heavy.mineru:MinerUConverter"
+olmocr = "tokenmill.backends.heavy.olmocr:OlmOcrConverter"
+deepseek_ocr = "tokenmill.backends.heavy.deepseek_ocr:DeepSeekOcrConverter"
+dots_ocr = "tokenmill.backends.heavy.dots_ocr:DotsOcrConverter"
 
 [project.entry-points."tokenmill.postprocessors"]
 # Exactly one of these is non-destructive, and that is the whole default chain.

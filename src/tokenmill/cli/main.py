@@ -45,6 +45,7 @@ import typer
 from tokenmill import __version__
 from tokenmill.cli.format import (
     format_backend_comparison,
+    format_diagnosis,
     format_fidelity_report,
     format_format_comparison,
     format_result_report,
@@ -1349,6 +1350,77 @@ def gui(
         native=native,
         show=not no_show,
     )
+
+
+@app.command()
+def doctor(
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the findings as JSON.")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
+) -> None:
+    """Report what is installed, what hardware there is, and how to install more.
+
+    The command exists to stop somebody spending an hour installing a
+    multi-gigabyte GPU backend on a machine that cannot run it. It never
+    guesses: a fact it could not establish is reported as unknown rather than
+    filled in, because an invented VRAM figure is exactly the number that makes
+    a model download fail at the end.
+    """
+    _configure_logging(verbose)
+
+    from tokenmill.backends.heavy.doctor import diagnose
+
+    diagnosis = diagnose()
+    if as_json:
+        print(json.dumps(_diagnosis_to_json(diagnosis), indent=2))
+        return
+    print(format_diagnosis(diagnosis))
+
+
+def _diagnosis_to_json(diagnosis: Any) -> dict[str, Any]:
+    """Render a diagnosis as JSON.
+
+    Args:
+        diagnosis: What `doctor` found.
+
+    Returns:
+        The JSON-ready mapping. `null` wherever something is not known, never a
+        substituted default: this output is meant to be machine-read, and a
+        zero VRAM figure would be indistinguishable from a real one.
+    """
+    gpu = diagnosis.gpu
+    return {
+        "python": diagnosis.python,
+        "platform": diagnosis.platform_description,
+        "gpu": {
+            "accelerator": gpu.accelerator.value,
+            "usable": gpu.usable,
+            "detail": gpu.detail,
+            "driver": gpu.driver,
+            "total_memory_mb": gpu.total_memory_mb,
+            "devices": [{"name": d.name, "memory_mb": d.memory_mb} for d in gpu.devices],
+            "notes": list(gpu.notes),
+        },
+        "tools": dict(diagnosis.tools),
+        "backends": [
+            {
+                "id": b.backend_id,
+                "name": b.name,
+                "available": bool(b.availability),
+                "status": b.availability.describe(),
+                "hint": b.availability.hint,
+                "license": b.licence,
+                "license_tier": b.tier.value,
+                "weights_license": b.weights_licence,
+                "weights_license_verified": b.weights_licence is not None,
+                "requires_gpu": b.requires_gpu,
+                "install_steps": list(b.install_steps),
+                "torch": b.torch,
+                "notes": list(b.notes),
+            }
+            for b in diagnosis.backends
+        ],
+        "warnings": list(diagnosis.warnings),
+    }
 
 
 def _show_licenses(*, as_json: bool) -> None:

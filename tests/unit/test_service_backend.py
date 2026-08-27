@@ -18,6 +18,7 @@ import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -262,22 +263,64 @@ class TestPermissionsAndFailures:
         assert converter.base_url() is None, "the bad address must not have been stored"
 
 
-class TestNoServiceBackendIsRegistered:
-    def test_the_pattern_ships_without_a_backend_using_it(self) -> None:
-        """Deliberate, and worth asserting so it stays deliberate.
+class TestTheRegisteredServiceBackends:
+    """Phase 7 asserted there were none; Phase 9 registers two, as it said it would.
 
-        Registering a backend for a container nobody is running would put a
-        permanently-unavailable row in `tokenmill backends` for every user.
-        Phase 9 registers the concrete ones, against real services.
+    The Phase 7 test read `service_backends == []`, with the reasoning that a
+    row for a container nobody is running is a permanently-unavailable backend
+    in every user's listing. That reasoning survives — what changed is that
+    DeepSeek-OCR and dots.ocr are not containers nobody was told to run: they
+    are backends whose "unavailable" message *is* the instruction, which is the
+    deliverable of the phase.
+
+    So the assertion moves from "none exist" to the property that made "none
+    exist" the right answer before: **an unconfigured service backend says what
+    to do, and never silently claims to be available.**
+    """
+
+    @staticmethod
+    def _service_backends() -> list[Any]:
+        """Every registered backend that converts over HTTP.
+
+        Returns:
+            The converters.
         """
         from tokenmill.core.registry import Registry
 
-        service_backends = [
-            c.info.id for c in Registry() if c.info.isolation is IsolationMode.SERVICE
-        ]
+        return [c for c in Registry() if c.info.isolation is IsolationMode.SERVICE]
 
-        assert service_backends == [], (
-            f"{service_backends} are registered service backends. If Phase 9 has "
-            f"started, update this test; otherwise a user is seeing a row for a "
-            f"container they were never told to run"
+    def test_the_expected_ones_are_registered_and_no_others(self) -> None:
+        """A new service backend has to be a decision, not an accident."""
+        ids = sorted(c.info.id for c in self._service_backends())
+
+        assert ids == ["deepseek_ocr", "dots_ocr"], (
+            f"registered service backends are {ids}. Adding one puts a row in "
+            f"every user's `tokenmill backends` listing, so it belongs in this "
+            f"list deliberately or not at all"
         )
+
+    def test_an_unconfigured_service_backend_is_unavailable_with_an_instruction(
+        self,
+    ) -> None:
+        """The property Phase 7's empty-list assertion was really protecting."""
+        for converter in self._service_backends():
+            availability = converter.is_available()
+
+            assert not availability, (
+                f"{converter.info.id} claims to be available with no address "
+                f"configured; a conversion would then fail rather than be refused"
+            )
+            assert availability.hint, f"{converter.info.id} is unavailable with no hint"
+            assert f"{converter.info.id}_url" in availability.hint, (
+                f"{converter.info.id}'s hint does not name the --extra key that "
+                f"would configure it, so it is not actionable"
+            )
+
+    def test_nothing_is_auto_discovered(self) -> None:
+        """No probing of localhost, asserted rather than trusted.
+
+        A converter that scanned ports for an inference server would be doing
+        something nobody asked for, and would occasionally find somebody else's.
+        """
+        for converter in self._service_backends():
+            assert converter.base_url() is None

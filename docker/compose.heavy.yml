@@ -1,0 +1,96 @@
+# The GPU tier as containers, one service each.
+#
+# WHY THESE EXIST, AND WHAT THEY ARE NOT. tokenmill never starts a container and
+# never looks for one. An adapter reaches a service it was **told about** —
+# `--extra <backend>_url=http://localhost:8000` — because a converter that
+# scanned localhost for an inference server would be doing something nobody
+# asked for, and would occasionally find somebody else's. These files are how
+# *you* start the thing you then tell tokenmill about; they are not wired to
+# anything.
+#
+# UNVERIFIED. None of these services has been started, here or anywhere: the
+# development sandbox has no GPU and its egress proxy denies the model host. The
+# image names and arguments follow each project's own published serving
+# instructions. Treat them as a starting point that has been read rather than as
+# a configuration that has been run, and see docs/BACKENDS.md, which says the
+# same thing where somebody will actually look.
+#
+#   docker compose -f docker/compose.heavy.yml --profile deepseek up
+#   tokenmill convert page.png --backend deepseek_ocr \
+#       --extra deepseek_ocr_url=http://localhost:8000 --allow-network
+#
+# Every service is behind a profile, so `up` with no profile starts nothing.
+# Starting six containers that each want a GPU because somebody typed `up` would
+# be a rude default.
+
+name: tokenmill-heavy
+
+x-gpu: &gpu
+  # The modern spelling. `runtime: nvidia` still works and is deprecated; this
+  # is what Compose v2 documents.
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+x-cache: &cache
+  # One shared model cache across services, so switching between them does not
+  # re-download tens of gigabytes. A named volume rather than a bind mount:
+  # a bind mount to ~/.cache/huggingface would silently share the host's cache,
+  # including any private-model credentials in it.
+  volumes:
+    - models:/root/.cache/huggingface
+
+services:
+  deepseek-ocr:
+    profiles: ["deepseek", "all"]
+    image: vllm/vllm-openai:latest
+    <<: [*gpu, *cache]
+    ports: ["8000:8000"]
+    ipc: host # vLLM needs more shared memory than the default 64 MB
+    command:
+      - --model=deepseek-ai/DeepSeek-OCR
+      - --trust-remote-code
+      - --max-model-len=8192
+    healthcheck:
+      # The same endpoint tokenmill's availability probe uses, so "healthy" here
+      # and "available" there mean the same thing.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 300s # a first run downloads the weights
+
+  dots-ocr:
+    profiles: ["dots", "all"]
+    image: vllm/vllm-openai:latest
+    <<: [*gpu, *cache]
+    ports: ["8001:8000"]
+    ipc: host
+    command:
+      - --model=rednote-hilab/dots.ocr
+      - --trust-remote-code
+      - --max-model-len=8192
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 300s
+
+  # NOTE ON `--trust-remote-code`, because it is the opposite of what
+  # `post/compress.py` decided for LLMLingua and the difference is deliberate.
+  #
+  # There it was turned OFF, against the library's default, because a token
+  # classifier does not need to execute code from a model repository. Here both
+  # models genuinely ship custom modelling code that vLLM must import to run
+  # them at all, so it is on and the trade is explicit: you are running code
+  # from a model repository. That is a decision for whoever starts the
+  # container, which is why it is visible in this file rather than hidden in an
+  # adapter.
+
+volumes:
+  models:

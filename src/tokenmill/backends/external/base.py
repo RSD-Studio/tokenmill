@@ -157,6 +157,53 @@ ALLOWED_EXECUTABLES: Final[Mapping[str, ExecutableSpec]] = {
             ),
         },
     ),
+    # Phase 9's GPU tier. Each is a console script installed by a Python
+    # package into an environment of its own, so `search_paths` is empty on
+    # purpose: `HeavyConverter.discover` knows the convention and looks there
+    # first, and guessing at system-wide locations for a multi-gigabyte install
+    # would risk running *some* Marker rather than the one the user meant.
+    #
+    # They are here because the allow-list is checked at launch: an id that is
+    # absent from this table cannot be run at all, so this is the single
+    # reviewable list of every program tokenmill will start.
+    "marker_single": ExecutableSpec(
+        name="marker_single",
+        version_args=("--help",),
+        install_hint=(
+            "Marker needs an environment of its own (it pulls PyTorch): "
+            "python -m venv ~/.local/share/tokenmill/marker && "
+            "~/.local/share/tokenmill/marker/bin/pip install marker-pdf"
+        ),
+    ),
+    "surya_ocr": ExecutableSpec(
+        name="surya_ocr",
+        version_args=("--help",),
+        install_hint=(
+            "Surya needs an environment of its own (it pulls PyTorch): "
+            "python -m venv ~/.local/share/tokenmill/surya && "
+            "~/.local/share/tokenmill/surya/bin/pip install surya-ocr"
+        ),
+    ),
+    "mineru": ExecutableSpec(
+        name="mineru",
+        version_args=("--version",),
+        install_hint=(
+            "MinerU needs an environment of its own (it pulls PyTorch): "
+            "python -m venv ~/.local/share/tokenmill/mineru && "
+            "~/.local/share/tokenmill/mineru/bin/pip install 'mineru[core]'. "
+            "Note its licence adds terms to Apache-2.0; see docs/LICENSES.md"
+        ),
+    ),
+    "olmocr": ExecutableSpec(
+        name="olmocr",
+        version_args=("--help",),
+        install_hint=(
+            "olmOCR needs an environment of its own and an NVIDIA GPU (its "
+            "vLLM backend has no CPU or Metal path): "
+            "python -m venv ~/.local/share/tokenmill/olmocr && "
+            "~/.local/share/tokenmill/olmocr/bin/pip install olmocr[gpu]"
+        ),
+    ),
     "python-agpl": ExecutableSpec(
         # Not a program name: the id under which an adapter asks for "a Python
         # interpreter that may import an AGPL package". The executable really is
