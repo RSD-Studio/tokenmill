@@ -195,6 +195,22 @@ that can discard information the user might have wanted must set
 `destructive = True`; the default chain is built by excluding those, so it
 cannot damage a document.
 
+A post-processor that wants to warn the user, or to attach a structured fact to
+the result, adds an **optional** third parameter:
+
+```python
+def process(self, text, options, context=None) -> str:
+    if context is not None:
+        context.warn("there was no front matter to strip")
+        context.note("removed_lines", 0)
+    return text
+```
+
+The registry reads your signature and calls you with two arguments or three
+accordingly, so a post-processor written against the original two-parameter
+contract keeps working untouched — including one that subclasses
+`BasePostProcessor`, whose declaration deliberately stays at two parameters.
+
 ## Design decisions
 
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) records why the architecture is

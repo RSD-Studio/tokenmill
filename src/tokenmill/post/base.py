@@ -21,21 +21,56 @@ Three rules govern them, and they come from ``CONTRIBUTING.md``:
 * **Order is explicit.** Each declares an :attr:`PostProcessor.order`, and the
   chain runs in ascending order so the result does not depend on entry point
   iteration order. ``docs/ARCHITECTURE.md`` records the reserved ranges.
+
+**A post-processor can now say something** (defect N2, the owner's §3.3). Until
+Phase 9 the whole contract was ``process(text, options) -> str``, where a
+backend gets a :class:`~tokenmill.core.protocol.ConversionContext` that collects
+warnings and structured facts. So the compressor could only *log* its achieved
+ratio, and a processor that wanted to say "there was no front matter to strip"
+had no channel at all.
+
+:class:`PostProcessContext` is that channel, and it arrives as an **optional
+third parameter**. The shape is deliberately the uglier of the two available:
+
+* A clean break — making the third parameter required — would have broken every
+  third-party post-processor ever written against the Phase 1 contract, for a
+  feature none of them asked for.
+* Instead, :meth:`PostProcessorRegistry.wants_context` asks each processor's own
+  ``process`` signature whether it takes one, caches the answer, and the
+  pipeline calls it with two arguments or three accordingly. A plugin written
+  against the old contract is called exactly as it was and cannot tell the
+  difference.
+
+**The signature is the declaration**, rather than a ``wants_context = True``
+class attribute. An author who writes ``def process(self, text, options,
+context)`` has declared their intent as clearly as anyone can; making them *also*
+set a flag would be a trap that fails at runtime with an argument-count error.
+The introspection is done once per processor and cached, so the chain does not
+pay for it per conversion.
+
+Note that :meth:`BasePostProcessor.process` keeps its **two**-parameter
+declaration. A subclass adding an optional third parameter is *widening*, which
+is a legal override; the base declaring it would have made every existing
+two-parameter subclass an illegal *narrowing* override on upgrade — undoing the
+entire point of the optional-parameter shape. mypy said so, in nine files, which
+is how this was caught.
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from importlib.metadata import EntryPoint, entry_points
-from typing import Final, Protocol, runtime_checkable
+from typing import Any, Final, Protocol, runtime_checkable
 
 from tokenmill.core.models import ConvertOptions
 
 __all__ = [
     "POSTPROCESSOR_ENTRY_POINT_GROUP",
     "BasePostProcessor",
+    "PostProcessContext",
     "PostProcessor",
     "PostProcessorRegistry",
     "default_post_registry",
@@ -46,6 +81,51 @@ __all__ = [
 POSTPROCESSOR_ENTRY_POINT_GROUP: Final = "tokenmill.postprocessors"
 
 _log = logging.getLogger(__name__)
+
+
+class PostProcessContext:
+    """Scratch space handed to one post-processor for one run.
+
+    The post-processing half of
+    :class:`~tokenmill.core.protocol.ConversionContext`, and deliberately
+    smaller than it. A post-processor may **warn** and may **note** a structured
+    fact; it may not record a stage, because the pipeline already measures the
+    text leaving every post-processor and a second mechanism would give two
+    answers to one question.
+
+    Attributes:
+        processor_id: Whose context this is. Set by the pipeline, and used to
+            attribute a warning and to namespace a note, so that two processors
+            noting ``ratio`` do not overwrite each other.
+    """
+
+    def __init__(self, processor_id: str) -> None:
+        """Initialise an empty context.
+
+        Args:
+            processor_id: The post-processor this belongs to.
+        """
+        self.processor_id = processor_id
+        self.warnings: list[str] = []
+        self.metadata: dict[str, Any] = {}
+
+    def warn(self, message: str) -> None:
+        """Record a non-fatal problem for the user.
+
+        Args:
+            message: What the user should know that did not stop the run.
+        """
+        _log.debug("post-processor warning (%s): %s", self.processor_id, message)
+        self.warnings.append(message)
+
+    def note(self, key: str, value: Any) -> None:
+        """Record a structured fact about what this processor did.
+
+        Args:
+            key: The fact's name, such as ``achieved_ratio``.
+            value: The value, which must be JSON-serialisable.
+        """
+        self.metadata[key] = value
 
 
 @runtime_checkable
@@ -82,6 +162,14 @@ class PostProcessor(Protocol):
         idempotent where that is meaningful, so that running a chain twice does
         not keep changing the document.
 
+        **This signature is unchanged from Phase 1 on purpose.** An
+        implementation may take an optional third ``context`` parameter — see
+        the module docstring — and still satisfies this protocol, because an
+        extra parameter with a default does not stop a callable being callable
+        with two arguments. Declaring the third parameter *here* would have done
+        the opposite: it would have stopped every existing two-parameter
+        implementation matching.
+
         Args:
             text: The text as it arrives from the previous stage.
             options: The conversion options, for post-processors that take
@@ -111,6 +199,16 @@ class BasePostProcessor(ABC):
     def process(self, text: str, options: ConvertOptions) -> str:
         """Transform the text.
 
+        **Declared with two parameters on purpose, and it is not an oversight.**
+        A subclass that wants a context *widens* this to
+        ``process(self, text, options, context=None)``, which is a legal
+        override — an implementation may accept more than its base promises.
+        Declaring the third parameter here would have made every existing
+        two-parameter subclass, in this repository and in anybody else's, an
+        illegal *narrowing* override the moment they upgraded. The whole point
+        of the optional-parameter shape is that nobody has to change anything,
+        and putting it on the base would have undone that.
+
         Args:
             text: The text as it arrives from the previous stage.
             options: The conversion options.
@@ -131,6 +229,7 @@ class PostProcessorRegistry:
         """
         self._group = entry_point_group
         self._processors: dict[str, PostProcessor] = {}
+        self._wants_context: dict[int, bool] = {}
         self._loaded = False
 
     def _ensure_loaded(self) -> None:
@@ -202,6 +301,59 @@ class PostProcessorRegistry:
         """Return every registered post-processor id, in chain order."""
         return tuple(p.id for p in self)
 
+    def wants_context(self, processor: PostProcessor) -> bool:
+        """Report whether a post-processor's ``process`` takes a context.
+
+        Introspected once per processor object and cached, because the answer
+        cannot change and the chain would otherwise pay for it on every
+        conversion.
+
+        A signature that cannot be read at all — a C extension, an exotic
+        callable — answers ``False``. That is the safe direction: calling with
+        two arguments is what every post-processor written before Phase 9
+        expects, so a processor whose signature is unreadable is treated as one
+        of those rather than being handed an argument it may not accept.
+
+        Args:
+            processor: The post-processor to ask.
+
+        Returns:
+            True when it accepts a third positional or keyword ``context``.
+        """
+        key = id(processor)
+        cached = self._wants_context.get(key)
+        if cached is not None:
+            return cached
+        answer = _accepts_context(processor)
+        self._wants_context[key] = answer
+        return answer
+
+    def run(
+        self,
+        processor: PostProcessor,
+        text: str,
+        options: ConvertOptions,
+        context: PostProcessContext,
+    ) -> str:
+        """Call one post-processor, with a context only if it takes one.
+
+        The single place that decision is made, so the pipeline, the tests and
+        anything else driving a chain cannot disagree about it.
+
+        Args:
+            processor: The post-processor to run.
+            text: The text arriving from the previous stage.
+            options: The conversion options.
+            context: Collects warnings and notes; discarded unmentioned where
+                the processor was written against the Phase 1 contract.
+
+        Returns:
+            The transformed text.
+        """
+        if self.wants_context(processor):
+            return processor.process(text, options, context)  # type: ignore[call-arg]
+        return processor.process(text, options)
+
     def default_chain(self) -> tuple[PostProcessor, ...]:
         """Return the post-processors that run when the user asks for nothing.
 
@@ -267,3 +419,37 @@ def reset_default_post_registry() -> None:
     """Discard the process-wide post-processor registry. Only useful in tests."""
     global _DEFAULT  # one deliberate process-wide cache
     _DEFAULT = None
+
+
+def _accepts_context(processor: PostProcessor) -> bool:
+    """Read a post-processor's signature to see whether it wants a context.
+
+    Args:
+        processor: The post-processor to inspect.
+
+    Returns:
+        True when ``process`` can be called with a third argument.
+    """
+    try:
+        signature = inspect.signature(processor.process)
+    except (TypeError, ValueError):
+        # A builtin, a C extension, or something else with no readable
+        # signature. Treated as a Phase 1 processor; see `wants_context`.
+        return False
+
+    positional = 0
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            # `*args` would swallow a context silently rather than using it, and
+            # a processor written that way has declared nothing. Not enough.
+            continue
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            continue
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            if parameter.name == "context":
+                return True
+            continue
+        positional += 1
+    # `self` is already bound off a method object, so `text` and `options` are
+    # the first two and a third is the context.
+    return positional >= 3

@@ -50,7 +50,7 @@ from typing import Any, Final
 
 from tokenmill.core.errors import BackendUnavailable, NetworkRequired
 from tokenmill.core.models import ConvertOptions
-from tokenmill.post.base import BasePostProcessor
+from tokenmill.post.base import BasePostProcessor, PostProcessContext
 
 __all__ = [
     "DEFAULT_MODEL",
@@ -103,8 +103,19 @@ class PromptCompressor(BasePostProcessor):
     in_default_chain = False
     order = 900
 
-    def process(self, text: str, options: ConvertOptions) -> str:
+    def process(
+        self, text: str, options: ConvertOptions, context: PostProcessContext | None = None
+    ) -> str:
         """Compress ``text`` towards the requested ratio.
+
+        **The first user of the post-processor context** (defect N2). Until
+        Phase 9 this could only write its achieved ratio to a log, where the
+        CLI's `--json` output, the GUI and Phase 10's harness could none of them
+        see it. Now it notes the token counts LLMLingua-2 reports and the rate
+        it was asked for, and warns rather than logging silently when a document
+        was too short to compress — which is the case a user most needs telling
+        about, because the document comes back unchanged and the run looks like
+        it did nothing.
 
         Args:
             text: The text to compress.
@@ -112,6 +123,8 @@ class PromptCompressor(BasePostProcessor):
                 ``extra['compress_ratio']``, ``extra['compress_model']``,
                 ``extra['compress_device']``, ``extra['compress_cache_dir']``
                 and ``extra['compress_force_tokens']``.
+            context: Collects the achieved ratio and any warning. ``None`` when
+                this is called directly rather than through the pipeline.
 
         Returns:
             The compressed text. Text too short to compress meaningfully is
@@ -124,8 +137,17 @@ class PromptCompressor(BasePostProcessor):
                 permit a download. The message names the size, the cache path
                 and the exact command that fetches it.
         """
-        if len(text.split()) < _MIN_WORDS:
-            _log.info("text is too short to compress (%d words); left alone", len(text.split()))
+        words = len(text.split())
+        if words < _MIN_WORDS:
+            message = (
+                f"this document is {words} words, below the {_MIN_WORDS}-word floor "
+                f"for compression, so it was returned unchanged"
+            )
+            _log.info("%s", message)
+            if context is not None:
+                context.warn(message)
+                context.note("compressed", False)
+                context.note("reason", "below the minimum length")
             return text
 
         rate = _rate(options)
@@ -158,12 +180,31 @@ class PromptCompressor(BasePostProcessor):
                 msg, hint="raise the ratio; a ratio this low removes everything"
             )
 
-        _log.info(
-            "compressed %s -> %s tokens (rate %.2f)",
-            result.get("origin_tokens"),
-            result.get("compressed_tokens"),
-            rate,
-        )
+        origin_tokens = result.get("origin_tokens")
+        compressed_tokens = result.get("compressed_tokens")
+        _log.info("compressed %s -> %s tokens (rate %.2f)", origin_tokens, compressed_tokens, rate)
+        if context is not None:
+            context.note("compressed", True)
+            context.note("requested_rate", rate)
+            # LLMLingua's own counts, recorded as LLMLingua's own counts. They
+            # are in *its* tokenizer, not the one the user asked tokenmill for,
+            # so they are not comparable with the pipeline's stage counts and
+            # the key names say whose they are. The pipeline measures the
+            # `compress` stage in the user's unit; that stays the number to
+            # quote.
+            context.note("llmlingua_origin_tokens", origin_tokens)
+            context.note("llmlingua_compressed_tokens", compressed_tokens)
+            if isinstance(origin_tokens, int) and isinstance(compressed_tokens, int):
+                if origin_tokens > 0:
+                    context.note(
+                        "llmlingua_achieved_rate", round(compressed_tokens / origin_tokens, 4)
+                    )
+                if compressed_tokens > origin_tokens:
+                    context.warn(
+                        f"LLMLingua-2 returned more tokens than it was given "
+                        f"({origin_tokens} -> {compressed_tokens}); compression did not help "
+                        f"on this document"
+                    )
         return compressed
 
     def _load(self, options: ConvertOptions) -> Any:

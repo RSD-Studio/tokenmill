@@ -37,6 +37,15 @@ succeeds. Two rules keep that from becoming a way to hide failures:
 * **An explicit ``--backend`` never falls back.** The chain is one long, and a
   failure is an error.
 
+**A post-processor can say something** (defect N2). Each is handed a
+:class:`~tokenmill.post.base.PostProcessContext` — if its own signature says it
+takes one — which collects warnings and structured facts the same way a
+backend's context does. Warnings are prefixed with the processor's id and join
+the result's own; notes are namespaced ``post.<id>.<key>`` so two processors
+noting ``ratio`` cannot overwrite each other. A post-processor written against
+the Phase 1 two-argument contract is still called with two arguments and cannot
+tell the difference.
+
 **A binary document has no "before".** Converting a ``.docx`` used to report
 ``68,190 -> 3,494``, where the first figure was the zip archive's own bytes
 decoded as text. Nobody would ever hand a model the bytes of a ``.docx``, so
@@ -71,7 +80,11 @@ from tokenmill.core.models import (
 )
 from tokenmill.core.protocol import Converter
 from tokenmill.core.registry import Registry, default_registry
-from tokenmill.post.base import PostProcessorRegistry, default_post_registry
+from tokenmill.post.base import (
+    PostProcessContext,
+    PostProcessorRegistry,
+    default_post_registry,
+)
 from tokenmill.tokens.meter import TokenMeter
 from tokenmill.tokens.registry import TokenizerRegistry, default_tokenizer_registry
 
@@ -155,9 +168,18 @@ class Pipeline:
         stages.append(_measure(CONVERT_STAGE, result.text, meter))
 
         text = result.text
+        post_metadata: dict[str, object] = {}
         for processor in chain:
-            text = processor.process(text, opts)
+            post_context = PostProcessContext(processor.id)
+            text = self.post_processors.run(processor, text, opts, post_context)
             stages.append(_measure(processor.id, text, meter))
+            warnings.extend(f"{processor.id}: {message}" for message in post_context.warnings)
+            # Namespaced, so two processors noting `ratio` do not overwrite each
+            # other and a reader of --json can see which step said what.
+            post_metadata.update(
+                (f"post.{processor.id}.{key}", value)
+                for key, value in post_context.metadata.items()
+            )
 
         if meter is None:
             warnings.append(
@@ -183,8 +205,8 @@ class Pipeline:
             tokens_before = source_stage.tokens
 
         metadata = result.metadata
-        if fetch_metadata:
-            metadata = freeze_metadata({**fetch_metadata, **dict(metadata)})
+        if fetch_metadata or post_metadata:
+            metadata = freeze_metadata({**fetch_metadata, **dict(metadata), **post_metadata})
 
         return replace(
             result,

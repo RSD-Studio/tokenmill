@@ -905,12 +905,45 @@ model that means executing code from a model repository, which is not something
 a document converter should do by default for a token classifier that does not
 need it.
 
-**A post-processor has no channel for warnings or metadata.** `process(text,
-options) -> str` is the whole contract — unlike a backend, which gets a
-`ConversionContext`. So the compressor logs rather than warning, and reports its
-ratio through the per-stage measurement the pipeline already does rather than
-attaching it to the result. That is a real gap and `PROGRESS.md` records it:
-Phase 8's GUI will want a post-processor to be able to say something.
+**A post-processor can say something** (defect N2, closed in Phase 9 with the
+owner's sign-off). Until then `process(text, options) -> str` was the whole
+contract, where a backend gets a `ConversionContext`. So the compressor could
+only *log* its achieved ratio, and a processor that wanted to say "there was no
+front matter to strip" had no channel at all.
+
+`PostProcessContext` is that channel, and it arrives as an **optional third
+parameter** rather than a required one:
+
+- `PostProcessorRegistry.wants_context(p)` reads `p.process`'s own signature,
+  once per processor, and caches the answer. The pipeline then calls with two
+  arguments or three. **A post-processor written against the Phase 1 contract is
+  called exactly as it was and cannot tell the difference** — which is the whole
+  point of taking the uglier of the two shapes.
+- **The signature is the declaration**, not a `wants_context = True` attribute.
+  Somebody who writes `def process(self, text, options, context)` has declared
+  their intent; making them also set a flag would be a trap that fails with an
+  argument-count error.
+- **`BasePostProcessor.process` keeps its two-parameter declaration.** A
+  subclass adding an optional third parameter is *widening*, which is a legal
+  override; the base declaring it would have made every existing two-parameter
+  subclass an illegal *narrowing* override on upgrade — undoing the entire
+  point. mypy said so, in nine files, which is how it was caught.
+- `*args` does **not** count as accepting a context. It would swallow one
+  silently, leaving the author with no error and no context and nothing to
+  debug.
+
+Warnings are prefixed with the processor's id and join the result's own; notes
+are namespaced `post.<id>.<key>` so two processors noting `ratio` cannot
+overwrite each other.
+
+**The compressor is the first user.** It notes LLMLingua-2's own token counts
+and the rate it was asked for, and warns — rather than logging into the void —
+when a document was below the length floor and came back untouched, which is
+exactly the case where a user otherwise sees a run that appears to have done
+nothing. The keys say *whose* counts they are: `llmlingua_origin_tokens` is in
+LLMLingua's tokenizer and is not comparable with the pipeline's stage counts in
+the user's. The `compress` stage measured in the user's unit stays the number to
+quote.
 
 ## The graphical interface
 
