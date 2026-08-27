@@ -339,8 +339,16 @@ runtimes installed.
 | Backend | Files packed | Output bytes | Wall time | Secret leaked |
 |---|---|---|---|---|
 | `gitingest` | 7 | 2,862 | 564 ms | no |
-| `repomix` | 8 | 3,978 | 1,082 ms | no |
+| `repomix` | 8 | 3,786 | 1,082 ms | no |
 | `code2prompt` | 7 | 2,246 | 103 ms | no |
+
+`repomix`'s figure was **3,978** until Phase 9 switched the adapter to
+`--style json` (defect D6). The 192-byte difference is entirely repomix's own
+boilerplate — its JSON style's summary omits two sentences its Markdown style
+includes — and every file, and every byte of every file, is identical.
+`docs/BACKENDS.md` has the reason for the switch, which was a mis-split rather
+than a tidiness: a repository containing a document that quotes `## File:`
+produced a phantom file in the breakdown.
 
 Asserted by `tests/integration/test_repo_backends.py`. The wall times are from
 this development sandbox on a warm cache and are indicative only — repomix's

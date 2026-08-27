@@ -925,6 +925,45 @@ theirs.
 code2prompt's 0.1 s and gitingest's 0.5 s on our fixture, before the first-run
 download.
 
+**A document that quotes `## File:` used to invent a file — fixed in Phase 9.**
+Until then the adapter asked for `--style markdown` and located file boundaries
+with a regex. A repository containing a README that *explains what a repomix
+pack looks like* would therefore be mis-split. Reproduced on 2026-08-27 with a
+two-file repository whose `notes.md` contained the line `## File:
+totally/made/up.py`:
+
+```
+repomix really packed 2 files: notes.md, real.py
+our splitter found 3 sections:
+   -> notes.md
+   -> totally/made/up.py
+   -> real.py
+
+metadata file_count = 3
+```
+
+The phantom file would have taken bytes in the per-directory breakdown, and a
+token budget could have "dropped" it — cutting a real file in half. Being inside
+a fenced code block did not help; the scan was flat.
+
+The adapter now asks for **`--style json`**, which returns an exact
+`{path: content}` mapping, and renders the Markdown pack from it. Finding a file
+boundary is a dictionary lookup. `tests/integration/test_repo_backends.py::TestRepomix::test_a_document_that_talks_about_repomix_does_not_invent_a_file`
+asserts it.
+
+**The pack is now tokenmill's rendering of repomix's content.** Same headings,
+same `## File: <path>` markers, same fenced blocks with a language tag, same
+files in the same order — but assembled here. Two visible consequences:
+
+- The fixture pack is **3,786 bytes** where `--style markdown` produced 3,978.
+  The 192 bytes are entirely repomix's own boilerplate: its JSON style omits
+  two sentences about Markdown formatting that its Markdown style includes.
+  Every file, and every byte of every file, is identical.
+- The "File Format" section of the summary is **ours**, not repomix's. Its JSON
+  copy describes JSON — "File path as a key, full contents as the value" — and
+  quoting that in a Markdown pack would be a document that misdescribes itself.
+  It is the only field substituted.
+
 ---
 
 ## `code2prompt`
@@ -938,7 +977,7 @@ download.
 
 **Speed.** 103 ms on our fixture against gitingest's 564 ms and repomix's 1,082
 ms — it is Rust and it shows. It also produces the smallest pack of the three
-(2,246 characters against 2,862 and 3,978), because its per-file framing is
+(2,246 characters against 2,862 and 3,786), because its per-file framing is
 lighter.
 
 ### Observed failure modes
