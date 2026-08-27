@@ -225,8 +225,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         The exit status. **Zero even when cells failed**, because a failed cell
         is a result rather than an error — the run succeeded in measuring that
-        the backend fails. A non-zero status is reserved for the run itself not
-        completing.
+        the backend fails. Non-zero only when a whole unit produced no counts,
+        which means the run measured nothing it was asked for: see
+        :func:`_uncounted_status`.
     """
     parser = argparse.ArgumentParser(
         prog="python -m benchmarks.run",
@@ -304,7 +305,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{len(results)} cells ({failed} failed, {empty} empty) -> {paths['markdown']}",
         file=sys.stderr,
     )
-    return 0
+    return _uncounted_status(results, tokenizers)
+
+
+def _uncounted_status(results: Sequence[CellResult], tokenizers: Sequence[str]) -> int:
+    """Fail the run when a unit it was asked for produced no counts at all.
+
+    A failed cell is a result and never an error — the run succeeded in measuring
+    that the backend fails. A whole *unit* producing nothing is different: it
+    means the tokenizer could not be loaded, every cell in that section reads
+    ``—``, and the run measured nothing it was asked to measure. This is
+    reachable in exactly the way that matters. The development sandbox's proxy
+    denies ``openaipublic.blob.core.windows.net`` with a 403, so asking for
+    ``o200k_base`` here writes a complete-looking result set whose token columns
+    are empty. If CI's download were ever to fail the same way, the benchmark
+    workflow's ``commit`` path would push that file over the real one.
+
+    Args:
+        results: Every cell.
+        tokenizers: The units asked for.
+
+    Returns:
+        1 when some unit produced no token count from any successful cell, else
+        0. The results are written either way: the dashes and the warning naming
+        the blocked host are themselves the record of what happened.
+    """
+    status = 0
+    for tokenizer in tokenizers:
+        cells = [r for r in results if r.tokenizer == tokenizer and r.ok]
+        if cells and not any(r.tokens_after is not None for r in cells):
+            print(
+                f"no cell produced a count in '{tokenizer}': the vocabulary could not "
+                f"be loaded. See the warnings in {tokenizer}'s rows. These results "
+                f"must not be merged into a published set.",
+                file=sys.stderr,
+            )
+            status = 1
+    return status
 
 
 def _environment_notes(tokenizers: Sequence[str], *, allow_network: bool) -> list[str]:

@@ -34,7 +34,7 @@ from benchmarks.report import (
     merge,
     write_results,
 )
-from benchmarks.run import observed_versions
+from benchmarks.run import _uncounted_status, observed_versions
 
 from tokenmill.core.registry import Registry
 
@@ -524,3 +524,54 @@ class TestCommittedResultsAreMachineIndependent:
         root = Path(__file__).resolve().parents[2]
         raw = (root / "benchmarks" / "results" / "2026-08-27" / "results.csv").read_bytes()
         assert b"\r\n" not in raw
+
+
+class TestAUnitThatCountedNothingFailsTheRun:
+    """The one case where a benchmark run should exit non-zero.
+
+    A failed cell is a result: the run succeeded in measuring that the backend
+    fails, and the report has a section for it. A whole *unit* producing nothing
+    is different — it means the vocabulary would not load, every row in that
+    section reads a dash, and the run measured nothing it was asked to measure.
+
+    This is not hypothetical. The development sandbox's egress proxy answers
+    `openaipublic.blob.core.windows.net` with a 403, so
+    `--tokenizer o200k_base` here writes a complete-looking result set with an
+    empty token column. Executed and confirmed: exit 1 with the tokenizer named,
+    against exit 0 for the same command in `bytes`. Without this the benchmark
+    workflow's `commit` path would push that file over the real one.
+    """
+
+    def test_a_unit_with_no_counts_fails(self) -> None:
+        rows = [
+            _cell(tokenizer="o200k_base", tokens_before=None, tokens_after=None),
+            _cell(
+                fixture="boilerplate.html",
+                tokenizer="o200k_base",
+                tokens_before=None,
+                tokens_after=None,
+            ),
+        ]
+        assert _uncounted_status(rows, ["o200k_base"]) == 1
+
+    def test_a_unit_that_counted_passes(self) -> None:
+        assert _uncounted_status([_cell(tokenizer="bytes")], ["bytes"]) == 0
+
+    def test_one_good_cell_is_enough_to_prove_the_vocabulary_loaded(self) -> None:
+        rows = [
+            _cell(tokenizer="o200k_base", tokens_before=None, tokens_after=None),
+            _cell(fixture="boilerplate.html", tokenizer="o200k_base", tokens_after=700),
+        ]
+        assert _uncounted_status(rows, ["o200k_base"]) == 0
+
+    def test_a_failed_cell_does_not_count_as_evidence_either_way(self) -> None:
+        """A run where every cell failed measured its backends, not its unit."""
+        rows = [_cell(tokenizer="o200k_base", ok=False, tokens_before=None, tokens_after=None)]
+        assert _uncounted_status(rows, ["o200k_base"]) == 0
+
+    def test_one_bad_unit_fails_a_run_whose_other_unit_worked(self) -> None:
+        rows = [
+            _cell(tokenizer="bytes"),
+            _cell(tokenizer="o200k_base", tokens_before=None, tokens_after=None),
+        ]
+        assert _uncounted_status(rows, ["bytes", "o200k_base"]) == 1

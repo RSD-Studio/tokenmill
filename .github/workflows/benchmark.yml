@@ -1,0 +1,154 @@
+name: Benchmark (model tokens)
+
+# The one thing the development sandbox structurally cannot do.
+#
+# tokenmill's entire purpose is a token count, and its egress proxy denies
+# `openaipublic.blob.core.windows.net` and `huggingface.co` — every host that
+# serves a tokenizer vocabulary. So a local run can only count UTF-8 bytes, and
+# a byte figure is not a token figure: Phase 7 measured the two units
+# disagreeing by 24 points on this project's own tabular data and not even
+# ranking the five serialisation formats in the same order.
+#
+# This job is where the token figures come from. It runs the same matrix as
+# `python -m benchmarks.run`, counting in a real BPE vocabulary, and merges its
+# rows into the committed byte-unit set. The merge is safe by construction: a
+# cell is keyed by (fixture, backend, **tokenizer**), so concatenating two runs
+# can never put a byte count under a token heading.
+#
+# Manual dispatch only. It installs Pandoc and LibreOffice, downloads a
+# vocabulary, and runs 60-odd conversions five times each; there is no reason to
+# pay for that on a push, and the answer only changes when a backend version or
+# the corpus does.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tokenizer:
+        description: "Tokenizer to count in."
+        required: true
+        default: "o200k_base"
+        type: choice
+        options:
+          - o200k_base
+          - cl100k_base
+      repeats:
+        description: "Timed repeats per cell. Five is the default the report is calibrated for."
+        required: true
+        default: "5"
+        type: string
+      commit:
+        description: >-
+          Merge into benchmarks/results/ and push to this branch. Leave off to
+          get the artifact only and merge by hand.
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  # Never two of these against one branch: the `commit` path pushes, and two
+  # pushes racing would lose one run's rows.
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  tokens:
+    name: Matrix in ${{ inputs.tokenizer }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Deliberately narrow, and in its own workflow file rather than as a job in
+    # ci.yml, so that granting write access to the repository contents applies
+    # to this one manually-dispatched job and to nothing that runs on a push.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A commit made from a shallow clone cannot be pushed onto a branch
+          # whose history the runner does not have.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The same two out-of-process converters the ubuntu test cells install.
+      # Without them, `pandoc` and `libreoffice` produce "not available" instead
+      # of rows, and the token table would be missing exactly the backends whose
+      # cost is most interesting.
+      - name: Install Pandoc and LibreOffice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc libreoffice-writer libreoffice-calc libreoffice-impress
+          pandoc --version | head -1
+          soffice --version
+
+      - name: Install
+        run: uv sync --extra dev --extra fixtures --extra documents --extra tokenizers --extra repo
+
+      # If the corpus on this branch is not the corpus the generator produces,
+      # every number below is a measurement of something nobody can reproduce.
+      # Cheap, and it fails before the expensive part.
+      - name: The corpus is the one the generator makes
+        run: uv run python scripts/make_fixtures.py --check
+
+      - name: Record what is being measured with
+        run: |
+          uv run python -c "import tiktoken, sys; print('tiktoken', tiktoken.__version__)"
+          uv run tokenmill backends || true
+
+      - name: Run the matrix
+        env:
+          # `--allow-network` lets repomix run at all: npx fetches it. Its first
+          # conversion is absorbed by the warm-up, and the manifest records that
+          # the flag was set, because a timing that includes a package download
+          # is not a conversion timing.
+          RESULTS_DIR: benchmarks/results/ci-${{ inputs.tokenizer }}
+        run: |
+          uv run python -m benchmarks.run \
+            --out "$RESULTS_DIR" \
+            --tokenizer "${{ inputs.tokenizer }}" \
+            --repeats "${{ inputs.repeats }}" \
+            --allow-network
+
+      - name: Show the report in the job log
+        run: cat "benchmarks/results/ci-${{ inputs.tokenizer }}/report.md"
+
+      # Always, whether or not the commit step runs. A dispatch that produced
+      # numbers and then dropped them would be the worst outcome here.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ inputs.tokenizer }}-${{ github.sha }}
+          path: benchmarks/results/ci-${{ inputs.tokenizer }}/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Merge into the committed results and push
+        if: ${{ inputs.commit }}
+        env:
+          RESULTS_DIR: benchmarks/results/ci-${{ inputs.tokenizer }}
+        run: |
+          set -euo pipefail
+          # The most recent dated directory is the byte-unit run to merge with.
+          # Dated names sort chronologically, which is why they are dated.
+          byte_run="$(ls -d benchmarks/results/[0-9]* | sort | tail -1)"
+          echo "merging $RESULTS_DIR into $byte_run"
+          uv run python -m benchmarks.merge "$byte_run" "$RESULTS_DIR" --into "$byte_run"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$byte_run" "$RESULTS_DIR"
+          if git diff --cached --quiet; then
+            echo "the merge changed nothing; not committing"
+            exit 0
+          fi
+          git commit -m "data(benchmarks): ${{ inputs.tokenizer }} rows from CI run ${{ github.run_id }}
+
+          Measured on a GitHub-hosted ubuntu-latest runner, because the
+          development sandbox's egress proxy denies every tokenizer vocabulary
+          host and can only count bytes. Merged on the tokenizer key, so the
+          byte rows and these token rows sit in separate sections and no byte
+          figure can appear under a token heading."
+          git push origin "HEAD:${{ github.ref_name }}"
