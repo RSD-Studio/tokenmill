@@ -48,7 +48,13 @@ from tokenmill import __version__
 from tokenmill.core.registry import default_registry
 from tokenmill.fidelity import load_ground_truth
 
-__all__ = ["build_manifest", "corpus_items", "main", "observed_versions"]
+__all__ = [
+    "build_manifest",
+    "corpus_items",
+    "main",
+    "observed_versions",
+    "working_tree_dirty",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -133,7 +139,11 @@ def _git(*args: str) -> str | None:
 
 
 def build_manifest(
-    corpus: Path, tokenizers: Sequence[str], repeats: int, notes: Sequence[str]
+    corpus: Path,
+    tokenizers: Sequence[str],
+    repeats: int,
+    notes: Sequence[str],
+    out: Path | None = None,
 ) -> RunManifest:
     """Record what this run is a measurement of.
 
@@ -142,6 +152,8 @@ def build_manifest(
         tokenizers: What is being counted in.
         repeats: Timed runs per cell.
         notes: Anything qualifying the whole run.
+        out: Where the results are being written, so the run's own output does
+            not count towards :func:`working_tree_dirty`.
 
     Returns:
         The manifest, with ``backend_versions`` holding one key per installed
@@ -170,7 +182,7 @@ def build_manifest(
         started_at=datetime.now(UTC).isoformat(timespec="seconds"),
         tokenmill_version=__version__,
         git_commit=_git("rev-parse", "HEAD"),
-        git_dirty=bool(_git("status", "--porcelain")),
+        git_dirty=working_tree_dirty(out),
         python=platform.python_version(),
         platform_description=(f"{platform.system()} {platform.release()} on {platform.machine()}"),
         cpu_count=os.cpu_count() or 1,
@@ -180,6 +192,47 @@ def build_manifest(
         backend_versions=versions,
         notes=all_notes,
     )
+
+
+def working_tree_dirty(out: Path | None = None) -> bool:
+    """Whether uncommitted work could have affected this measurement.
+
+    Not simply ``git status --porcelain``. Re-running into a results directory
+    that is already committed rewrites four files, so a plain check reported
+    ``dirty`` for every regeneration and the flag stopped meaning anything —
+    which is worse than not having it, because a reader takes ``false`` as a
+    guarantee and stops reading a ``true`` that is always there.
+
+    The run's own output directory is therefore excluded. Everything else counts,
+    including untracked files: a backend adapter sitting unstaged is exactly the
+    thing this flag exists to disclose.
+
+    Args:
+        out: The directory being written to, or ``None`` to exclude nothing.
+
+    Returns:
+        True when anything outside ``out`` is modified, staged or untracked.
+        True as well when git could not be asked, because "we do not know"
+        should not read as "clean".
+    """
+    porcelain = _git("status", "--porcelain")
+    if porcelain is None:
+        return True
+    root = Path(__file__).resolve().parents[1]
+    try:
+        excluded = out.resolve().relative_to(root) if out is not None else None
+    except ValueError:
+        excluded = None
+    for line in porcelain.splitlines():
+        # Porcelain v1: two status characters, a space, then the path. A rename
+        # is `old -> new`; the new name is the one that matters here.
+        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        if not path:
+            continue
+        if excluded is not None and Path(path).is_relative_to(excluded):
+            continue
+        return True
+    return False
 
 
 def observed_versions(
@@ -278,7 +331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cells = cells_for(corpus, truths, backends=args.backends)
 
     notes = _environment_notes(tokenizers, allow_network=args.allow_network)
-    manifest = build_manifest(args.corpus, tokenizers, args.repeats, notes)
+    manifest = build_manifest(args.corpus, tokenizers, args.repeats, notes, out=args.out)
 
     def progress(index: int, total: int, cell: object, tokenizer: str) -> None:
         if not args.quiet:

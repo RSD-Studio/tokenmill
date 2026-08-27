@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import benchmarks.run as benchmarks_run
 import pytest
 from benchmarks.harness import Cell, _portable_message, _truth_for, cells_for, run_cell
 from benchmarks.models import CellResult, RunManifest
@@ -34,7 +35,11 @@ from benchmarks.report import (
     merge,
     write_results,
 )
-from benchmarks.run import _uncounted_status, observed_versions
+from benchmarks.run import (
+    _uncounted_status,
+    observed_versions,
+    working_tree_dirty,
+)
 
 from tokenmill.core.registry import Registry
 from tokenmill.fidelity import load_ground_truth
@@ -611,3 +616,60 @@ class TestTheRepositoryFixtureIsActuallyScored:
             name for name, _ in corpus_items(fixture_dir) if _truth_for(truths, name) is None
         ]
         assert unscored == []
+
+
+class TestTheDirtyFlagMeansSomething:
+    """`git_dirty` was `git status --porcelain`, which is always true here.
+
+    Re-running into an already-committed results directory rewrites four files,
+    so every regeneration reported `dirty` and the flag stopped carrying
+    information. That is worse than not having it: a reader takes `false` as a
+    guarantee and learns to ignore a `true` that is always present.
+
+    The run's own output is excluded. Everything else still counts, untracked
+    files included — an unstaged backend adapter is exactly what this flag exists
+    to disclose.
+    """
+
+    def test_a_change_only_in_the_output_directory_is_not_dirt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "benchmarks.run._git",
+            lambda *_a: " M benchmarks/results/2026-08-27/report.md",
+        )
+        root = Path(benchmarks_run.__file__).resolve().parents[1]
+        assert working_tree_dirty(root / "benchmarks" / "results" / "2026-08-27") is False
+
+    def test_a_change_anywhere_else_is_dirt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "benchmarks.run._git",
+            lambda *_a: (
+                " M benchmarks/results/2026-08-27/report.md\n M src/tokenmill/core/pipeline.py"
+            ),
+        )
+        root = Path(benchmarks_run.__file__).resolve().parents[1]
+        assert working_tree_dirty(root / "benchmarks" / "results" / "2026-08-27") is True
+
+    def test_an_untracked_file_counts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("benchmarks.run._git", lambda *_a: "?? src/tokenmill/backends/new.py")
+        assert working_tree_dirty(Path("benchmarks/results/x")) is True
+
+    def test_a_clean_tree_is_clean(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("benchmarks.run._git", lambda *_a: "")
+        assert working_tree_dirty(Path("benchmarks/results/x")) is False
+
+    def test_not_knowing_reads_as_dirty_rather_than_clean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outside a checkout, or with git missing. `False` here would be a claim."""
+        monkeypatch.setattr("benchmarks.run._git", lambda *_a: None)
+        assert working_tree_dirty(Path("benchmarks/results/x")) is True
+
+    def test_a_rename_is_read_by_its_new_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "benchmarks.run._git",
+            lambda *_a: "R  benchmarks/results/a/report.md -> benchmarks/results/b/report.md",
+        )
+        root = Path(benchmarks_run.__file__).resolve().parents[1]
+        assert working_tree_dirty(root / "benchmarks" / "results" / "b") is False
