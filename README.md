@@ -310,27 +310,40 @@ its adapter was written, not taken from a README.
 | `pypdf` | documents | BSD-3-Clause | core | multi-column reading order; tiny | ✅ Phase 2 |
 | `markitdown` | documents | MIT | `documents` | breadth; **PPTX speaker notes** | ✅ Phase 2 |
 | `kreuzberg` | documents | MIT | `documents` | speed; reading order; heading inference | ✅ Phase 2 |
-| `docling` | documents | MIT | `docling` | **document structure** — headings, lists, table headers | ⚠️ Phase 2 — Office paths verified, **PDF path unverified** |
+| `docling` | documents | MIT | `docling` | **document structure** — headings, lists, table headers | ✅ Phase 2 — PDF path verified in CI run 81 |
 | `trafilatura` | web | Apache-2.0 | core | **boilerplate extraction** — removes all six markers on our fixture | ✅ Phase 3 |
 | `readability` | web | Apache-2.0 | `web` | an independent second extraction | ✅ Phase 3 |
 | `crawl4ai` | web | Apache-2.0 | `crawl4ai` | **pages that need JavaScript** | ✅ Phase 3 — weaker extraction; 677 MB |
 | `gitingest` | repo | MIT | `repo` | **packing a repository** with no external runtime | ✅ Phase 4 |
 | `repomix` | repo | MIT | Node binary | the most complete pack of the three | ✅ Phase 4 — subprocess |
 | `code2prompt` | repo | MIT | Rust binary | speed: 103 ms against 564 and 1,082 | ✅ Phase 4 — subprocess |
-| llmlingua2 | compress | MIT | `compress` | prompt compression | Phase 6 |
-| pymupdf4llm, pandoc, libreoffice | documents | **AGPL-3.0 / GPL-2.0+ / MPL-2.0** | isolated | — | Phase 7 — **subprocess only, never imported** |
+| llmlingua2 | compress | MIT | `compress` | prompt compression | 🟨 Phase 6 — implemented, success path unverified |
+| `pymupdf4llm` | documents | **AGPL-3.0** | separate venv | **the most faithful backend here** — 0.848 on `tables.pdf` | ✅ Phase 7 — **never imported** |
+| `pandoc` | documents | **GPL-2.0-or-later** | system binary | EPUB, LaTeX, RST, Org and thirty more | ✅ Phase 7 — **never imported** |
+| `libreoffice` | documents | MPL-2.0 | system binary | legacy `.doc` / `.xls` / `.ppt` | ✅ Phase 7 — subprocess (C++, not a licence issue) |
 | marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | install docs only | GPU tier | Phase 9 |
 
 **What these backends do not do.** None does OCR, so a scanned PDF converts to
 an empty document — loudly, with a warning, never silently. That is Phase 9.
 
-**On the 70–90% figures above:** Phase 3 measured our own equivalent on our own
-fixture and got **−77.1%**, which is inside that band. That number is in **UTF-8
-bytes**, not model tokens, because the environment it was measured in cannot
-reach either tokenizer vocabulary host; the token figure is asserted by a
-`network`-marked test and is **not yet published anywhere**. See
-[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), which explains why the two are
-different claims and what a single synthetic fixture can and cannot support.
+**On the 70–90% figures above:** we measured our own equivalent on our own
+fixture and got **−83.1%**, in **real `o200k_base` tokens** — 3,716 → 629 —
+which is inside that band. Read out of a captured CI log (run 85), not computed
+locally: the development environment cannot reach a tokenizer vocabulary host.
+
+**Two units appear in this repository and they are not interchangeable.** Most
+figures here are UTF-8 bytes, because that is what can be measured offline, and
+the byte figure is *optimistic*. On tabular data the gap is large: CSV saves
+60.2% of JSON's bytes and **36.0%** of its tokens. The two units do not even
+rank the five serialisation formats in the same order.
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) has the numbers, the runs they came
+from, and what one synthetic fixture can and cannot support.
+
+**Copyleft tools are never imported.** `pymupdf4llm` (AGPL) and `pandoc` (GPL)
+run out of process, and that is enforced by four independent checks rather than
+by convention — including one that has been watched catching a deliberately
+introduced violation. `tokenmill backends --show-licenses` audits your
+environment. See [`docs/LICENSES.md`](docs/LICENSES.md).
 
 [`docs/BACKENDS.md`](docs/BACKENDS.md) documents what each backend gets **wrong**
 on our fixtures, quoted from real output: pdfplumber interleaving two-column

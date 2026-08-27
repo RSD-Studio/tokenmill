@@ -9,6 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 7 — isolation layer and licence enforcement
+
+- **Licence enforcement is code, not a convention.**
+  `tokenmill.core.licensing` reads every installed distribution's own metadata
+  and classifies it; `tests/unit/test_license_isolation.py` makes four
+  independent checks — that every backend declares a tier, that no copyleft
+  distribution is installed, that no module in the package *mentions* a
+  copyleft module (parsed, not executed, and seeing imports inside functions),
+  and that after a copyleft backend converts a document its module is not in
+  `sys.modules`.
+- **The check has been seen to catch a real violation.** `import pymupdf4llm`
+  added by hand inside a real in-process adapter failed three of the four
+  checks; the output is in `PROGRESS.md` and the violation was reverted.
+- **`tokenmill backends --show-licenses`** audits the environment and exits
+  non-zero if a copyleft package is installed.
+- **`SubprocessConverter`** — binary discovery beyond `PATH`, version probing
+  recorded as provenance, an allow-list of every program tokenmill may launch,
+  and a workspace removed on every exit path including timeout and failure.
+- **`ServiceConverter`** — the HTTP mode, proved against a real local server.
+  No service backend is registered; Phase 9 registers the concrete ones.
+- **Three isolated backends:**
+  - `pymupdf4llm` (AGPL-3.0) in a **separate interpreter**, never installed
+    alongside tokenmill. On `tables.pdf` it is both cheaper than pdfplumber
+    (553 vs 599 bytes) and the most faithful backend in the corpus (0.848).
+  - `pandoc` (GPL-2.0-or-later) for EPUB, LaTeX, RST, Org and thirty more.
+  - `libreoffice` (MPL-2.0, isolated only because it is C++) for the legacy
+    `.doc` / `.xls` / `.ppt` formats.
+- **`docs/LICENSES.md` completed** with the tiering rules and the reasoning.
+
+### Fixed
+
+- **A licence classifier defect, found by reading real metadata.** PyMuPDF4LLM
+  states `Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License`.
+  The disjunction rule took the most permissive branch — correct for `tld`,
+  wrong for a branch that must be *bought* — and split on a case-sensitive
+  `OR`, so the SPDX spelling of that licence classified as **permissive**. Both
+  fixed, with regression tests.
+- **Repomix timed out on Windows CI.** `options.timeout_s` is a conversion
+  budget and the `npx` launcher was spending it on an npm install first. The
+  fetch now has its own allowance.
+- **A corrupt PDF through an isolated backend** reported
+  `Traceback (most recent call last):` as its error message. Now `CorruptSource`
+  with the informative last line, matching the other PDF backends.
+
+### Changed
+
+- **`PostProcessor.in_default_chain` replaces `destructive` as the mechanism**
+  (breaking, with owner sign-off). `destructive` is now honest documentation of
+  what a step can lose, and `chunk` declares `destructive = False` and
+  `in_default_chain = False` — both true, which the old single flag could not
+  express. `default_chain()` reads **both**, so a third-party post-processor
+  written against the Phase 1 contract still behaves exactly as it did.
+- **One pipe-table parser** (defect N3). `fidelity/markdown.py` and
+  `formats/markdown_table.py` had separate scanners; they are now one
+  `scan_tables` with the strictness difference expressed as `unescape=`.
+- **`docs/BENCHMARKS.md` publishes model-token figures** for the first time,
+  read out of captured CI logs. See below.
+
+### Measured
+
+- **The headline figure, in the unit the claim is about** (defect D3, open
+  since Phase 3, now closed). `boilerplate.html` through `trafilatura`:
+  **3,716 → 629 `o200k_base` tokens, −83.1%**, inside `RESEARCH.md`'s 70–90%
+  band. From CI run 85.
+- **The byte proxy is optimistic, and by a lot.** On the `tables.pdf` table,
+  CSV saves 60.2% of JSON's *bytes* and **36.0%** of its *tokens*; TOON saves
+  55.8% and **29.9%**. Neither GetCrux's ~56% nor the TOON repository's 42.6%
+  reproduces on our data in its own unit. From CI run 89.
+- **The two units do not even rank the formats in the same order.** `keyvalue`
+  is 16% smaller than JSON in bytes and 1.8% *more expensive* in tokens.
+
 #### Phase 6 — prompt compression (optional tier, off by default)
 
 > **The success path has never been executed anywhere.** The LLMLingua-2 model

@@ -1,7 +1,9 @@
 # Backends
 
-**Status:** current as of Phase 4. Every backend described here exists and is
-installed by `pip install tokenmill` or one of its extras.
+**Status:** current as of Phase 7. Every backend described here exists. Most are
+installed by `pip install tokenmill` or one of its extras; the three added in
+Phase 7 are **not Python dependencies at all** and are described in
+[The isolated backends](#the-isolated-backends-phase-7) below.
 
 This is the document that keeps the project honest about the tools it wraps.
 Every failure mode below was **observed on our own fixture corpus** and is
@@ -54,12 +56,23 @@ every file is generated, so the observations are reproducible by anyone.
 | [`gitingest`](#gitingest) | `repo` | MIT | permissive | packing a repository with no external runtime | pulls a web-service stack; reconfigures host logging |
 | [`repomix`](#repomix) | binary | MIT | permissive | the category leader's output | needs Node; npx downloads it per run |
 | [`code2prompt`](#code2prompt) | binary | MIT | permissive | speed on a large tree | needs a Rust toolchain to install |
+| [`pymupdf4llm`](#pymupdf4llm--the-best-pdf-converter-here-and-it-costs-the-most-to-reach) | **separate venv** | AGPL-3.0 | **copyleft** | PDF tables and headings; the most faithful backend here | AGPL; a whole interpreter starts per conversion |
+| [`pandoc`](#pandoc--the-long-tail-and-it-silently-drops-document-titles) | binary | GPL-2.0-or-later | **copyleft** | EPUB, LaTeX, RST, Org and thirty more | GPL; drops the DOCX title without `--standalone` |
+| [`libreoffice`](#libreoffice--the-cheapest-output-on-reportdocx-and-the-worst) | binary | MPL-2.0 | permissive | legacy `.doc` / `.xls` / `.ppt` | plain text only: cheapest output, worst fidelity |
 
 Every licence above was read from the **installed package metadata** at the
-moment its adapter was written, not taken from `docs/research/RESEARCH.md`. All
-five are permissive, so all five may be imported into the tokenmill process.
-A licence audit of docling's full 122-package resolution found **no GPL or AGPL
-anywhere in the tree**.
+moment its adapter was written, not taken from `docs/research/RESEARCH.md`. That
+rule earned its keep in Phase 7: `RESEARCH.md` records PyMuPDF4LLM as AGPL-3.0,
+and the installed package says `Dual Licensed - GNU AFFERO GPL 3.0 or Artifex
+Commercial License` — a difference that broke the licence classifier until it
+was read properly. See [`docs/LICENSES.md`](LICENSES.md).
+
+The eleven permissive backends may be imported into the tokenmill process; the
+two copyleft ones never are, enforced by
+`tests/unit/test_license_isolation.py` rather than by convention. A licence
+audit of docling's full 122-package resolution found **no GPL or AGPL anywhere
+in the tree**, and `tokenmill backends --show-licenses` re-runs that audit on
+demand.
 
 ### Which one runs by default
 
@@ -68,12 +81,12 @@ module and the evidence is below.
 
 | Format | Order (best first) | Why |
 |---|---|---|
-| `pdf` | pdfplumber → kreuzberg → markitdown → pypdf → docling | Tables first, then reading order. docling last: its PDF path downloads models. |
-| `docx` | docling → markitdown → kreuzberg | Only docling nests the whole hierarchy correctly. |
+| `pdf` | pdfplumber → kreuzberg → markitdown → pypdf → docling → pymupdf4llm | Tables first, then reading order. docling and pymupdf4llm last **despite being better**: one downloads models, the other needs an environment the user has to build. Both are reachable by name. |
+| `docx` | docling → markitdown → kreuzberg → pandoc → libreoffice | Only docling nests the whole hierarchy correctly. The two system binaries last: auto-selection must never land a user on a tool they have not installed while a Python one would have worked. |
 | `pptx` | markitdown → docling → kreuzberg | Only markitdown keeps speaker notes. |
 | `xlsx` | markitdown → kreuzberg → docling | docling drops the sheet names. |
 | `csv` | kreuzberg → markitdown → docling | kreuzberg renders a Markdown table. |
-| `html` | trafilatura → readability → markdownify_html → markitdown → kreuzberg → docling → crawl4ai | Extraction first; the whole-page converter next; the browser last so auto-selection never starts one. |
+| `html` | trafilatura → readability → markdownify_html → markitdown → kreuzberg → docling → pandoc → crawl4ai | Extraction first; the whole-page converter next; then the two that need something installed; the browser last so auto-selection never starts one. |
 | `url` | crawl4ai only | Every other web backend is handed the page the pipeline already fetched. |
 | `repo` | gitingest → repomix → code2prompt | The one that needs no external runtime first. The other two are reachable by name. |
 
@@ -1090,6 +1103,148 @@ One number governs the whole list: **the default chain is exactly
 `normalize_whitespace`.** Everything else here is destructive and off unless
 asked for. That is enforced over the whole registry rather than per processor,
 because the failure mode is the *next* post-processor forgetting the flag.
+
+---
+
+## The isolated backends (Phase 7)
+
+Three backends that never enter the tokenmill process. Two are isolated because
+of their licence and one because it is not Python;
+[`docs/LICENSES.md`](LICENSES.md) keeps that distinction and it matters.
+
+Every claim below is asserted by `tests/integration/test_isolated_backends.py`.
+
+### `pymupdf4llm` — the best PDF converter here, and it costs the most to reach
+
+AGPL-3.0 (dual-licensed with a commercial Artifex option nobody here has
+bought), so it runs in **an interpreter of its own** and is never imported.
+It is not a tokenmill extra and must not become one — see `LICENSES.md`.
+
+```console
+$ python -m venv ~/.local/share/tokenmill/pymupdf4llm
+$ ~/.local/share/tokenmill/pymupdf4llm/bin/pip install pymupdf4llm
+```
+
+**It is worth it.** On `tables.pdf`, 2026-08-26, `--tokenizer bytes`:
+
+| Backend | Bytes | Fidelity |
+|---|---|---|
+| `kreuzberg` | **466** | 0.500 |
+| `pypdf` | 481 | 0.333 |
+| **`pymupdf4llm`** | 553 | **0.848** |
+| `pdfplumber` | 599 | 0.667 |
+| `markitdown` | 769 | 0.606 |
+
+It beats pdfplumber on **both** axes — cheaper *and* more faithful — which no
+other pair in this corpus manages, and it is the most faithful backend on the
+fixture built to punish table-flattening.
+
+**What it destroys**
+
+*Nothing that another backend keeps*, on this corpus, which is unusual enough to
+say plainly. Its documented failures are absences rather than damage:
+
+* **A scan with no text layer produces nothing.** `scanned.pdf` returns empty;
+  the adapter raises rather than reporting a 100% token reduction, which would
+  be the best-looking number on the benchmarks page and a lie. PyMuPDF4LLM does
+  no OCR.
+* **A damaged PDF reports the damage.** `corrupt.pdf` raises `CorruptSource`
+  with the child's own message, matching what pdfplumber, pypdf and kreuzberg
+  say about the same file. It did not at first: the raw failure read
+  `Traceback (most recent call last):`, because the shared subprocess helper
+  takes the *first* line of stderr and a Python child's first line is always
+  that. The adapter now takes the last.
+
+**The cost is start-up.** 1,758 ms against pdfplumber's 1,092 ms and pypdf's
+73 ms on the same file — a whole interpreter starts per conversion. Phase 10
+should measure whether a persistent child is worth it; the plan says measure
+first, and this is the measurement that would justify it.
+
+### `pandoc` — the long tail, and it silently drops document titles
+
+GPL-2.0-or-later, so subprocess only. Read from
+`/usr/share/doc/pandoc/copyright` of `pandoc 3.1.3+ds-2`; note that
+`pandoc --version` does **not** name a licence, so it is not a source for one.
+
+Pandoc is here for its reader set — EPUB, LaTeX, reStructuredText, Org, RTF,
+DocBook and about thirty more — and not because it is better than MarkItDown or
+Kreuzberg on the formats they already cover. On `report.docx` it lands within
+1% of both, and 3× faster than MarkItDown.
+
+**What it destroys**
+
+* **The document title, unless `--standalone` is passed.** Pandoc's DOCX reader
+  treats a Title-styled paragraph as document *metadata*, not body text, and
+  discards metadata when the output is a fragment. `report.docx` came back with
+  "Context Efficiency Report" simply missing, where MarkItDown keeps it. The
+  adapter passes `--standalone`, which costs 42 bytes (3,525 → 3,567) and emits
+  the title as a YAML block that `strip_frontmatter` can remove.
+
+  **Fidelity scored 0.841 either way.** The metric has no component for metadata
+  loss — defect N8 — so nothing measured this decision; a test does instead. If
+  `--standalone` is ever removed as a saving, that test fails and says why.
+* **It cannot read PDF at all.** Pandoc writes PDF and does not read it, so the
+  format is not claimed and the user gets a format list rather than a Pandoc
+  error about a file it never opened.
+
+The adapter asks for `--to gfm` rather than Pandoc's own `markdown` dialect,
+which emits grid tables and fenced divs nothing else here produces. Comparing a
+grid table against a pipe table would be a comparison of dialects.
+
+### `libreoffice` — the cheapest output on `report.docx`, and the worst
+
+MPL-2.0 and **permissive**. It is out of process because it is a 400 MB C++
+application, exactly as `repomix` and `code2prompt` are, and that carries no
+licence meaning.
+
+Here for the legacy Office formats nothing else reads: `.doc`, `.xls`, `.ppt`,
+`.rtf`, `.wpd`, plus ODF.
+
+**What it destroys — and this is the clearest row in the whole corpus**
+
+The `txt:Text` filter is exactly that. On `report.docx`, 2026-08-26,
+`--tokenizer bytes`:
+
+| Backend | Bytes | Fidelity |
+|---|---|---|
+| **`libreoffice`** | **3,418** | **0.375** |
+| `kreuzberg` | 3,472 | 0.614 |
+| `markitdown` | 3,494 | **0.841** |
+| `pandoc` | 3,525 | 0.841 |
+
+**It produces the cheapest output and the worst.** Every heading, every table
+and every list marker is gone. A benchmark sorted by size would recommend it,
+which is precisely why `compare` is not sorted by size and why the GUI must not
+undo that.
+
+**Three things about running it, all found here rather than read about**
+
+* **It exits `0` when it converts nothing.** On a document it cannot load it
+  prints `Error: source file could not be loaded` to stderr and returns success.
+  The adapter checks for the output file, never the exit code.
+* **Filters are a separate install from the binary.** This project's own
+  container had `libreoffice-core` without `libreoffice-writer`: `soffice` on
+  `PATH`, exiting zero, converting nothing. The availability probe cannot see
+  that — a filter set has no predictable path — so it surfaces as a conversion
+  failure carrying `apt install libreoffice-writer`.
+* **The user profile is per-process and not optional.** LibreOffice refuses to
+  run against a profile already in use, so a shared one would break the moment a
+  user had LibreOffice open or two conversions overlapped — which Phase 8's
+  batch queue does by design. Every run gets a private profile inside its
+  workspace.
+
+Without a JRE it warns `failed to launch javaldx` and converts fine; the adapter
+surfaces that as a warning saying text extraction is unaffected, rather than
+swallowing it or failing on it.
+
+### What the isolation layer is not
+
+**It is not a security boundary.** There is no sandboxing: no resource limits,
+no filesystem confinement, no network namespace. A tool run through it has the
+same access the user does. It is a *licence and language* boundary, and nothing
+here should be read as claiming more.
+
+---
 
 ## `normalize_whitespace` — the only one that runs by default
 

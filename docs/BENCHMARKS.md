@@ -45,11 +45,38 @@ interchangeable**.
 The development sandbox these adapters were written in cannot reach either
 tokenizer vocabulary host — `openaipublic.blob.core.windows.net` and
 `huggingface.co` are both denied by an egress policy, re-probed and still denied
-on 2026-08-22. **So every figure below is in bytes**, and the figures the
-literature quotes are in tokens.
+on 2026-08-26. **Most figures below are therefore in bytes.** Where a token
+figure appears, it was read out of a captured CI log and the run is named.
 
-They are close for English prose and they are different claims. A byte
-percentage is not published as a token percentage anywhere in this repository.
+### The byte proxy is optimistic, and now we know by how much
+
+Until Phase 7 this section said the two units "are close for English prose".
+That was a reasonable assumption and it is **wrong for tabular data**, which is
+the first thing CI measured once it could. On the 6×5 table from `tables.pdf`
+(run 89, commit `78f7615`):
+
+| | CSV vs JSON | TOON vs JSON |
+|---|---|---|
+| in **bytes** | −60.2% | −55.8% |
+| in **`o200k_base` tokens** | **−36.0%** | **−29.9%** |
+| the proxy overstates by | 24 points | 26 points |
+
+**And the two units do not even rank the formats in the same order.**
+
+```
+bytes : csv, toon, markdown, keyvalue, json
+tokens: csv, toon, markdown, json,     keyvalue
+```
+
+`keyvalue` is 456 bytes against JSON's 543 — 16% *smaller* — and costs 167
+tokens against JSON's 164, 1.8% *more*. Its repeated `Backend: `, `License: `
+field labels are cheap in bytes and expensive in tokens, where JSON's
+punctuation runs merge into single BPE tokens.
+
+So: **a byte figure on this page is a lower bound on cost and an upper bound on
+saving, and it is not a reliable ordering.** Asserted by
+`tests/unit/test_formats_tokens_network.py`, which originally asserted the
+opposite and was corrected by the measurement rather than the other way round.
 
 ## Web extraction — `boilerplate.html`
 
@@ -59,6 +86,31 @@ modal, a trending rail, a social rail and two inline scripts. 12,481 bytes, of
 which 4,902 characters are text a reader would see.
 
 Measured 2026-08-22, `--tokenizer bytes`, output read rather than inferred.
+
+### The headline figure, in real model tokens
+
+**This is the number this project exists to state**, and until CI came back to
+life it could not be stated at all — defect D3, open since Phase 3. Read out of
+the captured log of run 85 (commit `14a813b9`, job "Real tokenizers (network)",
+16 passed):
+
+```
+BENCHMARK boilerplate.html trafilatura o200k_base: 3716 -> 629 tokens (0.8307 reduction)
+BENCHMARK boilerplate.html markdownify_html o200k_base: 0.5231 reduction
+```
+
+**`boilerplate.html` through `trafilatura`: 3,716 → 629 `o200k_base` tokens, a
+83.1% reduction.** That sits inside `RESEARCH.md` Category 7's 70–90% band,
+which Cloudflare's 80%, the community's 82% and FormatArc's ~70% define — and
+this time in the same unit those figures use.
+
+Stripping markup without extracting the article gets 52.3%. The 31-point gap
+between them is what "boilerplate removal" is actually worth, and it is
+[larger in tokens than in bytes](#the-byte-proxy-is-optimistic-and-now-we-know-by-how-much)
+(83.1% vs 77.1%) — the opposite direction from the table formats above, because
+discarded HTML markup is token-dense in a way discarded field labels are not.
+
+### The same page, in bytes
 
 | Backend | Output bytes | Byte reduction | Page text removed | Boilerplate markers left | Headings kept | Table |
 |---|---|---|---|---|---|---|
@@ -383,17 +435,34 @@ none where there is none.
 
 ## Serialisation formats — the same table, five ways
 
-**Measured 2026-08-24**, `--tokenizer bytes`, the 6×5 table from `tables.pdf` as
-recovered by `pdfplumber`. Every figure below equals `wc -c` on the file
-`tokenmill compare --write` produced, and a test asserts that equality.
+The 6×5 table from `tables.pdf` as recovered by `pdfplumber`.
 
-| Format | Bytes | vs cheapest | vs JSON |
-|---|---|---|---|
-| `csv` | **216** | base | **−60%** |
-| `toon` | 240 | +11% | **−56%** |
-| `markdown` | 332 | +54% | −39% |
-| `keyvalue` | 456 | +111% | −16% |
-| `json` | 543 | +151% | base |
+**Bytes measured 2026-08-24**; every byte figure equals `wc -c` on the file
+`tokenmill compare --write` produced, and a test asserts that equality.
+**Tokens measured in CI run 89** (commit `78f7615`, job "Real tokenizers
+(network)"), read out of the captured log rather than computed here — the
+development sandbox cannot reach a tokenizer vocabulary.
+
+| Format | Bytes | vs JSON (bytes) | **`o200k_base` tokens** | **vs JSON (tokens)** |
+|---|---|---|---|---|
+| `csv` | **216** | −60.2% | **105** | **−36.0%** |
+| `toon` | 240 | −55.8% | 115 | −29.9% |
+| `markdown` | 332 | −38.9% | 130 | −20.7% |
+| `keyvalue` | 456 | −16.0% | 167 | **+1.8%** |
+| `json` | 543 | base | 164 | base |
+
+The raw lines those token figures were read from:
+
+```
+BENCHMARK tables.pdf pdfplumber format=csv o200k_base: 105 tokens (-0.3598 vs json), 216 bytes
+BENCHMARK tables.pdf pdfplumber format=toon o200k_base: 115 tokens (-0.2988 vs json), 240 bytes
+BENCHMARK tables.pdf pdfplumber format=markdown o200k_base: 130 tokens (-0.2073 vs json), 332 bytes
+BENCHMARK tables.pdf pdfplumber format=keyvalue o200k_base: 167 tokens (+0.0183 vs json), 456 bytes
+BENCHMARK tables.pdf pdfplumber format=json o200k_base: 164 tokens (+0.0000 vs json), 543 bytes
+```
+
+**`keyvalue` is the row worth staring at.** It is 16% smaller than JSON and
+costs 1.8% *more*. Nothing in a byte measurement could have told you that.
 
 Reproduce with:
 
@@ -404,22 +473,34 @@ $ tokenmill compare tests/fixtures/tables.pdf --backends pdfplumber \
 
 ### How these compare to the published figures
 
-`RESEARCH.md` Category 7 collects the defensible measurements. Ours land beside
-them, in bytes:
+`RESEARCH.md` Category 7 collects the defensible measurements. **This is the
+first time they can be compared against our own data in the unit they are
+actually stated in**, and the answer is that they do not reproduce:
 
-| Claim | Source | Ours (bytes) |
-|---|---|---|
-| CSV uses ~56% fewer tokens than JSON | GetCrux, 10,000 tabular questions | **−60%** |
-| TOON uses 42.6% fewer tokens than JSON | the TOON repo's own benchmark | **−56%** |
-| TOON uses 22% fewer than JSON on aligned data | Matveev, arXiv:2603.03306 | −56% |
+| Claim | Source | Ours (tokens) | Ours (bytes) |
+|---|---|---|---|
+| CSV uses ~56% fewer tokens than JSON | GetCrux, 10,000 tabular questions | **−36.0%** | −60.2% |
+| TOON uses 42.6% fewer tokens than JSON | the TOON repo's own benchmark | **−29.9%** | −55.8% |
+| TOON uses 22% fewer than JSON on aligned data | Matveev, arXiv:2603.03306 | **−29.9%** | −55.8% |
 
-**Do not read that as confirmation.** Three reasons, and all three matter:
+Two of the three claims are well above what we measure; the third —
+Matveev's more conservative 22% — is the only one our figure clears.
 
-1. **These are bytes.** The published figures are model tokens. A byte
-   percentage is not a token percentage — see Units at the top of this page.
-2. **One 6×5 table is not a corpus.** TOON's advantage comes from declaring the
+Note what would have happened without this. The byte column sits *above* two of
+the three published figures, so a reader comparing it with them would have
+concluded that tokenmill reproduces and slightly exceeds the literature. In the
+unit the literature actually uses, it does not come close.
+
+**Do not read the token column as a refutation either.** Three reasons, and all
+three matter:
+
+1. **One 6×5 table is not a corpus.** TOON's advantage comes from declaring the
    field names once instead of per row, so it *grows* with row count and
    vanishes at one row. A wider or shallower table moves this number a lot.
+2. **Nobody else's corpus is ours.** GetCrux measured 10,000 tabular questions;
+   we measured one table generated by our own fixture script. That the two
+   disagree is what you would expect, and it is a reason to publish ours as ours
+   rather than to correct theirs.
 3. **The comparison is only fair because of a rule that had to be built.** A
    cell is written as a bare number exactly when that renders back to the
    identical string, so `9.99` is a number in JSON and TOON while `05` stays a

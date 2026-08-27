@@ -795,23 +795,70 @@ and `TokenMeter` catches it explicitly for the reason given above.
 
 ---
 
-## Isolation (design now, implementation in Phase 7)
+## Isolation, and what it is not
 
-Nothing in Phase 1 runs out of process, but the model is already in place so
-that Phase 7 adds an implementation rather than a concept:
+`src/tokenmill/backends/isolated/`. Phase 1 designed the model, Phase 7
+implemented it.
+
+**Two different reasons put a backend out of process**, and conflating them is
+the mistake this package's docstring exists to prevent:
+
+- **Licence.** AGPL and GPL tools are never imported (`CONTRIBUTING.md` rule 2).
+  `pymupdf4llm` and `pandoc`.
+- **Language.** A C++ application or a Node program cannot be imported at any
+  price. `libreoffice`, `repomix`, `code2prompt` — all permissive, and their
+  isolation carries no licence meaning at all.
+
+The second group is useful practice: getting the isolation wrong on an MIT tool
+costs a bug, not a licence problem.
+
+### What enforces it
 
 - `IsolationMode` is `IN_PROCESS`, `SUBPROCESS` or `SERVICE`.
-- `BackendInfo` refuses the illegal combination (non-permissive + in-process) at
-  construction time, and the registry refuses it again at registration.
-- The conformance suite asserts, for every installed backend, that a
-  non-permissive licence implies out-of-process isolation. A copyleft adapter
-  added in any later phase is caught by a test that already exists.
-- `BackendFailed` already carries a `stderr` field, which is what a subprocess
-  backend needs to report a failure usefully.
+- `BackendInfo.__post_init__` refuses the illegal combination (non-permissive +
+  in-process) at construction, and the registry refuses it again at
+  registration. A violating adapter cannot be built.
+- `core/licensing.py` reads every installed distribution's own metadata and
+  classifies it, and `tests/unit/test_license_isolation.py` makes four
+  independent checks — declaration, environment, **static imports** and runtime
+  `sys.modules`. The static one is the load-bearing one, because it works on a
+  machine where the copyleft package was never installed, which is every machine
+  CI runs on. `docs/LICENSES.md` has the reasoning.
 
-Phase 7 adds `SubprocessConverter`: binary discovery, version probe, argument
-construction as a list (never `shell=True`), timeout and kill, temp-file
-lifecycle, and stderr capture.
+### `SubprocessConverter`
+
+Binary discovery beyond `PATH` (the macOS LibreOffice bundle is never on it), a
+version probe recorded as provenance, an **allow-list** of every program
+tokenmill may launch, list arguments with `shell=False` always, timeout and
+kill, and a workspace removed on every exit path including timeout and failure.
+
+The allow-list is what makes isolation *enforced* rather than declared: without
+one, "this AGPL tool runs out of process" is a claim an adapter makes about
+itself. With one, the set of programs tokenmill will start is a single
+reviewable table, and an adapter naming anything else fails before the process
+starts.
+
+### `ServiceConverter`
+
+The HTTP mode, and the pattern Phase 9's GPU backends subclass. Nothing is
+auto-discovered and nothing is auto-started: a service backend is unavailable
+until the user says where it is, because a converter that probes localhost on a
+range of ports is doing something nobody asked for. A probe is a real request,
+so "available" means it answered. Talking to it needs `--allow-network` even on
+loopback. stdlib `urllib` only, so a service adapter is not what drags an HTTP
+client into the core install.
+
+No service backend is registered, and a test asserts that stays true: a row for
+a container nobody is running is a permanently-unavailable backend in every
+user's listing.
+
+### What the isolation layer is not
+
+**It is not a security boundary.** No sandboxing, no resource limits, no
+filesystem confinement, no network namespace. A tool run through it has the same
+access the user does. It is a licence and language boundary, and no document in
+this repository should be read as claiming more. Output is also buffered whole
+rather than streamed. Both are recorded in `PROGRESS.md` under deferred work.
 
 ---
 

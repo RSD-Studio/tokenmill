@@ -119,35 +119,139 @@ class TestTheFormatComparisonInRealTokens:
                 f"is a finding to investigate before publishing, not a number to publish"
             )
 
-    def test_json_is_the_most_expensive_and_csv_the_cheapest(
+    def test_csv_is_the_cheapest_in_both_units(self, comparison: FormatComparison) -> None:
+        """The one ordering claim that either unit safely supports."""
+        by_tokens = [(r.tokens.value, r.format_id) for r in comparison.rows if r.tokens]
+        by_bytes = [(r.characters or 0, r.format_id) for r in comparison.rows]
+
+        assert min(by_tokens)[1] == "csv"
+        assert min(by_bytes)[1] == "csv"
+
+    def test_the_byte_ordering_is_not_a_proxy_for_the_token_ordering(
         self, comparison: FormatComparison
     ) -> None:
-        """The byte ordering held in tokens, or the byte ordering proved nothing."""
-        counted = [
-            (row.tokens.value, row.format_id) for row in comparison.rows if row.tokens is not None
-        ]
+        """**The finding**, asserted as the finding rather than papered over.
 
-        assert min(counted)[1] == "csv"
-        assert max(counted)[1] == "json"
+        This file originally asserted that the two orderings agree, because that
+        was the honest hypothesis and the byte figures were all this project
+        could produce. CI run 89 falsified it, which is what the test was for:
 
-    def test_the_byte_ordering_and_the_token_ordering_agree(
-        self, comparison: FormatComparison
-    ) -> None:
-        """Whether the locally-measurable proxy tracks the real thing.
+            bytes : csv, toon, markdown, keyvalue, json
+            tokens: csv, toon, markdown, json,     keyvalue
 
-        Every format figure recorded in `PROGRESS.md` and most of
-        `docs/BENCHMARKS.md` is in bytes because that is all this sandbox can
-        produce. If the two orderings ever disagree, those pages stop being a
-        usable proxy and must say so rather than being quietly trusted.
+        `keyvalue` is 456 bytes against JSON's 543 — **16% smaller** — and costs
+        167 tokens against JSON's 164, **1.8% more**. Its repeated `Backend: `,
+        `License: ` field labels are cheap in bytes and expensive in tokens,
+        where JSON's punctuation-heavy syntax merges into single BPE tokens.
+
+        So the assertion is inverted: the disagreement is now the documented
+        state, and this fails if a future tiktoken release makes the two agree —
+        at which point `docs/BENCHMARKS.md` gets to relax its warning rather
+        than keep one that has stopped being true.
         """
-        counted = [r for r in comparison.rows if r.tokens is not None and r.characters is not None]
-        assert len(counted) == len(FORMATS)
+        by_tokens = [r.format_id for r in sorted(comparison.rows, key=_tokens)]
+        by_bytes = [r.format_id for r in sorted(comparison.rows, key=_characters)]
 
-        by_tokens = [r.format_id for r in sorted(counted, key=lambda r: r.tokens.value)]  # type: ignore[union-attr]
-        by_bytes = [r.format_id for r in sorted(counted, key=lambda r: r.characters or 0)]
-
-        assert by_tokens == by_bytes, (
-            f"formats rank {by_tokens} in tokens but {by_bytes} in bytes; the byte "
-            f"figures published in docs/BENCHMARKS.md are not a proxy for the token "
-            f"figures and the page must say so"
+        assert by_tokens != by_bytes, (
+            "the byte and token orderings now agree, where run 89 recorded them "
+            "disagreeing at the json/keyvalue boundary. That is good news and "
+            "docs/BENCHMARKS.md's Units section should be relaxed to match"
         )
+        assert by_tokens[:3] == by_bytes[:3] == ["csv", "toon", "markdown"], (
+            "the disagreement has spread beyond the json/keyvalue pair; "
+            "re-measure before publishing anything from either unit"
+        )
+
+    def test_the_published_claims_do_not_reproduce_on_our_data(
+        self, comparison: FormatComparison
+    ) -> None:
+        """The first time TOON's own figure could be checked in its own unit.
+
+        `RESEARCH.md` Category 7 carries GetCrux's "CSV uses ~56% fewer tokens
+        than JSON" and the TOON repository's "42.6% fewer tokens than JSON".
+        Measured on our 6x5 table in `o200k_base`, CSV saves **36.0%** and TOON
+        **29.9%** — both well short.
+
+        That is not a refutation: one 6x5 table is not a corpus, and TOON's
+        advantage grows with row count because its header is declared once.
+        It is a reason not to restate either claim as ours, which
+        `CONTRIBUTING.md` rule 4 forbids anyway.
+
+        Asserted as a band rather than a point so a tiktoken release does not
+        break it, and wide enough that only a real change moves it.
+        """
+        by_id = {r.format_id: r for r in comparison.rows}
+        json_tokens = by_id["json"].tokens
+        assert json_tokens is not None
+
+        savings = {}
+        for name in ("csv", "toon"):
+            tokens = by_id[name].tokens
+            assert tokens is not None
+            savings[name] = 1 - tokens.value / json_tokens.value
+
+        assert 0.30 <= savings["csv"] <= 0.45, (
+            f"CSV saves {savings['csv']:.1%} of JSON's tokens; run 89 measured "
+            f"36.0%. GetCrux's ~56% is a different corpus and is not ours to quote"
+        )
+        assert 0.22 <= savings["toon"] <= 0.38, (
+            f"TOON saves {savings['toon']:.1%} of JSON's tokens; run 89 measured "
+            f"29.9%, against the TOON repository's own 42.6%. If this has moved, "
+            f"docs/BENCHMARKS.md's comparison table is out of date"
+        )
+
+    def test_the_byte_proxy_overstates_the_saving_and_by_how_much(
+        self, comparison: FormatComparison
+    ) -> None:
+        """Every byte figure in this repository is optimistic, and this says so.
+
+        CSV saves 60.2% of JSON's *bytes* and 36.0% of its *tokens*: the proxy
+        overstates by 24 points. `PROGRESS.md` and most of
+        `docs/BENCHMARKS.md` are in bytes because that is all the development
+        sandbox can produce, and this is the size of the error that carries.
+        """
+        by_id = {r.format_id: r for r in comparison.rows}
+        json_row = by_id["json"]
+        csv_row = by_id["csv"]
+        assert json_row.tokens is not None
+        assert csv_row.tokens is not None
+        assert json_row.characters is not None
+        assert csv_row.characters is not None
+
+        in_tokens = 1 - csv_row.tokens.value / json_row.tokens.value
+        in_bytes = 1 - csv_row.characters / json_row.characters
+
+        assert in_bytes > in_tokens, (
+            "the byte figure no longer flatters the token figure; "
+            "docs/BENCHMARKS.md's Units section says it does"
+        )
+        assert in_bytes - in_tokens > 0.15, (
+            f"the gap between the byte saving ({in_bytes:.1%}) and the token "
+            f"saving ({in_tokens:.1%}) has narrowed to {in_bytes - in_tokens:.1%}; "
+            f"run 89 measured 24 points and the docs quote that"
+        )
+
+
+def _tokens(row: object) -> int:
+    """Sort key: a row's token count.
+
+    Args:
+        row: A :class:`~tokenmill.core.compare.FormatRow`.
+
+    Returns:
+        Its token count, or -1 when it has none.
+    """
+    tokens = getattr(row, "tokens", None)
+    return tokens.value if tokens is not None else -1
+
+
+def _characters(row: object) -> int:
+    """Sort key: a row's byte length.
+
+    Args:
+        row: A :class:`~tokenmill.core.compare.FormatRow`.
+
+    Returns:
+        Its length, or -1 when it has none.
+    """
+    return getattr(row, "characters", None) or -1

@@ -551,6 +551,56 @@ Pick an `order` inside the band that matches what you do; `docs/ARCHITECTURE.md`
 lists them. Two post-processors sharing an order is not an error but does make
 the chain depend on id ordering, so avoid it.
 
+### If your tool is copyleft or is not Python, it runs out of process
+
+Subclass `SubprocessConverter` rather than `BaseConverter`, declare which
+allow-listed program you launch, and write one method:
+
+```python
+from tokenmill.backends.isolated.base import SubprocessConverter
+
+class MyToolConverter(SubprocessConverter):
+    info = BackendInfo(
+        id="mytool",
+        ...,
+        license="GPL-3.0-or-later",
+        license_tier=LicenseTier.COPYLEFT,   # BackendInfo refuses this
+        isolation=IsolationMode.SUBPROCESS,  # with IN_PROCESS
+    )
+    executable = "mytool"   # must be a key of ALLOWED_EXECUTABLES
+
+    def run_conversion(self, source, options, context, workspace) -> str:
+        result = self.run(
+            ["--to", "markdown", self.path_argument(source.path)],
+            options=options,
+            cwd=workspace,
+        )
+        return result.stdout
+```
+
+You get discovery, the availability probe, version probing, the timeout, and a
+`workspace` directory removed on every exit path — including when your
+conversion raises and when the child times out.
+
+**Add your program to `ALLOWED_EXECUTABLES` first**, with an install hint and
+the platform search paths. An executable that is not in that table cannot be
+launched, and that is the point: it makes the set of programs tokenmill will
+start one reviewable list rather than a claim each adapter makes about itself.
+
+**Read the licence from the installed package, at the moment you write the
+adapter.** Not from `RESEARCH.md`, not from a README. Phase 7 found
+PyMuPDF4LLM's real metadata says `Dual Licensed - GNU AFFERO GPL 3.0 or Artifex
+Commercial License` where `RESEARCH.md` says "AGPL-3.0" — and the difference
+broke the licence classifier.
+
+**A copyleft Python package does not go in an extra.** Installing it here makes
+it importable here, which the licence tests correctly reject. Give it an
+environment of its own and find an interpreter for it, as
+`pymupdf4llm_pdf.py` does.
+
+**For an HTTP service**, subclass `ServiceConverter` and write `call_service`.
+Take the address from `--extra <id>_url=` and never guess at one.
+
 ### If your encoder cannot represent something, raise
 
 A `TableEncoder` implements `encode(table)` and `decode(text)`, and the contract
