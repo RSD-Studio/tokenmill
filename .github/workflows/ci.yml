@@ -213,6 +213,60 @@ jobs:
       - name: PDF path (downloads layout models from huggingface.co)
         run: uv run pytest -q -m heavy -rs
 
+  compress:
+    name: Compression (weekly and on demand)
+    # Phase 6's success path has never been executed anywhere. The LLMLingua-2
+    # model lives on huggingface.co, which the development sandbox denies at
+    # its egress proxy, so no compression ratio has ever been produced by this
+    # code. That is the largest verification hole in the repository and this
+    # job is what closes it.
+    #
+    # DOES IT FIT? Yes, and on evidence rather than estimate. The `compress`
+    # extra resolves to 63 packages and about 4.7 GB, including torch. The
+    # docling job beside it installs 122 packages and about 5.2 GB — *more* —
+    # with torch 2.13.0, torchvision and triton, and it passed in run 81 in 85
+    # seconds, models downloaded and all. A smaller install on the same runner
+    # with the same free-disk-space step is not a gamble.
+    #
+    # Same gating as docling: weekly and on demand, never on a push. `schedule`
+    # fires on the default branch only, so a change on a feature branch needs a
+    # manual dispatch against that branch.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+      # Same re-resolution as the docling job, for the same reason: uv.lock
+      # pins the default CUDA torch build, which is several gigabytes of wheels
+      # a CPU-only job never touches. This is the second and last place a
+      # re-resolution is worth the loss of reproducibility.
+      #
+      # It also answers a question pyproject.toml records as UNVERIFIED: whether
+      # the CPU wheel index avoids the seventeen nvidia-* CUDA packages. The
+      # development sandbox could not test it — download.pytorch.org is denied
+      # there — so the install log of this job is the answer.
+      - name: Install with the compress extra, CPU-only torch
+        env:
+          UV_FROZEN: "0"
+          UV_TORCH_BACKEND: cpu
+        run: uv sync --extra dev --extra fixtures --extra compress
+      - name: Report what the compress extra actually pulled in
+        run: |
+          uv pip list | wc -l
+          uv pip list | grep -i nvidia || echo "no nvidia-* packages: the CPU index worked"
+          df -h /
+      # The refusal, error and arithmetic paths already run on every cell. This
+      # is the one that needs the model, and it is the whole point of the job.
+      - name: The success path (downloads the LLMLingua-2 model)
+        run: uv run pytest -q -m compress -rs
+
   clean-core-install:
     name: Clean core install (py${{ matrix.python }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -237,3 +291,39 @@ jobs:
         run: python -c "import tokenmill, sys; print(tokenmill.__version__, sys.version)"
       - name: Report what the core install actually pulled in
         run: python -m pip list
+      # Defect D4, open since Phase 3 and undecided for four phases: core grew
+      # 2.3x when trafilatura arrived and nobody signed the number off. A
+      # reported-but-unenforced figure drifts, so it is a gate.
+      #
+      # 250 MB against 140.6 MB measured on 2026-08-26 by this same script
+      # (40 packages, excluding the pip and setuptools scaffolding a venv ships
+      # regardless; `du` reports 177 MB for the whole venv because it counts
+      # allocated blocks and includes that scaffolding). The
+      # headroom is deliberate: an upstream release adding a few megabytes must
+      # not turn CI red, while anything torch-shaped — torch alone is over
+      # 800 MB — trips it immediately. docs/BENCHMARKS.md carries the
+      # composition and the reasoning.
+      - name: Enforce the core install weight ceiling
+        shell: python {0}
+        run: |
+          import pathlib, sysconfig
+          site = pathlib.Path(sysconfig.get_paths()["purelib"])
+          skip = {"pip", "setuptools", "wheel", "pkg_resources", "_distutils_hack"}
+          total = 0
+          for entry in site.iterdir():
+              if entry.name.split("-")[0].split(".")[0] in skip:
+                  continue
+              if entry.is_file():
+                  total += entry.stat().st_size
+              else:
+                  total += sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+          mb = total / 1_000_000
+          ceiling = 250
+          print(f"core install: {mb:.1f} MB of site-packages (ceiling {ceiling} MB)")
+          if mb > ceiling:
+              raise SystemExit(
+                  f"core is {mb:.1f} MB, over the {ceiling} MB ceiling. "
+                  "The core install stays light, CPU-only and conflict-free "
+                  "(CONTRIBUTING.md rule 1): put the new dependency behind an "
+                  "extra, or raise the ceiling deliberately and say why."
+              )

@@ -433,6 +433,51 @@ honest recommendation is to measure it on your own documents before enabling it.
 (`report.docx` repeats a "detail" paragraph per section) and correctly finds
 none where there is none.
 
+## The core install, and its ceiling
+
+**Defect D4, open since Phase 3 and undecided for four phases, decided here.**
+
+`pip install tokenmill` with no extras, measured 2026-08-26 on Python 3.11:
+
+| | |
+|---|---|
+| Packages | **40** |
+| `site-packages`, excluding pip/setuptools | **140.6 MB** |
+| Whole virtualenv by `du -sh` | 177 MB |
+
+The two size figures are not comparable and both are given because the previous
+review had to correct itself about exactly this: `du` counts allocated blocks
+and includes the pip and setuptools a venv ships regardless, while the CI gate
+sums actual file bytes and skips them. **When this page quotes a core size it
+means the 140.6 MB figure**, because that is the one the gate enforces.
+
+Where the weight is, and it is not where you would guess:
+
+| Package | Size | Arrives via |
+|---|---|---|
+| `babel` | 33 MB | `trafilatura` → `courlan` |
+| `cryptography` | 16 MB | `pdfplumber` → `pdfminer.six`, and `pypdf` |
+| `pillow` + `pillow.libs` | 21 MB | `pdfplumber`, `pypdf` |
+| `lxml` | 12 MB | `trafilatura` and four of its dependencies |
+| `pdfminer` | 9.5 MB | `pdfplumber` |
+| `pypdfium2` | 7.7 MB | `pdfplumber` |
+
+Six direct dependencies — `typer`, `tiktoken`, `markdownify`, `pdfplumber`,
+`pypdf`, `trafilatura` — and a 33 MB localisation library arrives through a URL
+parser three levels down. That is the Phase 3 growth the review flagged, and now
+it has a name.
+
+### The ceiling is 250 MB, and CI enforces it
+
+Set in the `clean-core-install` job, on all nine cells. The headroom over 140.6
+MB is deliberate in both directions: an upstream release adding a few megabytes
+must not turn CI red, and anything torch-shaped trips it immediately — torch
+alone is over 800 MB.
+
+A reported-but-unenforced number drifts, which is what happened for four
+phases. Raising the ceiling is now a deliberate edit with a reason attached
+rather than something that happens by not looking.
+
 ## Serialisation formats — the same table, five ways
 
 The 6×5 table from `tables.pdf` as recovered by `pdfplumber`.
