@@ -1307,10 +1307,14 @@ def _show_licenses(*, as_json: bool) -> None:
     Args:
         as_json: Emit JSON rather than a table.
     """
-    from tokenmill.core.licensing import audit_installed, copyleft_violations
+    from tokenmill.core.licensing import (
+        ALLOWED_COPYLEFT,
+        audit_installed,
+        copyleft_violations,
+    )
 
     records = audit_installed()
-    violations = copyleft_violations(records)
+    violations = copyleft_violations(records, allowed=ALLOWED_COPYLEFT)
 
     if as_json:
         print(
@@ -1346,7 +1350,11 @@ def _show_licenses(*, as_json: bool) -> None:
     print()
     print(f"{len(records)} installed distributions audited from their own metadata.")
     if notable:
-        print(f"{len(notable)} are not simply permissive: {', '.join(r.name for r in notable)}")
+        plural = "is" if len(notable) == 1 else "are"
+        print(
+            f"{len(notable)} {plural} not simply permissive: "
+            + ", ".join(f"{r.name} ({r.expression})" for r in notable)
+        )
     else:
         print("Every one is permissive. No AGPL or GPL package is importable from this process.")
     if violations:

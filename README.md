@@ -339,6 +339,20 @@ rank the five serialisation formats in the same order.
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) has the numbers, the runs they came
 from, and what one synthetic fixture can and cannot support.
 
+**There is a graphical interface.** `tokenmill gui` opens a browser (or a
+desktop window with `--native`) with the token panel as its centrepiece: before,
+after, the delta, the per-stage breakdown, and fidelity beside all of it.
+Unavailable backends are greyed out with an install hint rather than hidden, and
+it works on a core install with no extras. Screenshots in
+[`docs/images/`](docs/images/). `--server` binds every interface for LAN use and
+has **no authentication** — it says so at startup, and that is the only
+protection it has.
+
+```console
+$ pip install "tokenmill[gui]"
+$ tokenmill gui
+```
+
 **Copyleft tools are never imported.** `pymupdf4llm` (AGPL) and `pandoc` (GPL)
 run out of process, and that is enforced by four independent checks rather than
 by convention — including one that has been watched catching a deliberately

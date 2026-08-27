@@ -890,6 +890,77 @@ ratio through the per-stage measurement the pipeline already does rather than
 attaching it to the result. That is a real gap and `PROGRESS.md` records it:
 Phase 8's GUI will want a post-processor to be able to say something.
 
+## The graphical interface
+
+`src/tokenmill/gui/`. Three modules, and the split is the phase's stated risk
+mitigation rather than tidiness: `api.py` is every action the interface can
+perform, `batch.py` is the queue, `app.py` is layout and event handlers and
+nothing else.
+
+### Why NiceGUI
+
+The plan's stack decision, and the reasoning it asked to have recorded:
+
+- **Event-driven, not Streamlit's full-script-rerun model.** A batch queue that
+  updates twenty rows as they finish, and a token counter that moves while a
+  conversion runs, both fight a framework that re-executes the whole script on
+  every interaction.
+- **FastAPI in-process.** The same application can expose an HTTP API and
+  orchestrate the subprocess and service backends Phase 7 added, without a
+  second server. `api.py` is already shaped as that API.
+- **`native` mode is a desktop window without leaving Python.** A PySide6 shell
+  remains a Phase 11 option for offline distribution.
+
+MIT, verified from installed metadata (3.16.0). Its tree brings `docutils`,
+which is the single entry on the copyleft allow-list; `docs/LICENSES.md`
+explains why and a test re-checks the premise.
+
+### The GUI may only call the public library API
+
+The plan names this phase's risk as *GUI logic creeping into the UI layer*. A
+rule in a docstring is a habit, so `tests/unit/test_gui_boundary.py` asserts it
+over the **import graph**: `app.py` may reach `gui.api`, `gui.batch`,
+`core.models` (constructing a `Source` is how input enters the system) and
+`core.registry` (one `supports()` question). Not `core.pipeline`, not
+`backends`, not `post`, not `fidelity`.
+
+The consequence worth stating: `api.py` imports no UI toolkit, so its 35 tests
+run on a core-only install and on every CI cell, rather than only where a
+browser happens to be.
+
+### The batch queue runs one conversion at a time, and that is defect D2
+
+`Pipeline.run` touches process-global state that is not thread-safe — four uses
+of `warnings.catch_warnings`, plus `os.environ`, the root logger's handlers and
+level, and loguru's activation registry. `catch_warnings` saves and restores a
+*module-global* filter list, so two threads inside it interleave their save and
+restore and the loser leaves the process with the other's filters. Under
+`filterwarnings = ["error"]` that turns a forwarded warning into a raised
+exception somewhere else entirely.
+
+So there is one worker thread and conversions are serialised. The interface
+stays responsive because the work is off the event loop; correctness holds
+because only one conversion touches the global state at a time.
+
+A process pool would be safe *and* parallel, and is deliberately not used yet:
+`ConversionResult` would cross a pickle boundary carrying the whole converted
+text, and child-process lifecycle would be a sixth kind of global concern in a
+project already tracking that count as a defect. **Fixing D2 is what unlocks
+parallelism**, and until then batch throughput is bounded by a defect rather
+than by the work.
+
+### `None` is not zero, in the one place users see it most
+
+A binary document has no comparable before-count, so the token panel renders
+`n/a` and the batch aggregate counts it separately. Getting this wrong produced
+a real bug: summing `tokens_after` over every item while summing `tokens_before`
+over only the ones that had one reported a 20-file batch at **−16.7%**, a batch
+that appeared to have grown. `BatchTotals` now carries `comparable` and
+`tokens_produced` so the two questions — "what did this cost" and "what did it
+save" — have separate answers.
+
+---
+
 ## Security posture
 
 Every input document is treated as hostile — several backends will hand

@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 8 — the graphical interface
+
+- **`tokenmill gui`** — NiceGUI over FastAPI. Source panel (drag-and-drop, URL,
+  paste), backend selector with licence and CPU/GPU badges, post-processor
+  options, and the token panel as the centrepiece: before → after, delta,
+  percentage, per-stage breakdown, fidelity beside it.
+- **Batch queue** with per-item status, cancel, and aggregate totals. A 20-file
+  batch of the fixture corpus completes in 3.0 s with the caller's thread free.
+- **Comparison view** rendering `core/compare.py`, with fidelity beside tokens
+  and **not sortable by size** — on `tables.pdf` the cheapest backend is the one
+  that destroys the table.
+- **Graceful degradation**: unavailable backends are greyed out with an install
+  hint, never hidden. Verified against a real core-only virtualenv.
+- **`--server`** for LAN and headless use, off by default. It has **no
+  authentication**; it warns at startup and that is the only mitigation.
+- **Cost estimation takes the user's own rate.** No price table ships and none
+  ever will — asserted by a test on the signature.
+- **The GUI may only call the public library API**, asserted over the import
+  graph rather than as a convention. 35 tests drive every GUI action through
+  that surface with no browser, so they run on every CI cell.
+
 #### Phase 7 — isolation layer and licence enforcement
 
 - **Licence enforcement is code, not a convention.**
@@ -52,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A corrupt PDF through an isolated backend** reported
   `Traceback (most recent call last):` as its error message. Now `CorruptSource`
   with the informative last line, matching the other PDF backends.
+- **The batch aggregate ratio counted incomparable items**, summing output
+  tokens over every file and input tokens over only those that had them. A
+  20-file corpus reported −16.7%: a batch that appeared to have grown.
+- **`PackageMetadata.__getitem__` is deprecated** for a missing header, and
+  under `filterwarnings = ["error"]` that is a failure. Five tests died on
+  py3.12 and py3.13 while passing on 3.11.
+- **Two tests asserted environment-dependent answers** and failed in CI while
+  passing locally — one reading "most faithful" over whatever was installed, one
+  asserting a format error that availability checking pre-empts.
 
 ### Changed
 

@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 
 from tokenmill.core.licensing import (
+    ALLOWED_COPYLEFT,
     KNOWN_COPYLEFT_MODULES,
     audit_installed,
     classify,
@@ -49,28 +50,6 @@ from tokenmill.core.licensing import (
 )
 from tokenmill.core.models import IsolationMode, LicenseTier
 from tokenmill.core.registry import Registry
-
-#: Distributions allowed to classify as copyleft and still be installed.
-#:
-#: One entry, and each one costs a paragraph in `docs/LICENSES.md` —
-#: `test_every_exemption_is_documented` enforces that. An undocumented exemption
-#: is a waived rule.
-#:
-#: **`docutils`** arrives as a direct dependency of `nicegui`, in the `gui`
-#: extra. Its metadata carries three licence classifiers and no SPDX
-#: expression — Public Domain, BSD, and *GNU General Public License (GPL)* —
-#: which `classify()` joins conservatively and reads as copyleft. Reading the
-#: installed `COPYING.rst` of 0.23 shows the GPL applies to exactly one file,
-#: `tools/editors/emacs/rst.el`, which is Emacs Lisp and **is not in the
-#: wheel**: the installed package contains no `.el` file and no GPL text
-#: anywhere. Verified here on 2026-08-26, not read from a summary.
-#:
-#: `tld` is *not* here and must not be. It ships
-#: `MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later`, a disjunction the recipient
-#: resolves, and tokenmill takes the MPL-1.1 branch. `classify()` reads it as
-#: permissive **without** an exemption, which is the correct answer rather than
-#: a waived one, and a test asserts the distinction.
-ALLOWED_COPYLEFT: frozenset[str] = frozenset({"docutils"})
 
 #: The source tree, for the static scan.
 SRC = Path(__file__).resolve().parents[2] / "src" / "tokenmill"

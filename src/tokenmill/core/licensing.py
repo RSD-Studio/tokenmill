@@ -49,6 +49,7 @@ from typing import Final
 from tokenmill.core.models import LicenseTier
 
 __all__ = [
+    "ALLOWED_COPYLEFT",
     "KNOWN_COPYLEFT_MODULES",
     "LicenseRecord",
     "audit_installed",
@@ -131,6 +132,35 @@ KNOWN_COPYLEFT_MODULES: Final[Mapping[str, str]] = {
     "omniparse": "omniparse, GPL",
     "html2text": "html2text, GPL-3.0",
 }
+
+
+#: Distributions permitted to classify as copyleft and still be installed.
+#:
+#: **Policy, so it lives here rather than in a test.** It was in
+#: `tests/unit/test_license_isolation.py` first, and running
+#: `tokenmill backends --show-licenses` immediately found the consequence: the
+#: CLI reported `docutils` as a licence violation and exited non-zero while the
+#: suite passed, because the two were reading different lists. A policy with two
+#: homes has two answers.
+#:
+#: One entry, and each one costs a paragraph in `docs/LICENSES.md` — a test
+#: asserts that every name here appears there.
+#:
+#: **`docutils`** arrives as a direct dependency of `nicegui`, in the `gui`
+#: extra. Its metadata carries no SPDX expression and three licence classifiers
+#: — Public Domain, BSD, and *GNU General Public License (GPL)* — which
+#: :func:`classify` joins conservatively and reads as copyleft. Reading the
+#: installed ``COPYING.rst`` of 0.23 shows the GPL applies to exactly one file,
+#: ``tools/editors/emacs/rst.el``, which is Emacs Lisp and **is not in the
+#: wheel**: the installed package contains no ``.el`` file and no GPL text.
+#: Verified on 2026-08-26 against the installed package, and re-checked by
+#: ``test_the_docutils_exemption_is_still_for_the_reason_claimed`` against
+#: whatever version is present, because an exemption nobody re-checks outlives
+#: its reason.
+#:
+#: `tld` is deliberately **not** here: it resolves to permissive through its own
+#: disjunction, which is the correct answer rather than a waived one.
+ALLOWED_COPYLEFT: Final[frozenset[str]] = frozenset({"docutils"})
 
 
 @dataclass(frozen=True, slots=True)
