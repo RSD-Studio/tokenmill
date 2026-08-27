@@ -34,12 +34,14 @@ import hashlib
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 
 from benchmarks.harness import DEFAULT_TIMEOUT_S, cells_for, run_matrix
 from benchmarks.models import CellResult, RunManifest
@@ -194,6 +196,12 @@ def build_manifest(
     )
 
 
+#: One line of `git status --porcelain` v1: a one- or two-character status, then
+#: the path. One character because `_git` strips, so a leading-space status loses
+#: it on the first line.
+_PORCELAIN_LINE: Final = re.compile(r"^(?P<status>[ MADRCU?!]{1,2})\s+(?P<path>.+)$")
+
+
 def working_tree_dirty(out: Path | None = None) -> bool:
     """Whether uncommitted work could have affected this measurement.
 
@@ -224,9 +232,18 @@ def working_tree_dirty(out: Path | None = None) -> bool:
     except ValueError:
         excluded = None
     for line in porcelain.splitlines():
-        # Porcelain v1: two status characters, a space, then the path. A rename
-        # is `old -> new`; the new name is the one that matters here.
-        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        # Porcelain v1 is `XY <path>`, where X or Y may be a space. Parsed with a
+        # pattern rather than by slicing `line[3:]`, because `_git` strips its
+        # output and so the FIRST line arrives one character short whenever its
+        # status begins with a space — which is the case for every unstaged
+        # modification, which is the case this function exists for. Slicing put
+        # `enchmarks/results/...` into the comparison and reported dirty forever.
+        # A rename is `old -> new`; the new name is the one that matters.
+        matched = _PORCELAIN_LINE.match(line)
+        if matched is None:
+            # Unparseable: assume the worst rather than skip it.
+            return True
+        path = matched.group("path").split(" -> ")[-1].strip().strip('"')
         if not path:
             continue
         if excluded is not None and Path(path).is_relative_to(excluded):

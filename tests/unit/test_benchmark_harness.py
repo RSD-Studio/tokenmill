@@ -641,6 +641,28 @@ class TestTheDirtyFlagMeansSomething:
         root = Path(benchmarks_run.__file__).resolve().parents[1]
         assert working_tree_dirty(root / "benchmarks" / "results" / "2026-08-27") is False
 
+    def test_the_first_line_arrives_one_character_short_and_still_parses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bug the fixed-column parse had, reproduced exactly.
+
+        `_git` strips its output, so an unstaged modification — status `" M"` —
+        loses its leading space on the FIRST line only. Slicing `line[3:]` then
+        yielded `enchmarks/results/...`, which is relative to nothing, so the
+        exclusion never matched and every regeneration reported dirty. The
+        second line, still carrying its space, parsed fine, which is why this
+        needed a two-line fixture to show at all.
+        """
+        monkeypatch.setattr(
+            "benchmarks.run._git",
+            lambda *_a: (
+                "M benchmarks/results/2026-08-27/manifest.json\n"
+                " M benchmarks/results/2026-08-27/report.md"
+            ),
+        )
+        root = Path(benchmarks_run.__file__).resolve().parents[1]
+        assert working_tree_dirty(root / "benchmarks" / "results" / "2026-08-27") is False
+
     def test_a_change_anywhere_else_is_dirt(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "benchmarks.run._git",
