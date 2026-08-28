@@ -17,7 +17,7 @@ _Last updated: 2026-08-27 by Claude Code_
 | 8 | GUI (FastAPI + NiceGUI) | ✅ Complete | passed 2026-08-27 |
 | 9 | Heavy backends (GPU tier, install-docs-only) | 🟨 **Complete; nothing run on hardware** | gate passed 2026-08-27 for the CPU-only path, which is the criterion. No heavy backend has converted a document: no GPU here, and the weight host is denied |
 | 10 | Benchmark harness | 🟨 **Complete in bytes; the token half is built and unfired** | gate passed 2026-08-27 for the byte-unit run: harness, 63-cell result set committed, `docs/BENCHMARKS.md` rewritten with limitations. The model-token rows need a `benchmark.yml` dispatch the sandbox cannot make |
-| 11 | Packaging, distribution, release | 🟨 **Built and verified; not published** | artefacts built, `twine check --strict` clean, wheel installed and converting in a clean venv outside the source tree. The container images could not be built here — no Docker daemon. Publishing is the owner's, by design |
+| 11 | Packaging, distribution, release | 🟨 **Built and verified; not tagged, not published** | artefacts built, `twine check --strict` clean, wheel installed and converting in a clean venv outside the source tree. **The `v0.1.0` tag push is refused with HTTP 403** — this integration can write the branch and not a tag ref. Container images unbuilt (no Docker daemon). Publishing is the owner's, by design |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
 ## Current session: the repairs, then Phases 9–12
@@ -200,6 +200,34 @@ tokenmill` finds `src/` and passes.
 | End-to-end conversion from the wheel | `page.html` → 172 → 93 bytes, −45.9%, via trafilatura |
 | Core weight **from the wheel** | **141.2 MB** against the 250 MB ceiling |
 | `hatchling build -t wheel` (the Dockerfile's build stage) | byte-identical wheel |
+
+### Blocked: the tag could not be pushed
+
+The owner asked for `v0.1.0` to be tagged "so the workflow has something to fire
+on". **The tag exists locally and the push is refused.**
+
+```
+$ git push origin refs/tags/v0.1.0
+error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403
+send-pack: unexpected disconnect while reading sideband packet
+```
+
+Branch pushes to `claude/phases-9-12-repairs-0d9f1n` succeed in the same second,
+and `git ls-remote --tags origin` returns nothing, so this is a ref-scope
+restriction on this integration rather than a network fault or a bad tag. The
+GitHub tools available here have `list_tags` and `get_tag` but nothing that
+creates a ref, so there is no second route and I have not looked for one.
+
+Recorded rather than worked around. **The tag is one command for you:**
+
+```bash
+git fetch origin claude/phases-9-12-repairs-0d9f1n
+git tag -a v0.1.0 -m "tokenmill 0.1.0" origin/claude/phases-9-12-repairs-0d9f1n
+git push origin v0.1.0
+```
+
+That fires `release.yml`, which builds, verifies on nine cells, builds both
+container images and drafts a release. It publishes nothing.
 
 ### Not verified, and it is a real gap
 
