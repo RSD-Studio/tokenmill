@@ -388,6 +388,9 @@ convention = "google"
     "D100", "D101", "D102", "D103", "D104", "D107",
     "ANN001", "ANN201", "ANN202",
 ]
+# This test asserts on the U+2212 MINUS SIGN the article tables deliberately
+# emit, so it has to contain one.
+"tests/unit/test_article_pack.py" = ["RUF001"]
 # The error taxonomy is fixed by DEVELOPMENT_PLAN.md §1.4, which names
 # UnsupportedFormat, BackendUnavailable, BackendFailed, Timeout, CorruptSource
 # and NetworkRequired. Those names are the architecture contract that backends
@@ -407,6 +410,13 @@ convention = "google"
 # the two modules that are one.
 "benchmarks/run.py" = ["T201"]
 "benchmarks/merge.py" = ["T201"]
+# The article pack's generator is a script with a summary line, same rule again.
+# RUF001 because it deliberately emits U+2212 MINUS SIGN rather than a hyphen:
+# these tables are written to be pasted into prose, and a saving printed as
+# "-77.1%" with a hyphen is the typographic version of the sign bug this project
+# has now shipped twice.
+"docs/article/make_tables.py" = ["T201", "RUF001"]
+"docs/article/make_charts.py" = ["T201"]
 # The network-marked benchmark test prints the measured figure on purpose: the
 # CI log is the only place a real model-token number can be *read out* of a run
 # in this project, and CONTRIBUTING.md rule 4 says a figure that is not in
@@ -430,7 +440,7 @@ python_version = "3.11"
 # produces the numbers this project publishes, and a harness that silently
 # recorded a `None` where a count belonged would be the most expensive kind of
 # bug here — one that is wrong in a committed file somebody later cites.
-files = ["src", "scripts", "tests", "benchmarks"]
+files = ["src", "scripts", "tests", "benchmarks", "docs/article"]
 # The sample_repo fixture is synthetic source code used as conversion input.
 exclude = ["^tests/fixtures/"]
 strict = true
@@ -476,6 +486,17 @@ module = [
     "llmlingua.*",
     "chonkie.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# matplotlib is deliberately NOT a dependency of this project: the core install
+# is capped at 250 MB and a plotting library only the article pack needs has no
+# business in it. `docs/article/make_charts.py` runs under
+# `uv run --with matplotlib`, so mypy checking the repository will never find it
+# and should not fail over that. The script's own imports are inside functions
+# and guarded by an ImportError path that prints the command instead of a
+# traceback.
+module = ["matplotlib.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

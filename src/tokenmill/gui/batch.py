@@ -86,7 +86,14 @@ from typing import Final
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.gui.api import ConversionRequest, ConversionSummary, convert
 
-__all__ = ["BatchItem", "BatchRunner", "BatchTotals", "ItemState", "requests_for"]
+__all__ = [
+    "BatchItem",
+    "BatchRunner",
+    "BatchTotals",
+    "ItemState",
+    "default_workers",
+    "requests_for",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -198,6 +205,21 @@ _POLL_S: Final = 0.02
 #: machine multiplies processes instead of parallelising work. Four overlaps the
 #: subprocess and I/O waits that dominate this workload without doing that.
 _DEFAULT_WORKERS: Final = 4
+
+
+def default_workers() -> int:
+    """How many conversions a :class:`BatchRunner` runs at once by default.
+
+    A function rather than the module constant so the interface can state the
+    real number instead of repeating a literal. The GUI's batch caption said
+    "one at a time" for a whole phase after this stopped being true, which is
+    the kind of claim a reader believes precisely because it sits next to the
+    numbers.
+
+    Returns:
+        The default pool width.
+    """
+    return _DEFAULT_WORKERS
 
 
 class BatchRunner:

@@ -5,21 +5,27 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-> **Status: Phase 2 — document backends.** Real document conversion works:
-> PDF, DOCX, PPTX and XLSX to Markdown through five adapters, with a per-format
-> preference map and a fallback chain that records which backend actually ran.
-> Web and repository backends arrive in Phases 3–4, and the GUI in Phase 8. The
-> suite is green on Linux, macOS and Windows across Python 3.11/3.12/3.13, and
-> token counting is verified against real tiktoken and HuggingFace vocabularies
-> in CI. See [`PROGRESS.md`](PROGRESS.md) for exactly where things stand,
-> including which claims are CI-verified rather than locally observed, and
-> [`docs/BACKENDS.md`](docs/BACKENDS.md) for what each backend gets *wrong* on
-> our own fixtures. Nothing below is claimed to work until `PROGRESS.md` records
-> a verification run for it.
+> **Status: 0.1.0, built and not yet published.** Documents, web pages and
+> repositories convert through 22 registered backends; there is a CLI, a Python
+> API and a browser GUI; the suite is green on Linux, macOS and Windows across
+> Python 3.11/3.12/3.13; and a 63-cell benchmark run is
+> [committed with its raw data](benchmarks/results/2026-08-27/).
+>
+> **Three things this project does not claim, stated here rather than in a
+> footnote.** The benchmark matrix is counted in **UTF-8 bytes, not model
+> tokens**, because the environment it was built in cannot reach a tokenizer
+> vocabulary; the CI job that would produce token figures exists and has never
+> run. **No GPU backend has ever converted a document** — six are wired up, none
+> is demonstrated. And **prompt compression's success path has never executed
+> anywhere**, for the same reason as the tokenizer.
+>
+> [`PROGRESS.md`](PROGRESS.md) records what was verified and how;
+> [`docs/BACKENDS.md`](docs/BACKENDS.md) records what each backend gets *wrong*
+> on our fixtures, quoted from real output.
 
 ---
 
-## What it will be
+## What it is
 
 Four input domains, one output pipeline, one measurement:
 
@@ -31,15 +37,42 @@ Four input domains, one output pipeline, one measurement:
 | Text | Raw prompt or context | Compressed text (opt-in, off by default) |
 
 Every conversion reports **tokens before → tokens after** under a tokenizer you
-choose. That measurement is the product, not a side feature.
+choose. That measurement is the product, not a side feature — and it is always
+reported next to a **fidelity score**, because a converter that emits an empty
+string scores a 100% reduction and four cells in our own benchmark do exactly
+that.
+
+![The convert tab: a source panel, post-processor options, the token panel showing 12,481 bytes in and 2,854 out with a per-stage breakdown, and the rendered output beside it](docs/images/01-convert.png)
 
 ### Why this and not one of the existing tools
 
 Every good open-source converter covers exactly one domain. MarkItDown and
 Docling do documents. Trafilatura does web pages. gitingest and Repomix do
-repositories. LLMLingua does prompts. No project unifies all four behind one
-interface with before/after token metering and a `pip install`-able plugin
-architecture — that gap is what tokenmill is for.
+repositories. LLMLingua does prompts. tokenmill does not compete with any of
+them — **it wraps them**, and adds the thing none of them does: a token count on
+both sides, in a unit you choose, with a fidelity score beside it.
+
+There are projects in adjacent space, and it is worth being specific about where
+they differ rather than waving at them:
+
+| | What it does | Where it differs |
+|---|---|---|
+| **MarkItDown** | Microsoft's document → Markdown converter. Excellent, broad format coverage. | One domain, no token accounting, no fidelity measurement, no choice of engine. tokenmill installs and uses it as a backend. |
+| **Docling** | IBM's document converter, the structure-fidelity leader in the survey. | One domain; ~122 packages and 5.2 GB with PyTorch. tokenmill keeps it behind an extra so a core install stays 141 MB, and wraps it as a backend. |
+| **omniparse** | A single service that ingests documents, web, media and code. Closest thing to the same ambition. | A **server** you deploy, GPU-oriented, and it does not report what a conversion cost in tokens. tokenmill is a library and a CLI first; the GUI is optional and runs on the core install. |
+| **docling-serve** | Docling behind an HTTP API. | The same single-engine, no-metering position as Docling, plus deployment. |
+| **MarkItDown GUI forks** | Community wrappers putting a window on MarkItDown. | A front end for one engine. The interesting question — *which* engine, at what cost, losing what — is the one they cannot ask. |
+
+**The honest version of the pitch:** if you have already decided which converter
+to use and you do not care what it costs, you do not need this. tokenmill is for
+the case where the answer is "it depends on the document", and it exists to make
+"it depends" measurable rather than a shrug.
+
+**The honest version of the caveat:** our measurements are on a 15-file
+synthetic corpus, in bytes rather than model tokens, on one machine. That is
+enough to show that the cheapest backend is routinely not the most faithful one.
+It is not enough to tell you which backend is best for *your* documents, and
+`tokenmill compare` exists because it cannot.
 
 ## Why token reduction is worth measuring
 
@@ -438,8 +471,32 @@ from, and what one synthetic fixture can and cannot support.
 desktop window with `--native`) with the token panel as its centrepiece: before,
 after, the delta, the per-stage breakdown, and fidelity beside all of it.
 Unavailable backends are greyed out with an install hint rather than hidden, and
-it works on a core install with no extras. Screenshots in
-[`docs/images/`](docs/images/).
+it works on a core install with no extras.
+
+![The compare tab showing deck.pptx across three backends: kreuzberg 398 tokens at fidelity 1.000 in 28 ms, libreoffice failed, markitdown 753 tokens at 1.000 in 593 ms, with the LibreOffice error and its fix quoted underneath](docs/images/03-compare.png)
+
+*Compare, with a real failure in it. `libreoffice` returns `n/a` rather than a
+zero, and the note underneath is the actual error and the actual fix: it exits 0
+having converted nothing when the format filters are missing. Two backends
+produce identical fidelity at 398 against 753 tokens and a 21× time difference —
+which is a real answer, and not one a size-only table would give.*
+
+![The backends tab listing every registered backend with CPU/GPU, licence tier, licence, isolation mode and availability; code2prompt, Crawl4AI and Docling are greyed out with the exact install command under each](docs/images/04-backends.png)
+
+*Backends. Licence tier and isolation sit on the same line as availability,
+because "can I run this" and "may I ship what it produces" are the same question
+asked twice. Unavailable backends are greyed out with the command that fixes
+them, never hidden — `pandoc` is flagged copyleft and `PyMuPDF4LLM` AGPL, and
+both are marked `subprocess`, which is why that is fine.*
+
+<details>
+<summary>Two more: the batch queue and settings</summary>
+
+![The batch tab: a queue of files with per-item status, aggregate totals and a cancel control](docs/images/02-batch.png)
+
+![The settings tab: tokenizer, default backend, post-processor chain and output preferences](docs/images/05-settings.png)
+
+</details>
 
 `--server` binds every interface for LAN use and requires a **shared token** on
 every request — generated and printed with the URL to open when you have not set

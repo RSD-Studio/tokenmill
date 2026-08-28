@@ -42,7 +42,7 @@ from typing import Any
 from nicegui import app as nicegui_app
 from nicegui import ui
 
-from tokenmill.gui import api
+from tokenmill.gui import api, batch
 from tokenmill.gui.auth import ServerTokenGuard
 from tokenmill.gui.batch import BatchRunner, ItemState
 
@@ -462,9 +462,14 @@ class _BatchPanel:
         """Lay out the panel and start the refresh timer."""
         with ui.card().classes("w-full"):
             ui.label("Batch").classes("text-lg font-semibold")
+            # Phase 9 gave the queue a thread pool and this line kept saying
+            # "one at a time" for a whole phase, which is the sort of caption a
+            # reader believes because it is right next to the numbers.
             ui.label(
-                "Conversions run one at a time on a background thread. The interface "
-                "stays live; see the batch module for why they are not parallel."
+                f"Up to {batch.default_workers()} conversions run at once on background "
+                "threads. The interface stays live. Parallelism helps a subprocess "
+                "backend (3.1x measured on pandoc + libreoffice) and slightly hurts an "
+                "in-process one (0.91x), because of the GIL; see the batch module."
             ).classes("text-xs opacity-60")
             with ui.row().classes("gap-2"):
                 ui.button("Run the staged files", on_click=self._start).props("color=primary")
