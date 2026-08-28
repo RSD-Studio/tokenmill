@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] - 2026-08-28
+
+First release. Everything below has been executed and its output inspected;
+where something has not been, it says so rather than being left out.
+
+### Added
+
+#### Phase 11 — packaging and release
+
+- **`.github/workflows/release.yml`.** A tag build proves the artefact: sdist
+  and wheel, `twine check --strict`, then a nine-cell matrix that installs the
+  built wheel **with no source tree present** and makes it convert a real
+  document. Publishing to PyPI is a separate manual job behind a GitHub
+  Environment; a tag push cannot reach it, because a published version number
+  can never be reused.
+- **Trusted publishing (OIDC).** No PyPI API token is stored in this
+  repository. The one-time PyPI-side setup is documented in `CONTRIBUTING.md`;
+  until it exists the publish job fails at the exchange, having published
+  nothing.
+- **A Docker image for the core tier**, and a release checklist in
+  `CONTRIBUTING.md` written as commands to run rather than as intentions.
+- The sdist now contains `benchmarks/` and `docker/`. It previously shipped
+  `benchmarks/README.md` and `docker/README.md` while shipping neither
+  directory's contents — documentation for files that were not in the archive.
+
+#### Phase 10 — the benchmark harness
+
+- **`python -m benchmarks.run`** — the whole corpus crossed with every backend
+  the registry says claims it, five timed repeats per cell after a discarded
+  warm-up, plus one instrumented pass for memory. The matrix is not curated:
+  choosing the list by hand is how a benchmark quietly stops including the
+  backend that does badly.
+- **The first committed result set**, [`benchmarks/results/2026-08-27/`], 63
+  cells with a manifest recording the commit, the corpus digest, the platform
+  and every backend's own reported version.
+- **Fidelity beside every token count, enforced.** `check_report()` raises
+  rather than rendering a token column with no fidelity column next to it.
+- **Failures and empty successes are results, not omissions.** The report gives
+  them their own sections: eight failures, and four cells that succeed with an
+  empty string and so score a 100% reduction at 0.000 fidelity.
+- **Memory measured two ways and labelled.** `added RSS` (process tree, sampled
+  every 5 ms, minus a baseline taken immediately before the cell) and
+  `tracemalloc`'s Python-only peak. Neither is *the* memory used and the report
+  says so.
+- **`.github/workflows/benchmark.yml`** produces the model-token half on a
+  GitHub runner and merges it in on the tokenizer key, so a byte figure can
+  never land under a token heading.
+
+#### Phase 9 — the GPU tier
+
+- Six heavy backends (`marker`, `surya`, `mineru`, `olmocr`, `deepseek_ocr`,
+  `dots_ocr`), all out of process, all reporting themselves unavailable with
+  the exact commands that would change that. **`heavy = []` is still empty and
+  a clean core install is still 40 packages.**
+- **`tokenmill doctor`** — what this machine has, what it is missing, and the
+  command for each gap. It distinguishes "no GPU" from "the driver is present
+  and no device answered", which is what a container started without `--gpus`
+  looks like.
+- **`tokenmill gui --server` requires a shared token**, generated and printed
+  when unset. It is not TLS, not user accounts and not an audit log, and the
+  documentation says which of those it is not.
+
+### Fixed
+
+- **The licence classifier called SSPL-1.0, BUSL-1.1 and Elastic-2.0
+  permissive**, along with every unrecognised `LicenseRef-`. A fourth tier,
+  `RESTRICTED`, and two rules. Same shape as the Phase 7 defect and found the
+  same way.
+- **`RESEARCH.md` was wrong about two more licences.** Marker and Surya are
+  Apache-2.0, not GPL-3.0; MinerU is neither, being Apache plus a revenue
+  threshold and an online-service attribution obligation that `gui --server`
+  triggers. All read from the installed package metadata.
+- **repomix could invent a file.** The Markdown splitter matched a `## File:`
+  marker inside a *quoted* document, so a repository containing one reported a
+  file that does not exist. Switched to `--style json`.
+- **Process-global state in the batch queue** (warning filters, root logger
+  handlers, `os.environ`) was mutated without a lock. Now serialised. The
+  parallelism it unlocked is a null result on the published workload — 0.86x on
+  the 20-file corpus batch — and 3.12x on a subprocess-backed one; both are
+  published, the null one first.
+- **Five defects in the benchmark harness, all found by reading its output
+  rather than by a failing test**: an inferred `allow_network`, a manifest that
+  recorded thirteen null versions under a field promising otherwise, a memory
+  column that climbed in row order because a process-tree peak inherits every
+  earlier import, a repository fixture silently unscored because of a
+  trailing-slash key, and a `git_dirty` flag that was always true.
+- **LibreOffice reported itself available on an install that could not
+  convert.** The probe now checks the component registry rather than the binary.
+
+### Measured
+
+- **`aggressive_whitespace` was to be deleted unless it could earn its place.**
+  Across all fifty backend-by-fixture cells rather than the three it was
+  originally judged on, it saves **18.3% on `tables.pdf` through `markitdown`
+  at unchanged fidelity** — MarkItDown pads its table columns and the padding is
+  18% of the document. Ten of fifty cells save something; forty save nothing.
+  Kept, with the measurement published.
+
+### Not verified
+
+- **No model-token figure exists for the benchmark matrix.** This project is
+  developed in an environment whose egress proxy denies every tokenizer
+  vocabulary host, so the committed results are counted in UTF-8 bytes. A byte
+  figure is not a token figure: on this project's own tabular data the two
+  disagreed by 24 points and did not rank the five serialisation formats in the
+  same order. The workflow that would produce the token rows exists and has
+  never run.
+- **No heavy backend has ever converted a document.** No GPU here and the weight
+  host is denied. What is verified is the path a machine without a GPU takes.
+- **Phase 6's compression success path has never been executed anywhere**, for
+  the same reason: the LLMLingua-2 model lives on a denied host.
+- **A desktop application** (PySide6 / PyInstaller) is deferred, not built.
+
 ### Added
 
 #### Phase 8 — the graphical interface
@@ -545,4 +660,6 @@ Four things it does to the process that imports it, all found by running it:
   token-compression project, so `pip install tokenfold` could never have been
   ours. See `PROGRESS.md` under Decisions.
 
-[Unreleased]: https://github.com/RSD-Studio/tokenmill/commits/Main
+[Unreleased]: https://github.com/RSD-Studio/tokenmill/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/RSD-Studio/tokenmill/releases/tag/v0.1.0
+[`benchmarks/results/2026-08-27/`]: https://github.com/RSD-Studio/tokenmill/tree/v0.1.0/benchmarks/results/2026-08-27

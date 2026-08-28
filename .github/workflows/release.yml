@@ -1,0 +1,319 @@
+name: Release
+
+# Two things happen here and they are deliberately not the same thing.
+#
+# **Pushing the tag builds and proves the artefact.** Sdist and wheel, checked
+# with `twine`, then installed from the built wheel — not from the source tree —
+# on nine OS/Python cells and made to convert a real document. The artefacts are
+# attached to a GitHub Release marked as a draft. Nothing leaves the repository.
+#
+# **Publishing to PyPI is a separate, manual act.** It is its own job, on
+# `workflow_dispatch` only, in a GitHub Environment so a required reviewer can
+# gate it. A tag push cannot reach it. This is not caution for its own sake: a
+# version published to PyPI can never be republished, so "the tag fired the
+# workflow and the workflow published it" is a mistake with no undo.
+#
+# Publishing uses **trusted publishing** (OIDC), so there is no API token in
+# this repository's secrets and nothing to leak or rotate. It needs one-time
+# setup on PyPI: Manage project -> Publishing -> add a GitHub publisher for
+# `RSD-Studio/tokenmill`, workflow `release.yml`, environment `pypi`. Until that
+# exists the publish job fails at the exchange step, having published nothing.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Publish to PyPI. This cannot be undone — a version number is spent the
+          moment it is accepted. Leave off to build and verify only.
+        required: true
+        default: false
+        type: boolean
+      repository:
+        description: "Where to publish."
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  build:
+    name: Build sdist and wheel
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build
+        run: uv build
+
+      # The tag says one version and `src/tokenmill/__init__.py` says another
+      # only once, and it is the once that matters. hatchling reads the version
+      # from the source, so a mistyped tag would otherwise produce an artefact
+      # whose filename disagrees with the release it is attached to.
+      - name: The tag and the package version agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          built="$(ls dist/*.whl | sed -E 's/.*tokenmill-([^-]+)-.*/\1/')"
+          echo "tag=$tag built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag v$tag does not match the built version $built."
+            echo "::error::Set __version__ in src/tokenmill/__init__.py, or retag."
+            exit 1
+          fi
+
+      - name: Record the version
+        id: version
+        run: echo "version=$(ls dist/*.whl | sed -E 's/.*tokenmill-([^-]+)-.*/\1/')" >> "$GITHUB_OUTPUT"
+
+      # Catches a README that renders on GitHub and breaks on PyPI, which is a
+      # thing that only shows up after publishing otherwise.
+      - name: Check the metadata the way PyPI will
+        run: |
+          uv tool run --from twine twine check --strict dist/*
+
+      - name: What is in the artefacts
+        run: |
+          echo "--- wheel ---"
+          python -m zipfile -l dist/*.whl
+          echo "--- sdist ---"
+          tar tzf dist/*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  smoke:
+    name: Wheel install (py${{ matrix.python }} / ${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      # Deliberately NOT `actions/checkout`. This job must prove the built wheel
+      # stands on its own; a source tree in the working directory is exactly how
+      # a packaging bug hides — `import tokenmill` finds `src/` and passes.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Install from the wheel, no extras
+        shell: bash
+        run: python -m pip install "$(ls dist/*.whl)"
+
+      - name: Import, and report what came with it
+        shell: bash
+        run: |
+          python -c "import tokenmill, sys; print(tokenmill.__version__, sys.version)"
+          python -m pip list
+
+      - name: The console script exists and runs
+        shell: bash
+        run: |
+          tokenmill --version
+          tokenmill backends
+
+      # The end-to-end path, not just an import. A wheel that installs and
+      # cannot convert anything has not been tested.
+      - name: Convert a document
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > page.html <<'HTML'
+          <html><head><title>T</title></head><body>
+          <nav>navigation that should not survive</nav>
+          <h1>Hello</h1>
+          <p>A paragraph with enough words in it to survive the extraction
+          thresholds that trafilatura applies to short documents.</p>
+          </body></html>
+          HTML
+          tokenmill convert page.html --tokenizer bytes | tee out.txt
+          grep -q "tokens:" out.txt
+
+      # The promise on the front of the README, enforced on the artefact people
+      # will actually install rather than on a checkout.
+      - name: The core install is under its ceiling
+        shell: python {0}
+        run: |
+          import pathlib, sysconfig
+          site = pathlib.Path(sysconfig.get_paths()["purelib"])
+          skip = {"pip", "setuptools", "wheel", "pkg_resources", "_distutils_hack"}
+          total = 0
+          for entry in site.iterdir():
+              if entry.name.split("-")[0].split(".")[0] in skip:
+                  continue
+              total += (
+                  entry.stat().st_size
+                  if entry.is_file()
+                  else sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+              )
+          mb = total / 1_000_000
+          print(f"core install from the wheel: {mb:.1f} MB (ceiling 250 MB)")
+          if mb > 250:
+              raise SystemExit(f"{mb:.1f} MB is over the 250 MB ceiling")
+
+  docker:
+    name: Build the container image
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both targets, because they are different licence positions and both are
+      # offered: `core` is Apache-2.0 Python dependencies only; `full` adds
+      # Pandoc (GPL-2.0-or-later) and LibreOffice (MPL-2.0) as executables.
+      # docs/LICENSES.md states what each artefact contains.
+      - name: Build the core target
+        run: docker build --target core -t tokenmill:core .
+
+      - name: Build the full target
+        run: docker build --target full -t tokenmill:full .
+
+      # An image that builds and cannot convert has not been tested. Both are
+      # exercised end to end; the `full` one is also asked to use the two
+      # backends that are the entire reason it exists.
+      - name: The core image converts
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          cat > work/page.html <<'HTML'
+          <html><body><nav>navigation that should not survive</nav>
+          <h1>Hello</h1><p>A paragraph with enough words in it to survive the
+          extraction thresholds trafilatura applies to short documents.</p>
+          </body></html>
+          HTML
+          docker run --rm -v "$PWD/work:/work" tokenmill:core --version
+          docker run --rm -v "$PWD/work:/work" tokenmill:core \
+            convert page.html --tokenizer bytes | tee out.txt
+          grep -q "tokens:" out.txt
+
+      - name: The full image has the two backends it exists for
+        run: |
+          set -euo pipefail
+          docker run --rm tokenmill:full backends | tee backends.txt
+          grep -E "^pandoc .*available" backends.txt
+          grep -E "^libreoffice .*available" backends.txt
+
+      # The scar these two lines exist for: a container with only
+      # `libreoffice-core` reported the backend available and then converted
+      # nothing, because the format filters live in the writer/calc/impress
+      # packages. Reporting available is not the claim; converting is. Both
+      # system-binary backends are made to convert the corpus's real `.docx`.
+      - name: Pandoc and LibreOffice actually convert in the image
+        run: |
+          set -euo pipefail
+          for backend in pandoc libreoffice; do
+            echo "--- $backend ---"
+            docker run --rm -v "$PWD/tests/fixtures:/work:ro" tokenmill:full \
+              convert report.docx --backend "$backend" --tokenizer bytes \
+              | tee "$backend.txt"
+            grep -q "tokens:" "$backend.txt"
+            grep -q "backend:  $backend" "$backend.txt"
+          done
+
+      - name: What the images weigh
+        run: docker images tokenmill --format "{{.Tag}}\t{{.Size}}"
+
+  draft-release:
+    name: Draft a GitHub Release
+    needs: [build, smoke, docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # A draft, not a release. The same reasoning as the publish gate: a human
+      # reads the notes and presses the button. `--verify-tag` refuses to invent
+      # a tag that does not exist.
+      # Pulled out of CHANGELOG.md rather than generated from commit subjects:
+      # the changelog is written for a reader and `git log` is not.
+      - name: Take the notes from the changelog
+        run: |
+          python - <<'PY' > notes.md
+          import pathlib, re, os
+          version = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          # Stops at the next version heading OR at the link-reference block
+          # at the foot of the file, which is markdown plumbing rather than
+          # release notes.
+          match = re.search(
+              rf"^## \[{re.escape(version)}\].*?$(.*?)(?=^## \[|^\[[^\]]+\]: http|\Z)",
+              text,
+              re.M | re.S,
+          )
+          print(
+              match.group(1).strip()
+              if match
+              else f"See CHANGELOG.md. No `## [{version}]` section was found in it."
+          )
+          PY
+          cat notes.md
+
+      - name: Draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --draft \
+            --verify-tag \
+            --title "tokenmill ${GITHUB_REF_NAME}" \
+            --notes-file notes.md
+
+  publish:
+    name: Publish to ${{ inputs.repository }}
+    # Manual dispatch only, and only when `publish` is explicitly on. A tag push
+    # can never reach this job. `environment` is where a required reviewer is
+    # configured, so the button has a second person behind it if you want one.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.repository }}
+      url: https://${{ inputs.repository == 'pypi' && 'pypi.org' || 'test.pypi.org' }}/p/tokenmill
+    permissions:
+      # The OIDC token trusted publishing exchanges for a short-lived upload
+      # credential. No API token is stored in this repository.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ inputs.repository == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+          print-hash: true

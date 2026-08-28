@@ -85,22 +85,60 @@ own committed raw results.
 
 ## Install
 
-*(Not yet published to PyPI — that is Phase 11. Until then, install from a
-clone.)*
+> **Not on PyPI yet.** The release is built, verified on nine OS/Python cells
+> and tagged `v0.1.0`; the publish is a separate manual step that has not been
+> run. Until it is, install from a clone or from the built wheel attached to the
+> GitHub release. Every command below is the one that will work once it is.
+
+**As a command-line tool** — the usual case. Both of these put `tokenmill` on
+your `PATH` in an environment of its own, so it cannot collide with anything:
+
+```bash
+uv tool install tokenmill          # or:
+pipx install tokenmill
+```
+
+**As a library**, into a project's environment:
 
 ```bash
 pip install tokenmill              # core: pure Python, CPU-only, no system binary
 ```
 
+**With extras**, when you need a format the core tier does not cover:
+
 ```bash
 pip install "tokenmill[documents]"   # + MarkItDown and Kreuzberg: Office, mail, archives
+pip install "tokenmill[web]"         # + readability-lxml, a second-opinion extractor
+pip install "tokenmill[repo]"        # + gitingest, for packing a repository
 pip install "tokenmill[docling]"     # + Docling: best structure fidelity, ~5.2 GB, pulls PyTorch
 ```
 
+Extras compose: `pip install "tokenmill[documents,web,repo]"`. `tokenmill
+doctor` tells you what is installed, what is missing and the command for each
+gap.
+
+**With Docker**, if you want Pandoc and LibreOffice without installing them:
+
+```bash
+docker build -t tokenmill .                                   # or --target core
+docker run --rm -v "$PWD:/work" tokenmill convert report.docx --tokenizer bytes
+```
+
+Two targets. `full` (the default) carries Pandoc and LibreOffice as executables
+and is what makes those two backends work out of the box; `core` has neither and
+nothing under a copyleft licence. `docs/LICENSES.md` says exactly what each
+artefact contains, because putting a GPL program in an image you hand to someone
+is distribution and is worth being precise about.
+
+### What "core" means, and why it is enforced
+
 The core install is pure Python or wheel-shipping, permissively licensed, and
 takes about a second. It includes the two light PDF readers. No PyTorch, no
-CUDA, no system binary. A CI job installs with no extras on every commit, on
-nine OS/Python combinations, and fails the build if that ever stops being true.
+CUDA, no system binary. **Measured at 141.2 MB across 40 packages**, against a
+250 MB ceiling that CI enforces on every commit across nine OS/Python
+combinations *and* on the built wheel at release. If a heavy dependency ever
+leaks into the core tier, the build goes red rather than the number quietly
+drifting.
 
 ## Quickstart
 

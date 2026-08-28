@@ -320,7 +320,24 @@ path = "src/tokenmill/__init__.py"
 packages = ["src/tokenmill"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/tokenmill", "tests", "scripts", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
+# `benchmarks` and `docker` are here for a specific reason. Phase 10's
+# acceptance criterion is that a full benchmark run is "re-runnable by a third
+# party", and a third party's copy is the sdist. Without them it shipped
+# `benchmarks/README.md` and `docker/README.md` — documentation for a harness
+# and a compose file that were not in the archive — which is worse than shipping
+# neither. `benchmarks/results/` comes too: the raw data every number in
+# `docs/BENCHMARKS.md` traces back to, about 100 kB.
+include = [
+    "src/tokenmill",
+    "tests",
+    "scripts",
+    "docs",
+    "benchmarks",
+    "docker",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff — lint + format
