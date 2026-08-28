@@ -625,19 +625,41 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Documentation
 
+**Start here**
+
+| Document | Contents |
+|---|---|
+| [`docs/FAQ.md`](docs/FAQ.md) | The questions a reader actually has, answered without marketing — including the ones where the answer is "we don't know" |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results, and **[a seven-item Limitations section](docs/BENCHMARKS.md#limitations-read-before-quoting-any-of-this) to read before quoting any of them** |
+| [`docs/BACKENDS.md`](docs/BACKENDS.md) | Per-backend reference: what each one is best at and, in detail, what it gets **wrong** on our fixtures |
+
+**Reference**
+
+| Document | Contents |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Plugin/adapter design, data model, pipeline, error taxonomy |
+| [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
+| [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, what each distributed artefact contains, and the audits actually run |
+| [`benchmarks/README.md`](benchmarks/README.md) | How to run the harness and what each result file is |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed, in Keep a Changelog format |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup, the checks that must pass, the non-negotiable rules, and the release checklist |
+
+**Writing about this project**
+
+| Document | Contents |
+|---|---|
+| [`docs/article/`](docs/article/) | The support pack: generated tables and charts, the five findings that surprised us, and **[`CLAIMS.md`](docs/article/CLAIMS.md)** — every claim labelled Measured, Cited or Unverified |
+
+**Project history**
+
 | Document | Contents |
 |---|---|
 | [`PROGRESS.md`](PROGRESS.md) | Living project state, verification log, decisions, open questions |
 | [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) | The phased build plan |
-| [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md) | The landscape survey this project is built on |
-| [`CHANGELOG.md`](CHANGELOG.md) | What changed, in Keep a Changelog format |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Plugin/adapter design, data model, pipeline, error taxonomy |
-| [`docs/BACKENDS.md`](docs/BACKENDS.md) | Per-backend reference, including observed failure modes |
-| [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
-| [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, and the audits actually run |
-| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results *(partial; the full harness is Phase 10)* |
+| [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md) | The landscape survey this project is built on — **and wrong about four licences**, which is why every licence here is read from installed metadata instead |
+| [`docs/REVIEW_PHASES_0_12.md`](docs/REVIEW_PHASES_0_12.md) | The final re-evaluation: every acceptance criterion with its evidence, the whole corpus, and a defects list including the ones this project introduced |
+| [`docs/REVIEW_PHASES_0_8.md`](docs/REVIEW_PHASES_0_8.md), [`0_6`](docs/REVIEW_PHASES_0_6.md), [`0_4`](docs/REVIEW_PHASES_0_4.md) | Superseded reviews, kept as a record of what each phase actually saw |
 | [`docs/CI_BILLING_CHECK.md`](docs/CI_BILLING_CHECK.md) | Why CI stopped scheduling runners and how to check the Actions billing page, written for a novice |
-| [`docs/REVIEW_PHASES_0_6.md`](docs/REVIEW_PHASES_0_6.md) | A full re-evaluation after Phase 6: every acceptance criterion with its evidence, the whole corpus with tokens beside fidelity, and an honest defects list including the ones it introduced |
 
 ## Non-goals
 

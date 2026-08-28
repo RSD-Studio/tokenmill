@@ -39,6 +39,27 @@ every file is generated, so the observations are reproducible by anyone.
 | `jsrendered.html` | A page whose article is inserted by a script. Parsers see a placeholder; a browser sees the article |
 | `sample_repo/` | A real git repository: 9 tracked files across `src/`, `tests/`, `docs/`, a binary blob, and a `.gitignore`d `secrets.env` whose sentinel string must never reach a model |
 
+**Since Phase 10 there is a full measurement across all of it**, and this page's
+prose observations should be read against it:
+[`benchmarks/results/2026-08-27/`](../benchmarks/results/2026-08-27/) — every
+fixture crossed with every backend that claims it, 63 cells, five timed repeats
+each, with a fidelity score beside every size. Where a claim on this page
+disagrees with that file, the file is right and this page has a bug.
+
+Three things the matrix says that change how the pages below should be read:
+
+1. **`pymupdf4llm` is the most faithful backend on every scorable PDF** — 0.848
+   on `tables.pdf`, 0.972 on `twocolumn.pdf`, 1.000 on `simple.pdf` — and costs
+   103× to 234× `pypdf`'s wall time and ~300 MiB to get there.
+2. **`libreoffice` is last on fidelity, wall time and memory on both `.docx`
+   fixtures**, and fails outright on `data.xlsx` and `deck.pptx` in the
+   benchmark container. Its value here is format coverage, not quality.
+3. **On web pages the ranking inverts.** `trafilatura` and `readability` are
+   both the cheapest *and* the most faithful on `boilerplate.html` (2,854 bytes
+   at 1.000, against `pandoc`'s 7,346 at 0.750), because keeping the navigation
+   is what costs the boilerplate-rejection component. On documents, paying more
+   buys fidelity; on web pages, it does not.
+
 ---
 
 ## At a glance
@@ -59,6 +80,12 @@ every file is generated, so the observations are reproducible by anyone.
 | [`pymupdf4llm`](#pymupdf4llm--the-best-pdf-converter-here-and-it-costs-the-most-to-reach) | **separate venv** | AGPL-3.0 | **copyleft** | PDF tables and headings; the most faithful backend here | AGPL; a whole interpreter starts per conversion |
 | [`pandoc`](#pandoc--the-long-tail-and-it-silently-drops-document-titles) | binary | GPL-2.0-or-later | **copyleft** | EPUB, LaTeX, RST, Org and thirty more | GPL; drops the DOCX title without `--standalone` |
 | [`libreoffice`](#libreoffice--the-cheapest-output-on-reportdocx-and-the-worst) | binary | MPL-2.0 | permissive | legacy `.doc` / `.xls` / `.ppt` | plain text only: cheapest output, worst fidelity |
+| [`marker`](#marker) | **separate venv** | Apache-2.0 | permissive | the structure-fidelity leader in the survey | **never run here** — needs a GPU and weights |
+| [`surya`](#surya) | **separate venv** | Apache-2.0 | permissive | OCR and reading order in 90+ languages | **never run here** |
+| [`mineru`](#mineru) | **separate venv** | `LicenseRef-MinerU` | **restricted** | formulas and complex tables | **never run here**; its licence puts obligations on *you* |
+| [`olmocr`](#olmocr) | **separate venv** | Apache-2.0 | permissive | Allen AI's OCR | **never run here**; genuinely needs NVIDIA |
+| [`deepseek_ocr`](#deepseek_ocr--the-most-on-theme-backend-in-the-project) | HTTP service | MIT *(reported)* | permissive | optical context compression | **never run here**; you run the service |
+| [`dots_ocr`](#dots_ocr) | HTTP service | MIT *(reported)* | permissive | layout and text in one 1.7B model | **never run here** |
 
 Every licence above was read from the **installed package metadata** at the
 moment its adapter was written, not taken from `docs/research/RESEARCH.md`. That
@@ -1122,12 +1149,18 @@ turns the chain off entirely.
 
 ## What is not here yet
 
-| Backend | Why | Phase |
+Everything this table used to list has arrived; what remains is the one gap
+that matters and one that does not.
+
+| Backend | Why it is missing | Consequence |
 |---|---|---|
-| llmlingua2 | Prompt compression | 6 |
-| pymupdf4llm (AGPL), pandoc (GPL), libreoffice | Run outside this process; the copyleft two are **never imported** | 7 |
-| tesseract, paddleocr | OCR — the answer to every "empty document" warning above | 9 |
-| marker, mineru, olmocr, surya, deepseek-ocr | GPU tier, out of process | 9 |
+| **A CPU OCR engine** (tesseract, paddleocr) | Not wrapped. Every OCR path in this project goes through the GPU tier. | **`scanned.pdf` has no backend that can read it.** Four backends "succeed" on it with an empty string and only `pymupdf4llm` calls it a failure. This is the single largest coverage gap in the project. |
+| Anything else in `RESEARCH.md`'s survey | Judged not to earn its install cost, or superseded by something here | None — the survey is a starting point, not a checklist |
+
+The GPU tier (`marker`, `surya`, `mineru`, `olmocr`, `deepseek_ocr`,
+`dots_ocr`) is documented below and **not one of them has ever converted a
+document**: no GPU on the build machine and the weight host is denied. They are
+implemented, not demonstrated.
 
 ---
 
