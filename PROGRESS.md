@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-27 by Claude Code_
+_Last updated: 2026-08-28 by Claude Code_
 
 ## Status at a glance
 
@@ -18,7 +18,7 @@ _Last updated: 2026-08-27 by Claude Code_
 | 9 | Heavy backends (GPU tier, install-docs-only) | 🟨 **Complete; nothing run on hardware** | gate passed 2026-08-27 for the CPU-only path, which is the criterion. No heavy backend has converted a document: no GPU here, and the weight host is denied |
 | 10 | Benchmark harness | 🟨 **Complete in bytes; the token half is built and unfired** | gate passed 2026-08-27 for the byte-unit run: harness, 63-cell result set committed, `docs/BENCHMARKS.md` rewritten with limitations. The model-token rows need a `benchmark.yml` dispatch the sandbox cannot make |
 | 11 | Packaging, distribution, release | 🟨 **Built and verified; not tagged, not published** | artefacts built, `twine check --strict` clean, wheel installed and converting in a clean venv outside the source tree. **The `v0.1.0` tag push is refused with HTTP 403** — this integration can write the branch and not a tag ref. Container images unbuilt (no Docker daemon). Publishing is the owner's, by design |
-| 12 | Documentation completion and article support pack | ⬜ Not started | — |
+| 12 | Documentation completion and article support pack | ✅ Complete | passed 2026-08-28. README, FAQ, BACKENDS, article pack with a claims file, and `docs/REVIEW_PHASES_0_12.md` |
 
 ## Current session: the repairs, then Phases 9–12
 
@@ -260,7 +260,83 @@ the code; `tokenmill gui` remains a browser interface, with NiceGUI's `native`
 mode as the nearest thing available today. Recording it here so the plan and the
 repository do not disagree silently.
 
-## Re-evaluation: `docs/REVIEW_PHASES_0_8.md`
+## Phase 12 — documentation, and the article pack
+
+**Status: complete.**
+
+- **`docs/FAQ.md`** — including the questions whose honest answer is "we don't
+  know". Do the GPU backends work: unknown, none has ever run. Can it OCR a
+  scanned PDF: no. How trustworthy are the numbers: four named weaknesses.
+- **`docs/article/`** — `CLAIMS.md` labels every claim in the project
+  **Measured / Cited / Unverified**, six items in the last category.
+  `TABLES.md` and three charts are *generated* from `results.json` and a test
+  asserts the committed tables still match. `FINDINGS.md` is the five results we
+  did not expect.
+- **`README.md`** — the status block said "Phase 2" and now states 0.1.0 plus
+  the three things the project does not claim, above the fold. Five screenshots
+  embedded with captions checked against the images. An honest comparison table
+  against omniparse, docling-serve and the MarkItDown GUI forks, with the honest
+  version of the caveat next to the honest version of the pitch.
+- **`docs/BACKENDS.md`** — opens against the committed run; the stale "not here
+  yet" list replaced by the one real gap.
+- **`docs/REVIEW_PHASES_0_12.md`** — supersedes the 0–8 review, which stays.
+
+### The finding that contradicts the project's own thesis
+
+tokenmill was built on *the cheapest converter is usually the one that destroyed
+the most*. The matrix says that is true for documents and **backwards for web
+pages**.
+
+On `tables.pdf`, `pypdf` gives 481 bytes at fidelity 0.333 and `pymupdf4llm`
+gives 553 at 0.848 — pay more, get more. On `boilerplate.html`, `trafilatura`
+gives 2,854 bytes at 1.000 and `pandoc` gives 7,346 at 0.750 — the *expensive*
+output is the worse one.
+
+A PDF extractor recovers structure the format threw away, so doing less work
+means having less. A web extractor discards structure the format kept, so doing
+less work means keeping more. Same word, opposite consequences, and it was not
+predicted.
+
+### Ten defects introduced this session, nine found by reading output
+
+The full table is in `docs/REVIEW_PHASES_0_12.md` §4. The summary is that the
+suite is 1,552 tests, green, and caught **none** of them — because every one was
+the code doing exactly what it was told:
+
+- a manifest recording thirteen nulls under a field promising versions;
+- a memory column that climbed in *row* order;
+- the repository fixture silently unscored on a trailing-slash key;
+- `git_dirty` always true, and the first fix for it wrong in a second way;
+- a saving printed as `+19.8%`;
+- a GUI caption saying "one at a time" a phase after that stopped being true;
+- a README `compare` example naming the wrong backend as most faithful, wrong
+  since Phase 7;
+- a chart whose slope label claimed "the cheap one is better" on panels where
+  every backend scores identically;
+- and a stray `uv run` that created a `.venv` **inside the fixture corpus**
+  (removed; `--check` confirms 24 files byte-for-byte, and the committed
+  benchmark predates it).
+
+## Re-evaluation: `docs/REVIEW_PHASES_0_12.md`
+
+Written at the end of this session, superseding `REVIEW_PHASES_0_8.md`,
+which stays in the repository — a review is a record of what a session could
+see, and deleting it hides how the picture changed.
+
+Its verdict in one line: **tokenmill does what it says, on the corpus it
+says, in the unit it says — and the unit is not the one the project is
+about.** The architecture holds, the honesty machinery is unusually good,
+and the whole matrix is counted in bytes because this environment cannot
+count tokens at all.
+
+It carries every acceptance criterion with its evidence, the full 63-cell
+corpus checked against `results.json` by script, three defect tables
+(closed / open / introduced), and the three workflow dispatches that are the
+difference between "implemented" and "works".
+
+---
+
+## Previous re-evaluation: `docs/REVIEW_PHASES_0_8.md`
 
 Written at the end of the Phase 7/8 session, superseding
 `docs/REVIEW_PHASES_0_6.md` (which stays in the repository, for the same reason
@@ -291,7 +367,7 @@ whole-corpus table with tokens beside fidelity, the status of every defect from
 the previous list, eight new ones, and a recommendation **against starting
 Phase 7 yet**.
 
-## Current phase: the Phase 10 fidelity slice (complete), then 5, then 6
+## Historical: the Phase 10 fidelity slice, built ahead of Phase 5
 
 Phases 3 and 4 are merged into `Main` (PRs #11 and #13). The fidelity-scoring
 slice of Phase 10 was built first, ahead of Phase 5, on the owner's instruction
@@ -304,8 +380,12 @@ public; the five-day runner-scheduling failure was a billing condition, not our
 YAML. Its first real runs found 24 failures and then 1 more — three of them
 mine, twenty-one of them latent in Phase 4 since 2026-08-22, and the last a
 CI-only rendering difference in a help-text assertion. See the verification log
-entry for that date. Until a run comes back green, everything below is still
-local green, which is not the same claim.
+entry for that date.
+
+*(Read as history. The sentence that followed here — "until a run comes back
+green, everything below is still local green" — was answered by CI run 101 on
+`Main` at `6d09b7ac`: 23 green, 2 skipped. The remaining CI unknowns are named in
+the Phase 10, 11 and 12 sections above and in `docs/REVIEW_PHASES_0_12.md` §5.)*
 
 ## Previous phase: 2 — Document backends (complete)
 
