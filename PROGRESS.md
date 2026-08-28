@@ -17,7 +17,7 @@ _Last updated: 2026-08-27 by Claude Code_
 | 8 | GUI (FastAPI + NiceGUI) | ✅ Complete | passed 2026-08-27 |
 | 9 | Heavy backends (GPU tier, install-docs-only) | 🟨 **Complete; nothing run on hardware** | gate passed 2026-08-27 for the CPU-only path, which is the criterion. No heavy backend has converted a document: no GPU here, and the weight host is denied |
 | 10 | Benchmark harness | 🟨 **Complete in bytes; the token half is built and unfired** | gate passed 2026-08-27 for the byte-unit run: harness, 63-cell result set committed, `docs/BENCHMARKS.md` rewritten with limitations. The model-token rows need a `benchmark.yml` dispatch the sandbox cannot make |
-| 11 | Packaging, distribution, release | ⬜ Not started | — |
+| 11 | Packaging, distribution, release | 🟨 **Built and verified; not published** | artefacts built, `twine check --strict` clean, wheel installed and converting in a clean venv outside the source tree. The container images could not be built here — no Docker daemon. Publishing is the owner's, by design |
 | 12 | Documentation completion and article support pack | ⬜ Not started | — |
 
 ## Current session: the repairs, then Phases 9–12
@@ -166,6 +166,71 @@ this file checked against `results.json` **by script**: four corrections,
 including a `tokenmill compare` example in the README that had said "most
 faithful: pdfplumber" since Phase 7, when `pymupdf4llm` at 0.848 has been
 installed and beating it.
+
+## Phase 11 — packaging and release
+
+**Status: the artefact is built, checked and tagged. Nothing has been
+published**, which is what the owner asked for and also what the workflow
+enforces rather than merely intends.
+
+### The one design decision worth stating
+
+A tag push **builds and proves**; it does not publish. A version number is spent
+the moment PyPI accepts it — no republishing, no undo — so "the tag fired the
+workflow and the workflow published it" is a mistake with no way back.
+`release.yml` splits them: the tag builds, runs `twine check --strict`, installs
+the built wheel on nine OS/Python cells, builds both container targets and
+drafts a GitHub Release. Publishing is a separate manually-dispatched job in a
+GitHub Environment that a tag push cannot reach, using trusted publishing (OIDC)
+so no PyPI token is stored here.
+
+The smoke matrix deliberately **does not check out the repository**. A source
+tree in the working directory is exactly how a packaging bug hides: `import
+tokenmill` finds `src/` and passes.
+
+### Verified here, by running it
+
+| Check | Result |
+|---|---|
+| `uv build` | `tokenmill-0.1.0-py3-none-any.whl` (358 kB) and `.tar.gz` (1.34 MB) |
+| `twine check --strict` | PASSED on both — this is the "renders on GitHub, breaks on PyPI" check |
+| Wheel contents | 96 entries, 0.97 MB unpacked, all our own source. No vendored dependency, no binary, no weights |
+| Clean-venv install | 42 packages; `import tokenmill` **outside the source tree** works |
+| `tokenmill --version`, `backends` | both correct from the installed console script |
+| End-to-end conversion from the wheel | `page.html` → 172 → 93 bytes, −45.9%, via trafilatura |
+| Core weight **from the wheel** | **141.2 MB** against the 250 MB ceiling |
+| `hatchling build -t wheel` (the Dockerfile's build stage) | byte-identical wheel |
+
+### Not verified, and it is a real gap
+
+**Neither container image has been built.** There is no Docker daemon in this
+environment (`docker version` → "failed to connect to the docker API"). The
+`Dockerfile` is therefore unverified beyond its build stage. `release.yml` builds
+both targets on a runner and makes both system-binary backends actually convert
+`report.docx` — because this project already has the scar where `libreoffice`
+reported itself *available* on an install that could convert nothing — but that
+job has never run.
+
+**Nothing has been published to any index**, by instruction and by design. The
+PyPI-side trusted-publishing setup does not exist yet either; until it does the
+publish job fails at the credential exchange, having published nothing.
+
+### The sdist was wrong and is fixed
+
+It shipped `benchmarks/README.md` and `docker/README.md` while shipping neither
+directory's contents — documentation for files that were not in the archive.
+Phase 10's acceptance criterion is that a run is "re-runnable by a third party",
+and a third party's copy is the sdist, so the harness and the committed results
+now ship with it.
+
+### Deferred, on the owner's instruction
+
+**A PySide6 desktop shell and PyInstaller one-file builds** were listed as a
+Phase 11 option in `DEVELOPMENT_PLAN.md`. The owner put them out of scope for
+this session. They are not started, not stubbed, and not referenced anywhere in
+the code; `tokenmill gui` remains a browser interface, with NiceGUI's `native`
+mode as the nearest thing available today. Recording it here so the plan and the
+repository do not disagree silently.
 
 ## Re-evaluation: `docs/REVIEW_PHASES_0_8.md`
 
