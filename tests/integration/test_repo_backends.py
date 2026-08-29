@@ -390,6 +390,47 @@ class TestRepomix:
         assert result.metadata["file_count"] > 0
         assert "Tokens by directory" in result.text
 
+    def test_a_document_that_talks_about_repomix_does_not_invent_a_file(
+        self, tmp_path: Path, pipeline: Pipeline
+    ) -> None:
+        """Defect D6, which was a correctness bug rather than an untidiness.
+
+        Until Phase 9 this adapter asked repomix for Markdown and found file
+        boundaries with a regex for `^## File: <path>$`. A repository holding a
+        document that *quotes* that marker — a README explaining what a repomix
+        pack looks like is the obvious real case — produced a pack in which the
+        regex found a file repomix had never packed. `file_count` came back 3
+        for a two-file repository, a phantom path appeared in the per-directory
+        breakdown, and a token budget could have dropped it, cutting a real
+        file in half.
+
+        `--style json` has no such ambiguity. This test fails against the old
+        adapter and passes against the new one.
+        """
+        (tmp_path / "notes.md").write_text(
+            "# Notes about packing\n\n"
+            "Repomix packs a repository like this:\n\n"
+            "## File: totally/made/up.py\n\n"
+            "That line above is prose in a document, not a real file.\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "real.py").write_text("print('real')\n", encoding="utf-8")
+
+        result = pack(pipeline, tmp_path, "repomix", tree_tokens=True)
+
+        assert result.metadata["file_count"] == 2, (
+            "repomix packed two files and tokenmill counted "
+            f"{result.metadata['file_count']}. A path quoted inside a document "
+            "is being read as a file boundary again."
+        )
+        assert (
+            "totally/made/up.py"
+            not in result.text.split("# Directory Structure")[-1].split("# Files")[0]
+        ), "the phantom path reached the directory structure"
+        # The line is still there as *content*, which is the whole point: it is
+        # a real line of a real file and must survive.
+        assert "## File: totally/made/up.py" in result.text
+
 
 @requires_binary("code2prompt")
 class TestCode2Prompt:

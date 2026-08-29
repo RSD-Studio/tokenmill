@@ -42,14 +42,11 @@ from typing import Any
 from nicegui import app as nicegui_app
 from nicegui import ui
 
-from tokenmill.gui import api
+from tokenmill.gui import api, batch
+from tokenmill.gui.auth import ServerTokenGuard
 from tokenmill.gui.batch import BatchRunner, ItemState
 
 __all__ = ["build", "run"]
-
-#: Where an uploaded file is staged. Inside the user's own temp area; removed
-#: when the process exits.
-_UPLOADS = Path.home() / ".cache" / "tokenmill" / "uploads"
 
 #: How often the batch panel re-reads the runner's state, in seconds.
 _REFRESH_S = 0.2
@@ -169,7 +166,10 @@ def build(state: _State | None = None) -> None:
         state: The page's state; a fresh one is made when omitted.
     """
     st = state if state is not None else _State()
-    _UPLOADS.mkdir(parents=True, exist_ok=True)
+    # Defect N14: a long-running --server accumulated every file anybody ever
+    # dropped on it. Pruning here as well as after each upload means a server
+    # that is loaded and then left alone still sheds yesterday's documents.
+    api.prune_uploads()
 
     ui.dark_mode().bind_value_from(nicegui_app.storage.user, "dark", lambda v: bool(v))
 
@@ -305,15 +305,14 @@ class _ConvertPanel:
         installed `nicegui.elements.upload_files.FileUpload` rather than guessed
         at a second time.
 
+        Sanitising the name and bounding the staging directory both belong to
+        :func:`tokenmill.gui.api.stage_upload`, where a test can drive them
+        without a browser — which is the whole reason the api layer exists.
+
         Args:
             event: NiceGUI's upload event.
         """
-        # The browser sends the base name only, and a hostile one can still be
-        # `../../etc/passwd`. Path().name strips every separator on both
-        # platforms, so the write cannot escape the staging directory.
-        safe = Path(event.file.name).name or "upload"
-        target = _UPLOADS / safe
-        target.write_bytes(await event.file.read())
+        target = api.stage_upload(event.file.name, await event.file.read())
         self.state.sources.append(target)
         self._render_files()
 
@@ -463,9 +462,14 @@ class _BatchPanel:
         """Lay out the panel and start the refresh timer."""
         with ui.card().classes("w-full"):
             ui.label("Batch").classes("text-lg font-semibold")
+            # Phase 9 gave the queue a thread pool and this line kept saying
+            # "one at a time" for a whole phase, which is the sort of caption a
+            # reader believes because it is right next to the numbers.
             ui.label(
-                "Conversions run one at a time on a background thread. The interface "
-                "stays live; see the batch module for why they are not parallel."
+                f"Up to {batch.default_workers()} conversions run at once on background "
+                "threads. The interface stays live. Parallelism helps a subprocess "
+                "backend (3.1x measured on pandoc + libreoffice) and slightly hurts an "
+                "in-process one (0.91x), because of the GIL; see the batch module."
             ).classes("text-xs opacity-60")
             with ui.row().classes("gap-2"):
                 ui.button("Run the staged files", on_click=self._start).props("color=primary")
@@ -752,6 +756,7 @@ def run(
     host: str = "127.0.0.1",
     port: int = 8080,
     server: bool = False,
+    token: str | None = None,
     native: bool = False,
     show: bool = True,
     reload: bool = False,
@@ -763,12 +768,32 @@ def run(
         port: Port to listen on.
         server: Bind ``0.0.0.0`` for LAN or headless use. **Off by default**:
             binding every interface is a decision about somebody's network and
-            it should be typed, not defaulted into.
+            it should be typed, not defaulted into. Setting it installs
+            :class:`~tokenmill.gui.auth.ServerTokenGuard`, so every request must
+            carry ``token``.
+        token: The shared token to require. Only consulted when ``server`` is
+            set; the caller resolves it, so that the CLI can print it.
         native: Open a desktop window instead of a browser tab.
         show: Open a browser.
         reload: Reload on source changes. Development only.
+
+    Raises:
+        ValueError: If ``server`` is set without a token. There is deliberately
+            no unauthenticated ``--server``, so this is a programming error in
+            the caller rather than a configuration the user can reach.
     """
     ui.page("/")(lambda: build())
+
+    if server:
+        if not token:
+            msg = "server mode requires a token; resolve_server_token() supplies one"
+            raise ValueError(msg)
+        # Wrapping NiceGUI's own ASGI app rather than adding a Starlette
+        # middleware: the guard has to see the WebSocket the interface runs on,
+        # and `add_middleware` on the FastAPI instance would only cover the
+        # routes FastAPI itself dispatches.
+        nicegui_app.add_middleware(ServerTokenGuard, token=token)
+
     ui.run(
         host="0.0.0.0" if server else host,  # noqa: S104 - opt-in, documented above
         port=port,

@@ -6,10 +6,12 @@ from importlib.metadata import EntryPoint
 
 import pytest
 
-from tokenmill.core.models import ConvertOptions, ImageHandling, LinkHandling
+from tokenmill.core.models import ConvertOptions, ImageHandling, LinkHandling, Source
+from tokenmill.core.pipeline import Pipeline
 from tokenmill.post.base import (
     POSTPROCESSOR_ENTRY_POINT_GROUP,
     BasePostProcessor,
+    PostProcessContext,
     PostProcessor,
     PostProcessorRegistry,
     default_post_registry,
@@ -317,3 +319,198 @@ class Shouty(BasePostProcessor):
         """
         del options
         return text.upper()
+
+
+class TestThePostProcessorContext:
+    """Defect N2, the owner's §3.3: a post-processor can finally say something.
+
+    The requirement that matters is not that a context arrives — it is that a
+    post-processor written against the Phase 1 two-argument contract is called
+    exactly as it was, and cannot tell the difference. Every test here is about
+    one of those two halves.
+    """
+
+    @staticmethod
+    def _registry(*processors: object) -> PostProcessorRegistry:
+        registry = PostProcessorRegistry()
+        for processor in processors:
+            registry.register(processor)  # type: ignore[arg-type]
+        return registry
+
+    def test_a_two_parameter_processor_is_called_with_two_arguments(self) -> None:
+        """The whole compatibility promise, asserted rather than described."""
+        seen: list[int] = []
+
+        class OldContract(BasePostProcessor):
+            id = "old"
+            name = "Old"
+            description = "Written against the Phase 1 contract."
+
+            def process(self, text: str, options: ConvertOptions) -> str:
+                del options
+                seen.append(2)
+                return text.upper()
+
+        processor = OldContract()
+        registry = self._registry(processor)
+
+        result = registry.run(processor, "hello", ConvertOptions(), PostProcessContext("old"))
+
+        assert result == "HELLO"
+        assert seen == [2]
+
+    def test_a_three_parameter_processor_receives_the_context(self) -> None:
+        class NewContract(BasePostProcessor):
+            id = "new"
+            name = "New"
+            description = "Takes a context."
+
+            def process(
+                self,
+                text: str,
+                options: ConvertOptions,
+                context: PostProcessContext | None = None,
+            ) -> str:
+                del options
+                if context is not None:
+                    context.warn("something worth saying")
+                    context.note("did_something", True)
+                return text
+
+        processor = NewContract()
+        registry = self._registry(processor)
+        context = PostProcessContext("new")
+
+        registry.run(processor, "hello", ConvertOptions(), context)
+
+        assert context.warnings == ["something worth saying"]
+        assert context.metadata == {"did_something": True}
+
+    def test_a_keyword_only_context_is_recognised(self) -> None:
+        class KeywordOnly(BasePostProcessor):
+            id = "kw"
+            name = "Keyword"
+            description = "Declares context keyword-only."
+
+            def process(
+                self,
+                text: str,
+                options: ConvertOptions,
+                *,
+                context: PostProcessContext | None = None,
+            ) -> str:
+                del options
+                if context is not None:
+                    context.note("reached", True)
+                return text
+
+        registry = self._registry()
+
+        assert registry.wants_context(KeywordOnly())
+
+    def test_a_star_args_processor_is_not_given_a_context(self) -> None:
+        """`*args` swallows a context rather than using it.
+
+        A processor written that way has declared nothing, and handing it an
+        argument it will silently drop is worse than not handing it one: the
+        author would see no error and no context, and have nothing to debug.
+        """
+
+        class Sloppy:
+            id = "sloppy"
+            name = "Sloppy"
+            description = "Takes anything."
+            destructive = False
+            in_default_chain = False
+            order = 500
+
+            def process(self, *args: object) -> str:
+                return str(args[0])
+
+        registry = self._registry()
+
+        assert not registry.wants_context(Sloppy())
+
+    def test_the_answer_is_cached(self) -> None:
+        class Counting(BasePostProcessor):
+            id = "counting"
+            name = "Counting"
+            description = "For the cache test."
+
+            def process(self, text: str, options: ConvertOptions) -> str:
+                del options
+                return text
+
+        processor = Counting()
+        registry = self._registry(processor)
+
+        first = registry.wants_context(processor)
+        second = registry.wants_context(processor)
+
+        assert first is second is False
+        assert id(processor) in registry._wants_context  # the cache, by name
+
+
+class TestThePipelineCollectsWhatAPostProcessorSays:
+    def test_a_warning_is_attributed_and_reaches_the_result(self) -> None:
+        class Noisy(BasePostProcessor):
+            id = "noisy"
+            name = "Noisy"
+            description = "Warns."
+            in_default_chain = True
+
+            def process(
+                self,
+                text: str,
+                options: ConvertOptions,
+                context: PostProcessContext | None = None,
+            ) -> str:
+                del options
+                if context is not None:
+                    context.warn("there was nothing to do")
+                return text
+
+        posts = PostProcessorRegistry()
+        posts.register(Noisy())
+        pipeline = Pipeline(post_processors=posts)
+
+        result = pipeline.run(
+            Source.from_text("some text", name="a.md"), ConvertOptions(tokenizer="bytes")
+        )
+
+        assert "noisy: there was nothing to do" in result.warnings
+
+    def test_a_note_is_namespaced_by_processor(self) -> None:
+        """Two processors noting the same key must not overwrite each other."""
+
+        def maker(processor_id: str) -> object:
+            class Noting(BasePostProcessor):
+                id = processor_id
+                name = processor_id
+                description = "Notes a ratio."
+                in_default_chain = True
+
+                def process(
+                    self,
+                    text: str,
+                    options: ConvertOptions,
+                    context: PostProcessContext | None = None,
+                ) -> str:
+                    del options
+                    if context is not None:
+                        context.note("ratio", processor_id)
+                    return text
+
+            return Noting()
+
+        posts = PostProcessorRegistry()
+        posts.register(maker("first"))  # type: ignore[arg-type]
+        posts.register(maker("second"))  # type: ignore[arg-type]
+        pipeline = Pipeline(post_processors=posts)
+
+        result = pipeline.run(
+            Source.from_text("some text", name="a.md"), ConvertOptions(tokenizer="bytes")
+        )
+
+        assert result.metadata["post.first.ratio"] == "first"
+        assert result.metadata["post.second.ratio"] == "second"

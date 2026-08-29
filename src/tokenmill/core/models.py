@@ -66,6 +66,29 @@ class LicenseTier(StrEnum):
     PERMISSIVE = "permissive"
     #: AGPL / GPL. Must be invoked out of process; never imported.
     COPYLEFT = "copyleft"
+    #: **Source-available**: an otherwise permissive licence carrying extra
+    #: obligations — a revenue or user threshold, an attribution requirement for
+    #: online services, a no-managed-service clause, or a change date. BUSL-1.1,
+    #: Elastic-2.0, SSPL, PolyForm, anything with a Commons Clause, and every
+    #: unrecognised ``LicenseRef-`` identifier.
+    #:
+    #: Added in Phase 9 for MinerU, whose metadata says
+    #: ``LicenseRef-MinerU-Open-Source-License`` and whose bundled text is
+    #: "Apache License 2.0 **and is subject to the additional terms below**":
+    #: a commercial licence above 100M MAU or $20M monthly revenue, and an
+    #: attribution obligation for anyone offering it as an online service.
+    #:
+    #: None of the three existing tiers fitted. It is not copyleft — nothing
+    #: obliges anyone to publish source. It is not non-commercial — commercial
+    #: use is expressly allowed below the thresholds. And calling it permissive
+    #: would have been a lie with a real consequence: ``tokenmill gui --server``
+    #: is an online service, and its operator would have inherited an
+    #: attribution obligation nobody told them about.
+    #:
+    #: Treated exactly like copyleft by the mechanism — never imported, always
+    #: out of process — because the obligations are the *user's* to read and
+    #: tokenmill must not quietly accept them on their behalf.
+    RESTRICTED = "restricted"
     #: Weights or code under a non-commercial licence. Excluded by default.
     NON_COMMERCIAL = "non-commercial"
 
@@ -302,10 +325,14 @@ class BackendInfo:
         """Enforce the licence policy that the whole project rests on.
 
         Raises:
-            ValueError: If a copyleft or non-commercial backend declares that it
-                runs in-process. ``CONTRIBUTING.md`` rule 2 says AGPL/GPL tools
-                are never imported, and this is where that becomes unarguable:
-                a violating adapter cannot even be constructed.
+            ValueError: If a backend whose tier is anything but
+                :attr:`LicenseTier.PERMISSIVE` declares that it runs in-process.
+                ``CONTRIBUTING.md`` rule 2 says AGPL/GPL tools are never
+                imported, and this is where that becomes unarguable: a violating
+                adapter cannot even be constructed. The rule is written against
+                *not permissive* rather than against a list of tiers, which is
+                why adding :attr:`LicenseTier.RESTRICTED` in Phase 9 needed no
+                change here.
         """
         if self.license_tier is not LicenseTier.PERMISSIVE and (
             self.isolation is IsolationMode.IN_PROCESS

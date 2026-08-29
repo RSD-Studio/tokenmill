@@ -36,6 +36,11 @@ GUI = Path(__file__).resolve().parents[2] / "src" / "tokenmill" / "gui"
 _ALLOWED_IN_APP = {
     "tokenmill.gui",
     "tokenmill.gui.api",
+    # The `--server` guard. It is transport, not a conversion decision: it never
+    # sees a Source and never calls the pipeline, and it lives in `gui/` rather
+    # than in `core/` precisely because it is about the interface's HTTP surface
+    # and nothing the CLI has.
+    "tokenmill.gui.auth",
     "tokenmill.gui.batch",
     "tokenmill.core.models",
     "tokenmill.core.registry",

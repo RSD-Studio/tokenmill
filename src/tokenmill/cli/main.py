@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Final, NoReturn
 
@@ -44,14 +45,15 @@ import typer
 from tokenmill import __version__
 from tokenmill.cli.format import (
     format_backend_comparison,
+    format_diagnosis,
     format_fidelity_report,
     format_format_comparison,
     format_result_report,
     format_table,
 )
-from tokenmill.core.compare import compare_backends, compare_formats
+from tokenmill.core.compare import compare_backends, compare_format_tables
 from tokenmill.core.config import load_config
-from tokenmill.core.errors import TokenmillError
+from tokenmill.core.errors import ConfigError, TokenmillError
 from tokenmill.core.models import (
     ConversionResult,
     Domain,
@@ -804,23 +806,26 @@ def compare(
         if formats_option
         else []
     )
-    format_comparison = None
+    format_comparisons: tuple[Any, ...] = ()
     if formats:
-        format_comparison = _compare_formats_for(comparison, formats, options)
+        format_comparisons = _compare_formats_for(comparison, formats, options)
 
     if as_json:
         payload: dict[str, Any] = {"backends": _comparison_to_json(comparison)}
-        if format_comparison is not None:
-            payload["formats"] = _format_comparison_to_json(format_comparison)
+        if format_comparisons:
+            # A list, one entry per table, because a document with three tables
+            # has three answers (defect N4). Before Phase 9 this was a single
+            # object holding the first table's, silently.
+            payload["formats"] = [_format_comparison_to_json(fc) for fc in format_comparisons]
         print(json.dumps(payload, indent=2))
     else:
         print(format_backend_comparison(comparison))
-        if format_comparison is not None:
+        for format_comparison in format_comparisons:
             print()
             print(format_format_comparison(format_comparison))
 
     if write is not None:
-        _write_variants(write, comparison, format_comparison)
+        _write_variants(write, comparison, format_comparisons)
 
 
 def _resolve_truth(
@@ -860,23 +865,26 @@ def _resolve_truth(
     return name, dict(truth)
 
 
-def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> Any:
-    """Re-encode the best available converted table in several formats.
+def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> tuple[Any, ...]:
+    """Re-encode **every** converted table in several formats.
+
+    Defect N4: this used to compare the first table and stop, which is invisible
+    on a one-table fixture and wrong on a real report.
 
     Args:
         comparison: The backend comparison, whose first successful row supplies
-            the table.
+            the text.
         formats: The format ids to encode in.
         options: The conversion options, for the tokenizer.
 
     Returns:
-        The format comparison, or ``None`` when no backend produced a table.
+        One comparison per table, empty when no backend produced any output.
     """
     from tokenmill.formats.base import TableError, default_format_registry
 
     row = next((r for r in comparison.rows if r.ok and r.text), None)
     if row is None:
-        return None
+        return ()
 
     registry = default_tokenizer_registry()
     try:
@@ -886,7 +894,7 @@ def _compare_formats_for(comparison: Any, formats: list[str], options: Any) -> A
         counter = None
 
     try:
-        return compare_formats(
+        return compare_format_tables(
             row.text,
             formats,
             registry=default_format_registry(),
@@ -954,6 +962,8 @@ def _format_comparison_to_json(comparison: Any) -> dict[str, Any]:
         "tokenizer": comparison.tokenizer_id,
         "counts": unit[0],
         "is_model_tokenizer": unit[1],
+        "table_index": comparison.table_index,
+        "table_count": comparison.table_count,
         "table_rows": len(comparison.table.rows),
         "table_columns": len(comparison.table.headers),
         "cheapest": comparison.cheapest.format_id if comparison.cheapest else None,
@@ -969,13 +979,18 @@ def _format_comparison_to_json(comparison: Any) -> dict[str, Any]:
     }
 
 
-def _write_variants(directory: Path, comparison: Any, format_comparison: Any) -> None:
+def _write_variants(
+    directory: Path, comparison: Any, format_comparisons: Sequence[Any] = ()
+) -> None:
     """Write every variant to disk so a person can read them side by side.
 
     Args:
         directory: Where to write.
         comparison: The backend comparison.
-        format_comparison: The format comparison, or ``None``.
+        format_comparisons: One per table in the document. A document with
+            several tables writes ``table1.csv``, ``table2.csv`` and so on;
+            a document with one writes ``table.csv``, so the common case keeps
+            the name it had.
     """
     directory.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -987,11 +1002,16 @@ def _write_variants(directory: Path, comparison: Any, format_comparison: Any) ->
             continue
         (directory / f"{row.backend_id}.md").write_text(row.text, encoding="utf-8", newline="")
         written += 1
-    if format_comparison is not None:
+    for format_comparison in format_comparisons:
+        stem = (
+            "table"
+            if format_comparison.table_count == 1
+            else f"table{format_comparison.table_index + 1}"
+        )
         for row in format_comparison.rows:
             if row.text is None:
                 continue
-            (directory / f"table.{row.format_id}").write_text(
+            (directory / f"{stem}.{row.format_id}").write_text(
                 row.text, encoding="utf-8", newline=""
             )
             written += 1
@@ -1006,6 +1026,17 @@ def backends(
     ] = False,
     domain: Annotated[
         Domain | None, typer.Option("--domain", "-d", help="Only backends serving this domain.")
+    ] = None,
+    tier: Annotated[
+        str | None,
+        typer.Option(
+            "--tier",
+            help=(
+                "Only backends in this tier: a licence tier (permissive, "
+                "restricted, copyleft, non-commercial) or 'heavy' for the "
+                "GPU tier."
+            ),
+        ),
     ] = None,
     show_licenses: Annotated[
         bool,
@@ -1025,14 +1056,22 @@ def backends(
         _show_licenses(as_json=as_json)
         return
 
+    matches_tier = _tier_filter(tier)
+
     rows: list[list[str]] = []
     payload: list[dict[str, Any]] = []
     for converter in registry:
         info = converter.info
         if domain is not None and domain not in info.domains:
             continue
+        if not matches_tier(info):
+            continue
         availability = converter.is_available()
-        if not availability and not show_all:
+        # `--tier heavy` implies `--all`: every heavy backend is unavailable on
+        # a machine without one installed, and a filter that answered "no
+        # backends matched" to the question "what is in the GPU tier" would be
+        # useless exactly when it is asked.
+        if not availability and not show_all and tier != _HEAVY_TIER:
             continue
         rows.append(
             [
@@ -1243,10 +1282,6 @@ def main() -> None:
         sys.exit(EXIT_BUG)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    main()
-
-
 @app.command()
 def gui(
     port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on.")] = 8080,
@@ -1260,6 +1295,17 @@ def gui(
             help="Bind 0.0.0.0 for LAN or headless use, and do not open a browser.",
         ),
     ] = False,
+    token: Annotated[
+        str | None,
+        typer.Option(
+            "--token",
+            help=(
+                "Shared token --server requires on every request. Defaults to "
+                "$TOKENMILL_SERVER_TOKEN, then the config file's server_token, "
+                "then a freshly generated one printed at start-up."
+            ),
+        ),
+    ] = None,
     native: Annotated[
         bool, typer.Option("--native", help="Open a desktop window instead of a browser tab.")
     ] = False,
@@ -1270,12 +1316,13 @@ def gui(
 
     Binds localhost by default. `--server` binds every interface, which is a
     decision about somebody's network and so has to be typed rather than
-    defaulted into.
+    defaulted into — and it now requires a shared token on every request.
     """
     _configure_logging(verbose)
 
     try:
         from tokenmill.gui.app import run as run_gui
+        from tokenmill.gui.auth import QUERY_PARAM, resolve_server_token
     except ImportError as exc:
         # The same contract every optional backend has: a missing dependency is
         # an actionable message, never a traceback.
@@ -1284,14 +1331,141 @@ def gui(
         raise typer.Exit(code=1) from exc
 
     where = "0.0.0.0" if server else host  # noqa: S104 - reported, not bound, here
-    print(f"tokenmill gui on http://{where}:{port}", file=sys.stderr)
-    if server:
-        print(
-            "warning: --server binds every network interface. tokenmill has no "
-            "authentication; do not expose it to a network you do not trust.",
-            file=sys.stderr,
-        )
-    run_gui(host=host, port=port, server=server, native=native, show=not no_show)
+    if not server:
+        print(f"tokenmill gui on http://{where}:{port}", file=sys.stderr)
+        run_gui(host=host, port=port, server=False, native=native, show=not no_show)
+        return
+
+    try:
+        secret = resolve_server_token(token, configured=load_config().server_token)
+    except (ValueError, ConfigError) as exc:
+        _fail(str(exc))
+
+    # The URL carries the token because a browser cannot be asked to set a
+    # header, and printing a bare token beside a bare URL is an instruction
+    # nobody follows correctly. One line to copy.
+    print(
+        f"tokenmill gui on http://{where}:{port}/?{QUERY_PARAM}={secret.value}",
+        file=sys.stderr,
+    )
+    print(f"server token ({secret.origin}): {secret.value}", file=sys.stderr)
+    print(
+        "note:  --server binds every network interface and requires this token "
+        "on every request. It is not TLS, not user accounts and not an audit "
+        "trail: it stops another machine on your network reading your "
+        "documents, and nothing more. Tunnel over SSH or put HTTPS in front of "
+        "it if the network is not one you trust.",
+        file=sys.stderr,
+    )
+    run_gui(
+        host=host,
+        port=port,
+        server=True,
+        token=secret.value,
+        native=native,
+        show=not no_show,
+    )
+
+
+@app.command()
+def doctor(
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the findings as JSON.")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging.")] = False,
+) -> None:
+    """Report what is installed, what hardware there is, and how to install more.
+
+    The command exists to stop somebody spending an hour installing a
+    multi-gigabyte GPU backend on a machine that cannot run it. It never
+    guesses: a fact it could not establish is reported as unknown rather than
+    filled in, because an invented VRAM figure is exactly the number that makes
+    a model download fail at the end.
+    """
+    _configure_logging(verbose)
+
+    from tokenmill.backends.heavy.doctor import diagnose
+
+    diagnosis = diagnose()
+    if as_json:
+        print(json.dumps(_diagnosis_to_json(diagnosis), indent=2))
+        return
+    print(format_diagnosis(diagnosis))
+
+
+def _diagnosis_to_json(diagnosis: Any) -> dict[str, Any]:
+    """Render a diagnosis as JSON.
+
+    Args:
+        diagnosis: What `doctor` found.
+
+    Returns:
+        The JSON-ready mapping. `null` wherever something is not known, never a
+        substituted default: this output is meant to be machine-read, and a
+        zero VRAM figure would be indistinguishable from a real one.
+    """
+    gpu = diagnosis.gpu
+    return {
+        "python": diagnosis.python,
+        "platform": diagnosis.platform_description,
+        "gpu": {
+            "accelerator": gpu.accelerator.value,
+            "usable": gpu.usable,
+            "detail": gpu.detail,
+            "driver": gpu.driver,
+            "total_memory_mb": gpu.total_memory_mb,
+            "devices": [{"name": d.name, "memory_mb": d.memory_mb} for d in gpu.devices],
+            "notes": list(gpu.notes),
+        },
+        "tools": dict(diagnosis.tools),
+        "backends": [
+            {
+                "id": b.backend_id,
+                "name": b.name,
+                "available": bool(b.availability),
+                "status": b.availability.describe(),
+                "hint": b.availability.hint,
+                "license": b.licence,
+                "license_tier": b.tier.value,
+                "weights_license": b.weights_licence,
+                "weights_license_verified": b.weights_licence is not None,
+                "requires_gpu": b.requires_gpu,
+                "install_steps": list(b.install_steps),
+                "torch": b.torch,
+                "notes": list(b.notes),
+            }
+            for b in diagnosis.backends
+        ],
+        "warnings": list(diagnosis.warnings),
+    }
+
+
+#: The value of `--tier` that selects the GPU tier rather than a licence tier.
+#:
+#: Not a `LicenseTier`, deliberately. "Heavy" is a statement about hardware and
+#: dependency weight, and three of the six heavy backends are permissive, so
+#: folding it into the licence enum would have made two different questions
+#: share one answer.
+_HEAVY_TIER: Final = "heavy"
+
+
+def _tier_filter(tier: str | None) -> Any:
+    """Build the predicate `--tier` selects with.
+
+    Args:
+        tier: The requested tier, or ``None`` for everything.
+
+    Returns:
+        A predicate over `BackendInfo`.
+    """
+    if tier is None:
+        return lambda _info: True
+    if tier == _HEAVY_TIER:
+        return lambda info: info.requires_gpu
+    try:
+        wanted = LicenseTier(tier)
+    except ValueError:
+        known = ", ".join([*(t.value for t in LicenseTier), _HEAVY_TIER])
+        _fail(f"unknown tier {tier!r}", hint=f"known tiers: {known}")
+    return lambda info: info.license_tier is wanted
 
 
 def _show_licenses(*, as_json: bool) -> None:
@@ -1366,3 +1540,21 @@ def _show_licenses(*, as_json: bool) -> None:
         )
         print("see CONTRIBUTING.md rule 2 and docs/LICENSES.md", file=sys.stderr)
         raise typer.Exit(code=1)
+
+
+# At the very bottom, and that position is load-bearing rather than tidy.
+#
+# It used to sit halfway up this file, just after `main()`. Under
+# `python -m tokenmill.cli.main` the module executes top to bottom, so `main()`
+# ran before anything defined below it existed — and every command still worked,
+# because every command was above it. Phase 9 added a helper below and
+# `tokenmill backends --all` started failing with
+# `NameError: name '_tier_filter' is not defined`, but *only* through `python
+# -m`, not through the `tokenmill` console script, which imports the module
+# fully before calling anything.
+#
+# Caught by two tests that invoke the CLI as a subprocess rather than through
+# typer's runner. Moved here so the next person to add a helper does not
+# rediscover it.
+if __name__ == "__main__":  # pragma: no cover
+    main()

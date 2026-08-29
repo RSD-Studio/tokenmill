@@ -81,6 +81,7 @@ from tokenmill.backends.repo._common import (
     split_sections,
 )
 from tokenmill.core.errors import ConversionError
+from tokenmill.core.globalstate import process_global_state
 from tokenmill.core.models import (
     Availability,
     BackendInfo,
@@ -182,18 +183,22 @@ class GitingestConverter(BaseConverter):
         Raises:
             ConversionError: If gitingest fails.
         """
+        ingest = _load_gitingest()
         try:
+            # Defect D2: all three of these manipulate process-global state, so
+            # they are held under the one lock. Unlike the document adapters,
+            # whose blocks cover only an import, these have to cover the whole
+            # call — pathspec warns while gitingest builds its ignore rules,
+            # loguru's registry has to stay set while it logs, and
+            # `GITHUB_TOKEN` is read at the top of `ingest`. So **two gitingest
+            # conversions cannot overlap**, and `docs/BENCHMARKS.md` says what
+            # that costs a parallel batch.
             with (
-                _preserve_stdlib_logging(),  # the *import* is what reconfigures logging
+                process_global_state("gitingest conversion"),
                 _without_github_token(),
                 _quiet_gitingest(),
                 _without_pathspec_deprecation(),
             ):
-                # Imported here, not at module scope: CONTRIBUTING.md rule 3 —
-                # and inside the logging guard, because the import is what
-                # installs the handler.
-                from gitingest import ingest
-
                 summary, tree, content = ingest(
                     str(root),
                     max_file_size=settings.max_file_bytes,
@@ -278,6 +283,40 @@ class GitingestConverter(BaseConverter):
         return text
 
 
+#: The imported ``gitingest.ingest``, cached after the first use.
+#:
+#: Cached because **the import is the expensive and dangerous part**, not the
+#: call: it installs a loguru ``InterceptHandler`` on the stdlib root logger and
+#: drops that logger's level to 0. Doing it once, behind the lock, means the
+#: logging repair happens once too — where before it was a snapshot-and-restore
+#: of unchanged state on every single conversion, inside the block that
+#: serialises them.
+_INGEST: Any = None
+
+
+def _load_gitingest() -> Any:
+    """Import ``gitingest.ingest`` once, repairing the logging it breaks.
+
+    Imported here rather than at module scope: ``CONTRIBUTING.md`` rule 3, and
+    this one matters more than most, because the import has side effects on the
+    host process.
+
+    Returns:
+        The ``ingest`` callable.
+
+    Raises:
+        ImportError: If gitingest is not installed. The adapter's probe reports
+            that first, so reaching this is a caller that ignored it.
+    """
+    global _INGEST  # a deliberate write-once cache; see the note above
+    if _INGEST is not None:
+        return _INGEST
+    with process_global_state("importing gitingest"), _preserve_stdlib_logging():
+        from gitingest import ingest
+    _INGEST = ingest
+    return ingest
+
+
 def _counter_for(
     options: ConvertOptions, context: ConversionContext, *, wanted: bool
 ) -> tuple[Any, str]:
@@ -337,10 +376,11 @@ def _preserve_stdlib_logging() -> Iterator[None]:
     reconfigure the process it was imported into. The root logger's handlers and
     level are snapshotted and put back.
 
-    Note that this manipulates process-global state and is not thread-safe, the
-    same caveat that applies to ``warnings.catch_warnings`` in the document
-    adapters and to :func:`_without_github_token` above. ``PROGRESS.md`` records
-    all three for the Phase 8 batch runner.
+    This manipulates process-global state and is not thread-safe (defect D2).
+    It is entered from :func:`_load_gitingest`, under the process-global lock
+    and **once** — the import is what reconfigures logging, so repeating the
+    snapshot-and-restore per conversion was protecting unchanged state at the
+    cost of holding the lock for every pack.
 
     Yields:
         Nothing; the logging configuration is restored on the way out.
@@ -379,8 +419,13 @@ def _without_pathspec_deprecation() -> Iterator[None]:
     anywhere else still surfaces. Found the same way Phase 2's was: by running
     the suite, where the CLI had worked because it does not set ``-W error``.
 
-    Note that :func:`warnings.catch_warnings` manipulates global state and is
-    not thread-safe — recorded in ``PROGRESS.md`` for the Phase 8 batch runner.
+    :func:`warnings.catch_warnings` manipulates global state and is not
+    thread-safe (defect D2). This is entered from inside
+    :func:`~tokenmill.core.globalstate.process_global_state` in ``_ingest``
+    rather than acquiring the lock itself, because all four of gitingest's
+    global-state blocks cover the same call and four nested acquires of one
+    reentrant lock is noise. The lock is reentrant, so a caller that does
+    acquire it separately is safe too.
 
     Yields:
         Nothing; the filter is active for the duration of the block.
@@ -397,6 +442,10 @@ def _without_pathspec_deprecation() -> Iterator[None]:
 @contextlib.contextmanager
 def _quiet_gitingest() -> Iterator[None]:
     """Silence gitingest's own logging for the duration of the block.
+
+    Entered from inside :func:`~tokenmill.core.globalstate.process_global_state`
+    in ``_ingest``: loguru's activation registry is process-global, and two
+    threads toggling it race (defect D2).
 
     gitingest logs at INFO through loguru, whose default sink is stderr, so a
     single ``tokenmill repo`` printed eight lines of a dependency's internal
@@ -445,11 +494,19 @@ def _without_github_token() -> Iterator[None]:
     normal credential helper or SSH agent. So gitingest is only ever handed a
     local path here and has no legitimate use for a token at all.
 
-    Note that this manipulates process-global state and is therefore not
-    thread-safe, the same caveat that already applies to
-    ``warnings.catch_warnings`` in the document adapters. Nothing runs
-    conversions concurrently today; ``PROGRESS.md`` records it for the Phase 8
-    batch runner.
+    This manipulates process-global state and is not thread-safe (defect D2):
+    two threads that each pop the variable and restore it lose it from the
+    process entirely, because the second pop reads ``None`` and the second
+    restore writes nothing. Entered from inside
+    :func:`~tokenmill.core.globalstate.process_global_state` in ``_ingest``.
+
+    **There is no API alternative, and it was checked rather than assumed.**
+    ``ingest()`` takes a ``token`` argument, but gitingest resolves it as
+    ``token or os.getenv("GITHUB_TOKEN")`` — so passing ``None`` or ``""``
+    falls back to the environment, and passing a placeholder trips its own
+    ``validate_github_token``. Removing the variable is the only way to say
+    "there is no token", which matters because an unusually-formatted one in a
+    user's shell would otherwise fail a purely local pack.
 
     Yields:
         Nothing; the variables are restored on the way out.

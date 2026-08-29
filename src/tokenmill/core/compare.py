@@ -46,6 +46,7 @@ __all__ = [
     "FormatComparison",
     "FormatRow",
     "compare_backends",
+    "compare_format_tables",
     "compare_formats",
 ]
 
@@ -193,12 +194,20 @@ class FormatComparison:
         tokenizer_id: What the counts are in.
         table: The table every row encodes.
         rows: One per format, in id order.
+        table_index: Which table in the document this is, counting from zero.
+        table_count: How many tables the document had. Reported so a reader can
+            see that a document with three tables produced three comparisons —
+            defect N4 was that only the first was ever compared, and a report
+            that shows one table without saying how many there were is the
+            same silence in a different place.
     """
 
     source_name: str
     tokenizer_id: str
     table: Table
     rows: tuple[FormatRow, ...]
+    table_index: int = 0
+    table_count: int = 1
 
     @property
     def cheapest(self) -> FormatRow | None:
@@ -294,6 +303,10 @@ def compare_formats(
 ) -> FormatComparison:
     """Re-encode the first table in ``text`` in several serialisations.
 
+    Kept for callers that genuinely want one table. Anything reporting on a
+    whole document should use :func:`compare_format_tables`, which is what
+    closes defect N4.
+
     Args:
         text: Converted Markdown containing a table.
         format_ids: The formats to encode in.
@@ -310,7 +323,98 @@ def compare_formats(
             honest to report in that case — every format would encode an empty
             table identically.
     """
-    table = MarkdownTableEncoder().decode(text)
+    tables = MarkdownTableEncoder().decode_all(text)
+    if not tables:
+        msg = "no Markdown table found: a header row must be followed by a delimiter row"
+        raise TableError(msg)
+    return _compare_one_table(
+        tables[0],
+        format_ids,
+        registry=registry,
+        count=count,
+        tokenizer_id=tokenizer_id,
+        source_name=source_name,
+        table_index=0,
+        table_count=len(tables),
+    )
+
+
+def compare_format_tables(
+    text: str,
+    format_ids: Sequence[str],
+    *,
+    registry: TableEncoderRegistry,
+    count: Any,
+    tokenizer_id: str,
+    source_name: str,
+) -> tuple[FormatComparison, ...]:
+    """Re-encode **every** table in ``text`` in several serialisations.
+
+    Defect N4. ``compare --formats`` used to re-encode the first table and stop,
+    which is invisible on a fixture that has one and wrong on a real report:
+    a document whose three tables have different shapes will not have one
+    cheapest format, and reporting the first table's answer as the document's
+    is a measurement of something nobody asked about.
+
+    Args:
+        text: Converted Markdown that may contain tables.
+        format_ids: The formats to encode in.
+        registry: Where the encoders come from.
+        count: Counts one string, or ``None`` when no tokenizer loaded.
+        tokenizer_id: The tokenizer's id, for the counts' provenance.
+        source_name: What the tables came from.
+
+    Returns:
+        One comparison per table, in document order.
+
+    Raises:
+        TableError: If ``text`` carries no table at all.
+    """
+    tables = MarkdownTableEncoder().decode_all(text)
+    if not tables:
+        msg = "no Markdown table found: a header row must be followed by a delimiter row"
+        raise TableError(msg)
+    return tuple(
+        _compare_one_table(
+            table,
+            format_ids,
+            registry=registry,
+            count=count,
+            tokenizer_id=tokenizer_id,
+            source_name=source_name,
+            table_index=index,
+            table_count=len(tables),
+        )
+        for index, table in enumerate(tables)
+    )
+
+
+def _compare_one_table(
+    table: Table,
+    format_ids: Sequence[str],
+    *,
+    registry: TableEncoderRegistry,
+    count: Any,
+    tokenizer_id: str,
+    source_name: str,
+    table_index: int,
+    table_count: int,
+) -> FormatComparison:
+    """Encode one already-decoded table in each requested format.
+
+    Args:
+        table: The table to encode.
+        format_ids: The formats to encode in.
+        registry: Where the encoders come from.
+        count: Counts one string, or ``None`` when no tokenizer loaded.
+        tokenizer_id: The tokenizer's id, for the counts' provenance.
+        source_name: What the table came from.
+        table_index: Which table in the document this is.
+        table_count: How many the document had.
+
+    Returns:
+        The comparison, one row per format.
+    """
     rows: list[FormatRow] = []
     for format_id in format_ids:
         encoder = registry.get(format_id)
@@ -337,4 +441,6 @@ def compare_formats(
         tokenizer_id=tokenizer_id,
         table=table,
         rows=tuple(rows),
+        table_index=table_index,
+        table_count=table_count,
     )

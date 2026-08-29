@@ -81,6 +81,49 @@ _NON_COMMERCIAL_RE: Final = re.compile(
     re.IGNORECASE,
 )
 
+#: Licences that are open to read and **not** open to use without conditions
+#: beyond attribution: a revenue or user threshold, a no-managed-service clause,
+#: a change date, or a service-source obligation.
+#:
+#: Phase 9 found this gap the same way Phase 7 found the disjunction one — by
+#: reading real metadata. Before this, ``classify`` returned **permissive** for
+#: every one of::
+#:
+#:     BUSL-1.1        Elastic-2.0        SSPL-1.0
+#:     LicenseRef-MinerU-Open-Source-License
+#:
+#: SSPL is the alarming one: it is aggressively copyleft for anything offered as
+#: a service, and it was being waved through as MIT-equivalent. Elastic-2.0
+#: matters to this project directly — ``kreuzberg`` is pinned ``<5`` precisely
+#: because its successor line moved to it, and if that pin were ever removed
+#: this classifier would have said nothing.
+_RESTRICTED_RE: Final = re.compile(
+    r"(?:"
+    r"\bBUSL\b|\bBusiness\s+Source\s+Licen[cs]e\b"
+    r"|\bElastic[-\s]?(?:Licen[cs]e[-\s]?)?2(?:\.0)?\b"
+    r"|\bSSPL\b|\bServer\s+Side\s+Public\s+Licen[cs]e\b"
+    r"|\bPolyForm\b"
+    r"|\bCommons\s+Clause\b"
+    r"|\bCAL-1\.0\b"
+    r"|\bFair\s+Source\b"
+    r"|additional\s+terms"
+    r")",
+    re.IGNORECASE,
+)
+
+#: An SPDX ``LicenseRef-`` identifier, which by definition names a licence that
+#: is **not** on the SPDX list.
+#:
+#: The rule this drives is the load-bearing one: *an identifier whose whole
+#: meaning is "this is not a standard licence" must never be read as "assume the
+#: friendliest one".* Before Phase 9, ``LicenseRef-Anything-At-All`` classified
+#: as permissive.
+#:
+#: It is checked **last**, after the copyleft, non-commercial and purchasable
+#: rules, so ``LicenseRef-Artifex-Commercial`` and ``LicenseRef-Proprietary``
+#: keep the sharper answers those rules already gave them.
+_LICENSE_REF_RE: Final = re.compile(r"\bLicenseRef-[\w.\-]+", re.IGNORECASE)
+
 #: A branch of a disjunction that has to be **bought**, and which tokenmill
 #: therefore does not hold.
 #:
@@ -206,12 +249,17 @@ def classify(expression: str) -> LicenseTier:
         expression: An SPDX expression, a trove classifier's tail, or free text.
 
     Returns:
-        The tier. An empty or unrecognised expression is
+        The tier. An **empty** expression is
         :attr:`~tokenmill.core.models.LicenseTier.PERMISSIVE`, which is
         deliberate: this function is one half of the check and
-        :func:`audit_installed` reports the raw expression beside it, so an
-        unreadable licence surfaces as a licence an auditor has to read rather
-        than as a false accusation.
+        :func:`audit_installed` reports the raw expression beside it, so a
+        package that simply says nothing surfaces as one an auditor has to read
+        rather than as a false accusation.
+
+        An expression that is present but *unrecognised* is a different case
+        and, since Phase 9, gets a different answer where it says so of itself:
+        a ``LicenseRef-`` identifier means "not a standard licence" and returns
+        :attr:`~tokenmill.core.models.LicenseTier.RESTRICTED`.
     """
     text = expression.strip()
     if not text:
@@ -249,6 +297,14 @@ def classify(expression: str) -> LicenseTier:
         # licence that must be bought is not open source at all, which
         # CONTRIBUTING.md rule 1 excludes before rule 2 is even reached.
         return LicenseTier.NON_COMMERCIAL
+    if _RESTRICTED_RE.search(text):
+        return LicenseTier.RESTRICTED
+    if _LICENSE_REF_RE.search(text):
+        # "Not on the SPDX list" is the one thing this identifier is guaranteed
+        # to mean, and it is not compatible with assuming the friendliest
+        # answer. Reported as restricted so an auditor reads it, rather than as
+        # permissive so nobody does.
+        return LicenseTier.RESTRICTED
     return LicenseTier.PERMISSIVE
 
 
@@ -259,12 +315,21 @@ def _permissiveness(tier: LicenseTier) -> int:
         tier: The tier to rank.
 
     Returns:
-        0 for permissive, 1 for copyleft, 2 for non-commercial.
+        0 for permissive, rising to 3 for non-commercial.
+
+        ``RESTRICTED`` sits **between** permissive and copyleft, and where it
+        sits is load-bearing in a disjunction, which takes the most permissive
+        branch on offer. ``Apache-2.0 OR BUSL-1.1`` has an unconditional branch
+        and is permissive. ``BUSL-1.1 OR AGPL-3.0`` has none, and resolves to
+        restricted — fewer obligations on tokenmill than the AGPL branch, and
+        crucially still **not** permissive, so the mechanism keeps it out of
+        this process either way.
     """
     return {
         LicenseTier.PERMISSIVE: 0,
-        LicenseTier.COPYLEFT: 1,
-        LicenseTier.NON_COMMERCIAL: 2,
+        LicenseTier.RESTRICTED: 1,
+        LicenseTier.COPYLEFT: 2,
+        LicenseTier.NON_COMMERCIAL: 3,
     }[tier]
 
 

@@ -18,6 +18,7 @@ trust.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -276,16 +277,43 @@ class TestTheComparisonView:
     def test_the_format_comparison_re_encodes_a_table(self, request_for: MakeRequest) -> None:
         summary = api.convert(request_for("tables.pdf", backend="pdfplumber"))
 
-        comparison = api.compare_across_formats(
+        comparisons = api.compare_across_formats(
             summary.text,
             ["markdown", "csv", "toon", "json"],
             tokenizer=BYTES,
             source_name="tables.pdf",
         )
 
+        assert len(comparisons) == 1
+        comparison = comparisons[0]
         assert len(comparison.rows) == 4
         assert comparison.cheapest is not None
         assert comparison.cheapest.format_id == "csv"
+
+    def test_every_table_in_a_document_is_compared(self, request_for: MakeRequest) -> None:
+        """Defect N4, at the layer the GUI actually calls.
+
+        `tables.pdf` has one table, so the fixture corpus cannot fail the old
+        behaviour — which is precisely why the defect survived five phases. The
+        text is supplied directly here instead.
+        """
+        del request_for
+        text = (
+            "# Report\n\n"
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n"
+            "Prose between the tables.\n\n"
+            "| x | y | z |\n| --- | --- | --- |\n| 3 | 4 | 5 |\n| 6 | 7 | 8 |\n"
+        )
+
+        comparisons = api.compare_across_formats(
+            text, ["markdown", "csv"], tokenizer=BYTES, source_name="report.md"
+        )
+
+        assert len(comparisons) == 2
+        assert [c.table_index for c in comparisons] == [0, 1]
+        assert {c.table_count for c in comparisons} == {2}
+        assert len(comparisons[0].table.rows) == 1
+        assert len(comparisons[1].table.rows) == 2
 
 
 class TestTheBatchQueue:
@@ -478,3 +506,103 @@ class TestFailureIsReadable:
             pytest.skip("docling is installed here, so there is no unavailability to check")
         assert summary.error
         assert summary.error_hint
+
+
+class TestStagedUploadsAreBounded:
+    """Defect N14: Phase 8 staged every upload and removed none of them.
+
+    A long-running `--server` instance accumulated every file anybody had ever
+    dropped on it — on disk, unencrypted, for the life of the machine. Both a
+    disk-space problem and a privacy one, and the two want different bounds,
+    which is why there are two.
+    """
+
+    def test_an_upload_is_written_under_the_staging_directory(self, tmp_path: Path) -> None:
+        target = api.stage_upload("report.docx", b"content", directory=tmp_path)
+
+        assert target == tmp_path / "report.docx"
+        assert target.read_bytes() == b"content"
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "../../etc/passwd",
+            "..\\..\\windows\\system32\\config\\sam",
+            "/etc/shadow",
+            "..",
+            "/",
+            ".",
+            "   ",
+            "",
+            "with\x00nul",
+        ],
+    )
+    def test_a_hostile_name_cannot_escape_the_directory(self, tmp_path: Path, hostile: str) -> None:
+        """The name comes from whoever is talking to the upload endpoint.
+
+        A browser sends a base name. Something that is not a browser sends
+        whatever it likes, and with `--server` that is now a thing on the
+        network rather than only the person at the keyboard.
+
+        `".."` is the case worth keeping. `Path("..").name` is `".."` rather
+        than the empty string, so taking the base name alone resolved to the
+        *parent directory* — a write outside the staging area. This test found
+        that; reading the code had not.
+        """
+        target = api.stage_upload(hostile, b"x", directory=tmp_path)
+
+        assert target.parent == tmp_path
+        assert target.is_file()
+        assert target.name not in {"", ".", ".."}
+
+    def test_files_older_than_the_age_bound_are_removed(self, tmp_path: Path) -> None:
+        old = tmp_path / "yesterday.pdf"
+        old.write_bytes(b"stale")
+        stale_time = time.time() - api.MAX_STAGED_AGE_S - 60
+        os.utime(old, (stale_time, stale_time))
+        fresh = tmp_path / "today.pdf"
+        fresh.write_bytes(b"current")
+
+        removed = api.prune_uploads(directory=tmp_path)
+
+        assert removed == (old,)
+        assert not old.exists()
+        assert fresh.exists()
+
+    def test_the_count_bound_keeps_the_newest(self, tmp_path: Path) -> None:
+        """An age bound alone lets a burst fill a disk inside the window."""
+        for index in range(api.MAX_STAGED_FILES + 5):
+            path = tmp_path / f"file{index:04d}.txt"
+            path.write_bytes(b"x")
+            # Explicit mtimes: several files written in the same millisecond
+            # would otherwise make "oldest" arbitrary and the test flaky.
+            stamp = time.time() - (api.MAX_STAGED_FILES + 5 - index)
+            os.utime(path, (stamp, stamp))
+
+        removed = api.prune_uploads(directory=tmp_path)
+
+        assert len(removed) == 5
+        assert [p.name for p in removed] == [f"file{i:04d}.txt" for i in range(5)]
+        assert len(list(tmp_path.iterdir())) == api.MAX_STAGED_FILES
+
+    def test_staging_prunes_as_it_goes(self, tmp_path: Path) -> None:
+        old = tmp_path / "ancient.pdf"
+        old.write_bytes(b"stale")
+        stale_time = time.time() - api.MAX_STAGED_AGE_S - 60
+        os.utime(old, (stale_time, stale_time))
+
+        api.stage_upload("new.pdf", b"fresh", directory=tmp_path)
+
+        assert not old.exists()
+
+    def test_pruning_a_directory_that_does_not_exist_is_not_an_error(self, tmp_path: Path) -> None:
+        """`build()` prunes before anything has been uploaded."""
+        assert api.prune_uploads(directory=tmp_path / "never-created") == ()
+
+    def test_a_subdirectory_is_left_alone(self, tmp_path: Path) -> None:
+        """Nothing here creates one, so anything that is not our file is not ours."""
+        (tmp_path / "keep").mkdir()
+
+        api.prune_uploads(directory=tmp_path)
+
+        assert (tmp_path / "keep").is_dir()

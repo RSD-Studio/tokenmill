@@ -117,6 +117,66 @@ jobs:
       - run: >
           uv sync --extra dev --extra fixtures --extra documents
           --extra web --extra repo --extra chunk --extra gui
+
+      # The owner's §3.5. Phase 7's three out-of-process backends had their
+      # *conversion* paths exercised on exactly one machine — the development
+      # container — because GitHub's runners have neither tool and the AGPL
+      # environment is not built there. CI verified only that they report
+      # themselves unavailable and skip, which is precisely the condition
+      # docs/REVIEW_PHASES_0_6.md complained about for the whole project,
+      # narrowed to three backends.
+      #
+      # Ubuntu only, and that is deliberate rather than laziness. Homebrew and
+      # winget would add minutes to the two expensive runners (macOS bills at
+      # 10x, Windows at 2x) to re-prove a conversion path that is the same
+      # code. What the other cells still prove is the *absent* path, which is
+      # what almost every user experiences, and that is worth keeping honest by
+      # having runners where these really are missing.
+      #
+      # libreoffice-writer/-calc/-impress, not `libreoffice`: the metapackage
+      # is far larger and this project's own container proved the interesting
+      # case, which is that `libreoffice-core` alone puts soffice on PATH and
+      # converts nothing.
+      - name: Install Pandoc and LibreOffice (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            pandoc libreoffice-writer libreoffice-calc libreoffice-impress
+          pandoc --version | head -1
+          soffice --version
+
+      # Installing an AGPL package in CI, on purpose. The licence rule is about
+      # what *tokenmill* imports, and a separate interpreter is exactly the
+      # boundary the rule asks for — the same boundary the adapter enforces at
+      # runtime. `tests/unit/test_license_isolation.py`'s environment check
+      # audits *our* environment, which this is not, so it is unaffected by
+      # construction rather than by an exemption.
+      #
+      # ~/.local/share/tokenmill/pymupdf4llm is the conventional location the
+      # adapter's own install hint names, so this step is literally the command
+      # the tool prints to a user.
+      - name: Build the AGPL environment for pymupdf4llm (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 -m venv ~/.local/share/tokenmill/pymupdf4llm
+          ~/.local/share/tokenmill/pymupdf4llm/bin/pip install --quiet pymupdf4llm
+          ~/.local/share/tokenmill/pymupdf4llm/bin/python -c \
+            "import importlib.metadata as m; print('pymupdf4llm', m.version('pymupdf4llm'))"
+
+      - name: Confirm the three runtimes are visible to tokenmill
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run tokenmill backends --all
+
+      # And the check that matters most about the step above: an AGPL package
+      # now exists on this runner, and it must still be impossible for
+      # tokenmill to import it. The suite would catch this anyway; running it
+      # by name means a failure says *what* broke rather than only that
+      # something did.
+      - name: The licence boundary, with the AGPL package actually installed
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run pytest -q tests/unit/test_license_isolation.py -rs
+
       - name: Run tests
         run: uv run pytest -q --cov=tokenmill --cov-report=term-missing -rs
 
@@ -135,6 +195,21 @@ jobs:
       - run: >
           uv sync --extra dev --extra fixtures --extra documents
           --extra web --extra repo --extra chunk --extra gui
+      # And the same runtimes, for the same reason. Trap 7 in the Phase 9
+      # handover is exactly this mistake made once already: Phase 8 added the
+      # `gui` extra to the test and coverage jobs and not to the types job, and
+      # CI failed one job of 25 with the whole matrix green. A coverage figure
+      # measured with pandoc and libreoffice absent covers different lines of
+      # `core` than the test job executes.
+      - name: Install Pandoc and LibreOffice
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            pandoc libreoffice-writer libreoffice-calc libreoffice-impress
+      - name: Build the AGPL environment for pymupdf4llm
+        run: |
+          python3 -m venv ~/.local/share/tokenmill/pymupdf4llm
+          ~/.local/share/tokenmill/pymupdf4llm/bin/pip install --quiet pymupdf4llm
       # DEVELOPMENT_PLAN.md §4 sets a >=85% target on core and tokens
       # specifically; adapters elsewhere are thin wrappers and are allowed to be
       # lower. Gating the two packages the target names stops the number

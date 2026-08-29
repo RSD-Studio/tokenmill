@@ -1,0 +1,18 @@
+# The build stage copies the whole tree so hatchling can read the version and
+# the readme. Everything that is not needed to build a wheel is kept out, both
+# for image size and so a stale local artefact cannot end up inside.
+.git
+.github
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+dist
+htmlcov
+.coverage*
+benchmarks/results
+docs/images
+tests/fixtures
+node_modules

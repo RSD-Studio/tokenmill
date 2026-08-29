@@ -39,6 +39,7 @@ from tokenmill.core.errors import (
     CorruptSource,
     NetworkRequired,
 )
+from tokenmill.core.globalstate import process_global_state
 from tokenmill.core.models import Availability, Source
 from tokenmill.core.protocol import ConversionContext
 
@@ -188,10 +189,18 @@ def warnings_as_conversion_warnings(context: ConversionContext, *, activity: str
     warning is captured and handed to the user as a conversion warning instead:
     non-fatal, still visible, attributed to the thing that raised it.
 
-    Note that :func:`warnings.catch_warnings` manipulates global state and is
-    not thread-safe. That is fine today — nothing runs conversions concurrently
-    — and is recorded in ``PROGRESS.md`` as something the Phase 8 batch runner
-    has to account for.
+    :func:`warnings.catch_warnings` saves and restores a **module-global** filter
+    list, so two threads inside it interleave their save and restore and one
+    leaves the process holding the other's filters (defect D2). The block is
+    therefore held under
+    :func:`~tokenmill.core.globalstate.process_global_state`.
+
+    **Wrap the import, not the conversion.** Every caller in this repository
+    does, and it is the difference between a lock that costs nothing and one
+    that serialises the whole product: after the first conversion an import is a
+    ``sys.modules`` lookup, so the block is microseconds long and a batch
+    genuinely runs in parallel. A caller that wrapped the conversion instead
+    would be correct and slow, and nothing here would tell them.
 
     Args:
         context: Collects whatever was warned about.
@@ -200,10 +209,12 @@ def warnings_as_conversion_warnings(context: ConversionContext, *, activity: str
     Yields:
         Nothing; warnings are collected for the duration of the block.
     """
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        yield
-    for entry in caught:
+    with process_global_state(f"warning capture: {activity}"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            yield
+        collected = list(caught)
+    for entry in collected:
         context.warn(f"{activity}: {entry.category.__name__}: {entry.message}")
 
 

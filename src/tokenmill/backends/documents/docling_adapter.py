@@ -69,6 +69,7 @@ from tokenmill.backends._common import (
     warn_on_empty_output,
 )
 from tokenmill.core.errors import ConversionError
+from tokenmill.core.globalstate import process_global_state
 from tokenmill.core.models import (
     Availability,
     BackendInfo,
@@ -104,15 +105,19 @@ def _docling_own_deprecations_muted() -> Iterator[None]:
     one call and matched on the message, so an unrelated warning still gets
     through.
 
-    Note that :func:`warnings.catch_warnings` manipulates global state and is
-    not thread-safe. That is fine today — nothing runs conversions concurrently
-    — and is recorded in ``PROGRESS.md`` as something the Phase 8 batch runner
-    has to account for.
+    :func:`warnings.catch_warnings` is not thread-safe (defect D2), so this is
+    held under :func:`~tokenmill.core.globalstate.process_global_state`.
+
+    **This block covers the whole conversion, not just an import, and that has a
+    cost worth stating**: two docling conversions cannot overlap. Docling's
+    deprecation warning is raised while the document is being converted rather
+    than while the module is being imported, so there is nowhere narrower to put
+    it. `docs/BENCHMARKS.md` reports what that means for a parallel batch.
 
     Yields:
         Nothing; the filter is active for the duration of the block.
     """
-    with warnings.catch_warnings():
+    with process_global_state("docling conversion"), warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
             message=r"This field is deprecated\.",

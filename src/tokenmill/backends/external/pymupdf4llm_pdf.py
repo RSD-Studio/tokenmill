@@ -49,7 +49,7 @@ import sys
 from pathlib import Path
 from typing import Final
 
-from tokenmill.backends.isolated.base import SubprocessConverter
+from tokenmill.backends.external.base import SubprocessConverter
 from tokenmill.core.errors import BackendFailed, CorruptSource
 from tokenmill.core.models import (
     Availability,

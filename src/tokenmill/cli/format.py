@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from tokenmill.backends.heavy.doctor import Diagnosis
 from tokenmill.core.compare import BackendComparison, FormatComparison
 from tokenmill.core.models import BackendAttempt, ConversionResult, StageCount, TokenCount
 from tokenmill.fidelity.models import FidelityScore
@@ -18,6 +19,7 @@ from tokenmill.fidelity.models import FidelityScore
 __all__ = [
     "format_backend_comparison",
     "format_bytes",
+    "format_diagnosis",
     "format_fidelity_report",
     "format_format_comparison",
     "format_result_report",
@@ -486,9 +488,16 @@ def format_format_comparison(comparison: FormatComparison) -> str:
         )
 
     table = comparison.table
+    # "table 2 of 3" rather than nothing: a report that shows one table without
+    # saying how many the document had is defect N4's silence in a new place.
+    which = (
+        ""
+        if comparison.table_count <= 1
+        else f" (table {comparison.table_index + 1} of {comparison.table_count})"
+    )
     out = [
         f"comparing {len(comparison.rows)} serialisation(s) of a "
-        f"{len(table.rows)}x{len(table.headers)} table from {comparison.source_name}",
+        f"{len(table.rows)}x{len(table.headers)} table from {comparison.source_name}{which}",
         f"counts in {comparison.tokenizer_id}",
         "",
         format_table(["format", "tokens", "vs best", "size"], rows),
@@ -501,4 +510,75 @@ def format_format_comparison(comparison: FormatComparison) -> str:
         "docs/BENCHMARKS.md; TOON's wins are narrow (uniform arrays) and CSV "
         "scores among the weakest on comprehension in one published test."
     )
+    return "\n".join(out)
+
+
+def format_diagnosis(diagnosis: Diagnosis) -> str:
+    """Render `tokenmill doctor`'s findings.
+
+    Three sections, in the order a reader needs them: what this machine is, what
+    is installed, and what it would take to install the rest. The last is the
+    reason the command exists, so it is not folded into a hint column that gets
+    clipped — `docs/REVIEW_PHASES_0_8.md` N10 was exactly that mistake, found in
+    a screenshot rather than by a test.
+
+    Args:
+        diagnosis: What was found.
+
+    Returns:
+        The report.
+    """
+    out: list[str] = ["tokenmill doctor", ""]
+    out += [
+        f"python:    {diagnosis.python}",
+        f"platform:  {diagnosis.platform_description}",
+        f"gpu:       {diagnosis.gpu.accelerator.value} — {diagnosis.gpu.detail}",
+    ]
+    for device in diagnosis.gpu.devices:
+        out.append(f"           {device.describe()}")
+    if diagnosis.gpu.driver:
+        out.append(f"           driver {diagnosis.gpu.driver}")
+    out.append("")
+
+    out.append("external tools")
+    tool_rows = [[name, path or "not found"] for name, path in diagnosis.tools]
+    out += [format_table(["tool", "location"], tool_rows), ""]
+
+    out.append(f"backends ({diagnosis.available_count} of {len(diagnosis.backends)} available)")
+    rows = [
+        [
+            b.backend_id,
+            b.tier.value,
+            "gpu" if b.requires_gpu else "cpu",
+            "available" if b.usable_here else _clip(b.availability.describe(), 46),
+        ]
+        for b in diagnosis.backends
+    ]
+    out += [format_table(["id", "tier", "needs", "status"], rows), ""]
+
+    heavy = [b for b in diagnosis.heavy if not b.usable_here]
+    if heavy:
+        out.append("how to install the GPU tier")
+        out.append("")
+        for backend in heavy:
+            out.append(f"  {backend.name} ({backend.backend_id}) — {backend.licence}")
+            if backend.weights_licence is None:
+                out.append(
+                    "    weights licence: NOT VERIFIED. The code's licence above is not "
+                    "the weights'; read the model card before relying on it."
+                )
+            else:
+                out.append(f"    weights licence: {backend.weights_licence}")
+            for step in backend.install_steps:
+                out.append(f"    $ {step}")
+            if not backend.install_steps:
+                out.append(f"    {backend.availability.hint or 'see docs/BACKENDS.md'}")
+            for note in backend.notes:
+                out.append(f"    note: {note}")
+            if backend.torch:
+                out.append(f"    torch: {backend.torch}")
+            out.append("")
+
+    for warning in diagnosis.warnings:
+        out.append(f"note: {warning}")
     return "\n".join(out)

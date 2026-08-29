@@ -467,7 +467,7 @@ repository and would let a budget silently do nothing. This is not hypothetical:
 code2prompt's format was guessed from repomix's and was wrong, and that warning
 is what surfaced it in minutes.
 
-### Subprocess isolation before Phase 7 owns it
+### Running out of process, before Phase 7 owns it
 
 `IsolationMode.SUBPROCESS` and `BackendFailed.stderr` have existed since Phase 1;
 the hardened `SubprocessConverter` is Phase 7. `tokenmill.backends._subprocess`
@@ -478,13 +478,14 @@ output, and every failure mapped into the taxonomy.
 What it does **not** do is as important, and is listed in its docstring and in
 `PROGRESS.md`: no sandboxing, no binary allow-list, no version probing, no
 streaming. The allow-list is the one that matters for Phase 7's real job —
-enforcing that a copyleft tool is *actually* isolated needs a checked list of
-what may be invoked, not an adapter's declaration that it behaves.
+enforcing that a copyleft tool *actually* stays out of this process needs a
+checked list of what may be invoked, not an adapter's declaration that it
+behaves.
 
 Note that these two backends run out of process because they are TypeScript and
 Rust, **not** because of their licences: both are MIT and could legally be
 imported if they were Python. That makes them useful practice for Phase 7, since
-getting the isolation wrong on them carries no licence risk.
+getting the boundary wrong on them carries no licence risk.
 
 ## The pipeline
 
@@ -795,10 +796,10 @@ and `TokenMeter` catches it explicitly for the reason given above.
 
 ---
 
-## Isolation, and what it is not
+## The external boundary, and what it is not
 
-`src/tokenmill/backends/isolated/`. Phase 1 designed the model, Phase 7
-implemented it.
+`src/tokenmill/backends/external/`. Phase 1 designed the model, Phase 7
+implemented it, Phase 9 builds the GPU tier on it.
 
 **Two different reasons put a backend out of process**, and conflating them is
 the mistake this package's docstring exists to prevent:
@@ -807,10 +808,31 @@ the mistake this package's docstring exists to prevent:
   `pymupdf4llm` and `pandoc`.
 - **Language.** A C++ application or a Node program cannot be imported at any
   price. `libreoffice`, `repomix`, `code2prompt` — all permissive, and their
-  isolation carries no licence meaning at all.
+  running out of process carries no licence meaning at all.
 
-The second group is useful practice: getting the isolation wrong on an MIT tool
+The second group is useful practice: getting the boundary wrong on an MIT tool
 costs a bug, not a licence problem.
+
+### Why the package is called `external` (defect N9)
+
+It was `backends/isolated/` until Phase 9. "Isolation" is the word an operating
+system uses for *containment*, and this layer contains nothing: no resource
+limits, no filesystem confinement, no network namespace. A tool launched through
+it runs with exactly the access the user has. The name invited a security
+reading it does not deserve, and the evidence that it did is that three
+documents had each grown a paragraph explaining what the layer is *not*.
+
+`external` says the true thing — the converter runs outside this process — and
+claims nothing about safety, so the apologetic paragraph is no longer load
+bearing. It was renamed before the Phase 9 adapters landed on top of it, because
+renaming afterwards costs seven more subclasses.
+
+**`IsolationMode` and `BackendInfo.isolation` did not change.** Their values —
+`in-process`, `subprocess`, `service` — already name a *mechanism* rather than a
+protection, they are printed by `tokenmill backends` and carried in `--json`
+output that somebody may already parse, and renaming a field of the Phase 1
+contract is a breaking change with no user-visible gain. The package and the
+prose were what oversold; those are what changed.
 
 ### What enforces it
 
@@ -832,8 +854,8 @@ version probe recorded as provenance, an **allow-list** of every program
 tokenmill may launch, list arguments with `shell=False` always, timeout and
 kill, and a workspace removed on every exit path including timeout and failure.
 
-The allow-list is what makes isolation *enforced* rather than declared: without
-one, "this AGPL tool runs out of process" is a claim an adapter makes about
+The allow-list is what makes the boundary *enforced* rather than declared:
+without one, "this AGPL tool runs out of process" is a claim an adapter makes about
 itself. With one, the set of programs tokenmill will start is a single
 reviewable table, and an adapter naming anything else fails before the process
 starts.
@@ -852,7 +874,58 @@ No service backend is registered, and a test asserts that stays true: a row for
 a container nobody is running is a permanently-unavailable backend in every
 user's listing.
 
-### What the isolation layer is not
+### The GPU tier (Phase 9)
+
+`src/tokenmill/backends/heavy/`. Six backends, two shapes, one rule: **none of
+them is ever a dependency.** `pyproject.toml`'s `heavy = []` is empty and a
+clean core install is still 40 packages.
+
+- **Four run from an environment of their own** — Marker, Surya, MinerU, olmOCR
+  — as `HeavyConverter`, which subclasses `SubprocessConverter` and adds the
+  `~/.local/share/tokenmill/<id>/` convention, install instructions that are two
+  commands rather than one, and a refusal without `--allow-network` because the
+  first run downloads weights.
+- **Two are reached over HTTP** — DeepSeek-OCR and dots.ocr — as
+  `VllmOcrConverter`, because they are model *weights* rather than packages and
+  there is nothing to install.
+
+`HeavyTier` is a marker both shapes inherit, and it exists because of a bug
+rather than a design: `doctor` originally tested
+`isinstance(converter, HeavyConverter)` and silently gave the two service
+backends no install instructions, no weights-licence line and no "this machine
+has no GPU" note. Found by reading `doctor`'s output, which is the Phase 8
+lesson repeating itself.
+
+**Why a separate environment rather than an extra**, for the four that have one:
+these resolve to PyTorch plus a CUDA stack, they disagree with each other and
+with docling about transformers versions, and rule 1 says the core install stays
+light. It is the PyMuPDF4LLM pattern reused for a different reason — there the
+separate environment is a *licence* boundary, here it is a *dependency* one —
+and the difference is kept visible rather than blurred into "they are all
+isolated".
+
+**`tokenmill doctor` is a library function.** `backends/heavy/doctor.py` gathers,
+`cli/format.py` renders. The gathering is not in the CLI so that a test can drive
+it and the GUI could too — the same rule the Phase 8 GUI is built on.
+
+**It never guesses**, and the four ways it could lie each have a test:
+
+- *CUDA installed* is not *a usable GPU*. A container without `--gpus` has the
+  driver and no device; `nvidia-smi` runs and lists nothing. Reported as
+  `cuda-unusable`, which is a different sentence from `none` because it needs a
+  different fix.
+- *No `nvidia-smi`* is not *no GPU* either, when the CUDA libraries are present.
+- A VRAM figure is never invented. `nvidia-smi` prints `[N/A]` for a device that
+  will not answer, and "0.0 GiB" would read as a measurement.
+- Apple Silicon is reported as Apple Silicon, with the note that vLLM has no
+  Metal backend so olmOCR and the two services do not run there at all.
+
+PyTorch is never imported into this process. The one authoritative question —
+what the *installed* torch thinks, since a CPU-only wheel on a machine with a
+card reports no GPU — is asked of a backend's own interpreter, and only when
+that environment already exists.
+
+### What the external boundary is not
 
 **It is not a security boundary.** No sandboxing, no resource limits, no
 filesystem confinement, no network namespace. A tool run through it has the same
@@ -883,12 +956,45 @@ model that means executing code from a model repository, which is not something
 a document converter should do by default for a token classifier that does not
 need it.
 
-**A post-processor has no channel for warnings or metadata.** `process(text,
-options) -> str` is the whole contract — unlike a backend, which gets a
-`ConversionContext`. So the compressor logs rather than warning, and reports its
-ratio through the per-stage measurement the pipeline already does rather than
-attaching it to the result. That is a real gap and `PROGRESS.md` records it:
-Phase 8's GUI will want a post-processor to be able to say something.
+**A post-processor can say something** (defect N2, closed in Phase 9 with the
+owner's sign-off). Until then `process(text, options) -> str` was the whole
+contract, where a backend gets a `ConversionContext`. So the compressor could
+only *log* its achieved ratio, and a processor that wanted to say "there was no
+front matter to strip" had no channel at all.
+
+`PostProcessContext` is that channel, and it arrives as an **optional third
+parameter** rather than a required one:
+
+- `PostProcessorRegistry.wants_context(p)` reads `p.process`'s own signature,
+  once per processor, and caches the answer. The pipeline then calls with two
+  arguments or three. **A post-processor written against the Phase 1 contract is
+  called exactly as it was and cannot tell the difference** — which is the whole
+  point of taking the uglier of the two shapes.
+- **The signature is the declaration**, not a `wants_context = True` attribute.
+  Somebody who writes `def process(self, text, options, context)` has declared
+  their intent; making them also set a flag would be a trap that fails with an
+  argument-count error.
+- **`BasePostProcessor.process` keeps its two-parameter declaration.** A
+  subclass adding an optional third parameter is *widening*, which is a legal
+  override; the base declaring it would have made every existing two-parameter
+  subclass an illegal *narrowing* override on upgrade — undoing the entire
+  point. mypy said so, in nine files, which is how it was caught.
+- `*args` does **not** count as accepting a context. It would swallow one
+  silently, leaving the author with no error and no context and nothing to
+  debug.
+
+Warnings are prefixed with the processor's id and join the result's own; notes
+are namespaced `post.<id>.<key>` so two processors noting `ratio` cannot
+overwrite each other.
+
+**The compressor is the first user.** It notes LLMLingua-2's own token counts
+and the rate it was asked for, and warns — rather than logging into the void —
+when a document was below the length floor and came back untouched, which is
+exactly the case where a user otherwise sees a run that appears to have done
+nothing. The keys say *whose* counts they are: `llmlingua_origin_tokens` is in
+LLMLingua's tokenizer and is not comparable with the pipeline's stage counts in
+the user's. The `compress` stage measured in the user's unit stays the number to
+quote.
 
 ## The graphical interface
 
@@ -978,6 +1084,58 @@ documents to C libraries or external binaries.
   than an exception, and the backend attaches a warning saying so — a converter
   should report a mangled character, not abort, but it must not measure mojibake
   silently.
+
+### `gui --server` and its shared token
+
+`src/tokenmill/gui/auth.py`. Defect N15: Phase 8 shipped `--server` binding
+`0.0.0.0` with no authentication, printing a warning and calling that a
+mitigation. It is not one.
+
+Every request now carries a token — `Authorization: Bearer`, an
+`X-Tokenmill-Token` header, a `tokenmill_server_token` cookie, or `?token=` on
+the first page load, which is how the token reaches a browser at all and which
+sets the cookie for everything after. Comparison is `hmac.compare_digest`.
+Without a token: `401` for HTTP, and a `1008` close for a WebSocket, because
+answering a WebSocket scope with an HTTP response is a protocol error.
+
+**The guard is raw ASGI, not a Starlette middleware, and that is the load-
+bearing decision.** The interface runs over a WebSocket; a guard that saw only
+`http` would leave the channel every conversion actually travels on wide open.
+A raw middleware sees both scopes. Verified against a running server: `403` on
+the WebSocket handshake without the cookie, `101` with it.
+
+**When no token is configured, one is generated and printed** with the URL to
+paste. There is no way to run `--server` without one. `--token` beats
+`$TOKENMILL_SERVER_TOKEN` beats the config file's `server_token`, matching the
+layering in `core/config.py`, and a token under eight characters is *refused*
+rather than accepted — an empty shell variable would otherwise disable the check
+in silence.
+
+**What it is not**, stated in the module, the CLI's start-up message and the
+README rather than left to be inferred: not TLS, not user accounts, not an audit
+trail, not a rate limit. It stops a machine on the same network reading your
+documents. The cookie is deliberately **not** `Secure`, because there is no TLS
+to attach it to and a `Secure` cookie over plain HTTP is discarded — the
+appearance of safety costing the actual feature. `SameSite=Lax` is the CSRF
+answer.
+
+### Staged uploads are bounded
+
+Defect N14. Phase 8 wrote every uploaded file to `~/.cache/tokenmill/uploads`
+and removed none of them, so a long-running `--server` accumulated everything
+anybody had ever dropped on it.
+
+`api.prune_uploads()` applies **both** bounds: anything older than 24 hours
+goes, then the oldest go until at most 200 files remain. Either alone leaves a
+hole — an age bound lets a burst fill a disk inside the window, a count bound
+keeps yesterday's documents on an idle server forever, and the second of those
+is the privacy half of the same defect. It runs after each upload and again when
+a page is built, so a server that is loaded and then left alone still sheds.
+
+Staging lives in `gui/api.py` rather than in `app.py` because it is testable
+logic, which is the rule the whole GUI layer is built on. That is how a test
+found the hole in the name sanitiser: `Path("..").name` is `".."`, not the empty
+string, so taking the base name alone resolved to the *parent* directory.
 
 ---
 

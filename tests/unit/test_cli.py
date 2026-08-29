@@ -852,3 +852,83 @@ class TestJsonProvenance:
         payload = json.loads(result.output)
         assert payload["backends"]["counts"] == "UTF-8 bytes"
         assert payload["backends"]["is_model_tokenizer"] is False
+
+
+class TestTheTierFilter:
+    """`backends --tier`, which the plan's Phase 9 snippet asks for by name."""
+
+    def test_the_heavy_tier_lists_the_gpu_backends(self) -> None:
+        result = runner.invoke(app, ["backends", "--tier", "heavy"])
+
+        assert result.exit_code == 0
+        for backend_id in ("marker", "surya", "mineru", "olmocr", "deepseek_ocr", "dots_ocr"):
+            assert backend_id in result.stdout
+
+    def test_the_heavy_tier_does_not_need_all(self) -> None:
+        """Otherwise the filter is useless exactly when it is asked.
+
+        Every heavy backend is unavailable on a machine with none installed, so
+        `--tier heavy` without `--all` would answer "no backends matched" to the
+        question "what is in the GPU tier".
+        """
+        result = runner.invoke(app, ["backends", "--tier", "heavy"])
+
+        assert "no backends matched" not in result.stdout
+        assert "marker" in result.stdout
+
+    def test_a_licence_tier_filters_by_licence(self) -> None:
+        result = runner.invoke(app, ["backends", "--tier", "restricted", "--all"])
+
+        assert result.exit_code == 0
+        assert "mineru" in result.stdout
+        assert "pdfplumber" not in result.stdout
+
+    def test_an_unknown_tier_names_the_known_ones(self) -> None:
+        result = runner.invoke(app, ["backends", "--tier", "nonsense"])
+
+        assert result.exit_code == 1
+        assert "permissive" in result.output
+        assert "heavy" in result.output
+
+
+class TestDoctor:
+    """The command exists to stop an hour being wasted, so it must be readable."""
+
+    def test_it_reports_the_machine_and_every_backend(self) -> None:
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "gpu:" in result.stdout
+        assert "external tools" in result.stdout
+        assert "backends" in result.stdout
+
+    def test_every_unavailable_gpu_backend_gets_its_install_commands(self) -> None:
+        """Not folded into a column that gets clipped.
+
+        `docs/REVIEW_PHASES_0_8.md` N10 was exactly that mistake — an actionable
+        message truncated in a table cell — found in a screenshot rather than by
+        a test. This is the test.
+        """
+        result = runner.invoke(app, ["doctor"])
+
+        assert "how to install the GPU tier" in result.stdout
+        assert "python -m venv" in result.stdout
+        assert "pip install marker-pdf" in result.stdout
+
+    def test_it_never_claims_a_verified_weights_licence(self) -> None:
+        result = runner.invoke(app, ["doctor"])
+
+        assert "weights licence: NOT VERIFIED" in result.stdout
+
+    def test_the_json_is_machine_readable_with_nulls_for_unknowns(self) -> None:
+        result = runner.invoke(app, ["doctor", "--json"])
+
+        payload = json.loads(result.stdout)
+        assert payload["gpu"]["accelerator"]
+        assert set(payload) >= {"python", "platform", "gpu", "tools", "backends"}
+        for backend in payload["backends"]:
+            if not backend["weights_license_verified"]:
+                assert backend["weights_license"] is None, (
+                    "an unverified weights licence must be null rather than a "
+                    "placeholder string a reader could mistake for a value"
+                )

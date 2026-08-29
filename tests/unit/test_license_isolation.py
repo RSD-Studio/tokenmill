@@ -48,7 +48,13 @@ from tokenmill.core.licensing import (
     imported_top_level_modules,
     tier_for_module,
 )
-from tokenmill.core.models import IsolationMode, LicenseTier
+from tokenmill.core.models import (
+    BackendInfo,
+    Domain,
+    IsolationMode,
+    LicenseTier,
+    OutputFormat,
+)
 from tokenmill.core.registry import Registry
 
 #: The source tree, for the static scan.
@@ -224,7 +230,7 @@ class TestNoInProcessAdapterImportsCopyleft:
             "copyleft modules are imported into the tokenmill process:\n  "
             + "\n  ".join(offenders)
             + "\nInvoke the tool as a child process through "
-            "tokenmill.backends.isolated instead"
+            "tokenmill.backends.external instead"
         )
 
     def test_no_in_process_backend_reaches_a_copyleft_distribution(
@@ -433,3 +439,113 @@ def _modules_of(converter: object) -> frozenset[str]:
         return imported_top_level_modules(Path(origin))
     except (OSError, SyntaxError):  # a plugin we cannot read is not ours to judge
         return frozenset()
+
+
+class TestSourceAvailableLicencesAreNotPermissive:
+    """Phase 9's classifier defect, found by reading real metadata.
+
+    Found the way Phase 7's was, and it is the same shape.
+
+    Before Phase 9 `classify` returned **permissive** for BUSL-1.1, Elastic-2.0,
+    SSPL-1.0 and every unrecognised `LicenseRef-` identifier. SSPL is the
+    alarming one — it is aggressively copyleft for anything offered as a service
+    and was being treated as MIT-equivalent. Elastic-2.0 matters to this project
+    directly: `kreuzberg` is pinned `<5` because its successor line moved to it,
+    and if that pin were ever removed this classifier would have said nothing.
+
+    MinerU is what surfaced it. Its wheel says
+    `License-Expression: LicenseRef-MinerU-Open-Source-License`, and the bundled
+    LICENSE.md reads "Apache License 2.0 **and is subject to the additional
+    terms below**": a commercial licence above 100M MAU or $20M monthly revenue,
+    and an attribution obligation for anyone providing it as an online service.
+    `tokenmill gui --server` *is* an online service.
+    """
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "BUSL-1.1",
+            "Business Source License 1.1",
+            "Elastic-2.0",
+            "Elastic License 2.0",
+            "SSPL-1.0",
+            "Server Side Public License",
+            "PolyForm-Shield-1.0.0",
+            "Apache-2.0 with Commons Clause",
+            "LicenseRef-MinerU-Open-Source-License",
+        ],
+    )
+    def test_a_source_available_licence_is_restricted(self, expression: str) -> None:
+        assert classify(expression) is LicenseTier.RESTRICTED
+
+    def test_an_unrecognised_license_ref_is_never_permissive(self) -> None:
+        """The load-bearing rule.
+
+        `LicenseRef-` means, by SPDX definition, "this is not a listed licence".
+        An identifier whose whole meaning is "you do not know what this is" must
+        not be read as "assume the friendliest one".
+        """
+        assert classify("LicenseRef-Something-Nobody-Has-Read") is LicenseTier.RESTRICTED
+
+    def test_the_phase_7_answers_are_unchanged(self) -> None:
+        """A new tier must not move an existing verdict.
+
+        These four are the cases earlier phases got wrong and then fixed, and
+        they are re-asserted here because the cheapest way to break a licence
+        classifier is to add a rule that shadows an older one.
+        """
+        assert classify("AGPL-3.0-only OR LicenseRef-Artifex-Commercial") is LicenseTier.COPYLEFT
+        assert (
+            classify("Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License")
+            is LicenseTier.COPYLEFT
+        )
+        assert classify("MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later") is LicenseTier.PERMISSIVE
+        assert (
+            classify("Public Domain AND BSD License AND GNU General Public License (GPL)")
+            is LicenseTier.COPYLEFT
+        )
+
+    def test_a_disjunction_with_an_unconditional_branch_is_still_permissive(self) -> None:
+        """Restricted sits between permissive and copyleft, and that matters here."""
+        assert classify("Apache-2.0 OR BUSL-1.1") is LicenseTier.PERMISSIVE
+
+    def test_a_disjunction_with_no_unconditional_branch_is_not_permissive(self) -> None:
+        assert classify("BUSL-1.1 OR AGPL-3.0") is LicenseTier.RESTRICTED
+
+    def test_a_restricted_backend_may_not_run_in_process(self) -> None:
+        """The mechanism needed no change, and this is why.
+
+        The rule is written against *not permissive* rather than against a list
+        of tiers, so a fourth tier inherits it.
+        """
+        with pytest.raises(ValueError, match="must run out of process"):
+            BackendInfo(
+                id="pretend",
+                name="Pretend",
+                description="A backend that should not be constructible.",
+                domains=(Domain.DOCUMENTS,),
+                input_formats=("pdf",),
+                output_formats=(OutputFormat.MARKDOWN,),
+                license="LicenseRef-Something",
+                license_tier=LicenseTier.RESTRICTED,
+                isolation=IsolationMode.IN_PROCESS,
+                upstream_url="https://example.invalid/",
+            )
+
+    def test_the_installed_environment_is_unaffected(self) -> None:
+        """A new rule must not start accusing packages that were fine.
+
+        The one exemption is docutils, which is copyleft for a reason
+        `docs/LICENSES.md` records and re-checks. Anything else appearing here
+        means the new patterns are matching something they should not.
+        """
+        surprising = [
+            record
+            for record in audit_installed()
+            if record.tier is not LicenseTier.PERMISSIVE and record.name not in ALLOWED_COPYLEFT
+        ]
+
+        assert surprising == [], (
+            "a distribution that was permissive before Phase 9 is no longer: "
+            f"{[(r.name, r.expression, r.tier.value) for r in surprising]}"
+        )

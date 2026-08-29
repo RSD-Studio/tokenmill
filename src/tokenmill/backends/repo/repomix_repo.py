@@ -22,6 +22,41 @@ command the user may have believed was local, so this adapter **requires
 ``npm install -g repomix`` removes the condition entirely, and the missing-binary
 hint says so.
 
+**It is asked for JSON, not Markdown, and that is defect D6.** Repomix offers
+``--style json``, which returns ``{"fileSummary": ..., "directoryStructure":
+..., "files": {path: content}}`` — an exact per-file map. Until Phase 9 this
+adapter asked for ``--style markdown`` and then found the file boundaries with a
+regex for ``^## File: <path>$``.
+
+That was not merely fragile, it was **wrong**, and the failing case is one line
+long. A repository containing a document that *talks about* repomix packs —
+
+.. code-block:: markdown
+
+   Repomix packs a repository like this:
+
+   ## File: totally/made/up.py
+
+— produces a pack in which the regex finds three files where repomix packed two.
+Reproduced here on 2026-08-27: ``file_count`` came back **3**, a phantom
+``totally/made/up.py`` appeared in the per-directory breakdown, and a token
+budget could have "dropped" it, cutting a real file in half. Being inside a
+fenced code block does not help; the scan is flat.
+
+The JSON has no such ambiguity, so this adapter now asks for it and renders the
+Markdown pack itself. The rendering follows repomix's own shape — the same
+headings, the same ``## File: <path>`` markers, the same fenced blocks with a
+language tag — so what a user reads is what repomix has always produced; what
+*tokenmill* reads is a mapping. Two consequences, both stated rather than
+discovered later:
+
+* The pack's exact bytes are now tokenmill's rendering of repomix's content
+  rather than repomix's rendering of it. ``docs/BENCHMARKS.md`` carries the
+  measured difference on the fixture repository.
+* The fence width is computed per file, so a file that itself contains
+  ```` ```` ```` cannot break out of its own block. Repomix's
+  ``--parsable-style`` did this and the reimplementation has to as well.
+
 **What its options do not quite mean.** Repomix's own ``--token-budget`` makes
 it *fail* with a non-zero exit when the pack is too big; it does not truncate.
 tokenmill's ``--token-budget`` truncates and reports what it dropped, in the
@@ -42,11 +77,14 @@ importing it anyway if it were Python.
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Final
 
 from tokenmill.backends._subprocess import find_tool, run_tool, safe_path_argument
 from tokenmill.backends.repo._common import (
+    PackedFile,
     RepoOptions,
     apply_budget,
     directory_totals,
@@ -54,7 +92,6 @@ from tokenmill.backends.repo._common import (
     note_repo_metadata,
     read_repo_options,
     repo_workdir,
-    split_sections,
 )
 from tokenmill.backends.repo.gitingest_repo import _counter_for
 from tokenmill.core.errors import BackendFailed, NetworkRequired
@@ -199,12 +236,24 @@ class RepomixConverter(BaseConverter):
                 hint="check the include and exclude patterns actually match some files",
             )
 
-        preamble, sections = split_sections(packed, "repomix")
+        try:
+            preamble, sections = _render_pack(packed)
+        except (ValueError, TypeError) as exc:
+            raise BackendFailed(
+                f"repomix's JSON output could not be read: {exc}",
+                backend_id=self.info.id,
+                stderr=result.stderr[:2000],
+                hint=(
+                    "this is a tokenmill parsing problem, not a problem with your "
+                    "repository. Report it with the repomix version from "
+                    "`repomix --version`"
+                ),
+            ) from exc
         if not sections:
             context.warn(
-                "repomix's Markdown format was not recognised, so the token budget and "
-                "the per-directory breakdown could not be applied. The pack itself is "
-                "complete and unmodified; this is a tokenmill parsing problem"
+                f"repomix packed no files from {source.name}, so there is nothing to "
+                "budget or break down by directory. Check the include and exclude "
+                "patterns actually match something"
             )
 
         counter, unit = _counter_for(options, context, wanted=settings.token_budget is not None)
@@ -285,12 +334,12 @@ class RepomixConverter(BaseConverter):
         """
         argv = [
             "--stdout",
+            # JSON rather than markdown: see the module docstring (defect D6).
+            # The Markdown pack is rendered from this, so that finding a file
+            # boundary is a dictionary lookup instead of a regex that a
+            # document *about* repomix can fool.
             "--style",
-            "markdown",
-            # Escaping, so a repository containing Markdown cannot break the
-            # pack's own structure — which would also break the section parsing
-            # the budget depends on.
-            "--parsable-style",
+            "json",
             "--quiet",
             # Repomix scans for secrets by default. Left on deliberately: a
             # packing tool that helps a user paste their AWS keys into a model
@@ -318,3 +367,169 @@ def _target(root: Path, backend_id: str) -> str:
         The path as a string.
     """
     return safe_path_argument(root, backend_id=backend_id)
+
+
+#: File extension to the language tag repomix puts on a fenced block. Only the
+#: languages this project's own corpus and dependencies actually contain, plus
+#: the obvious ones: an unrecognised extension gets no tag, which renders
+#: correctly everywhere and is what repomix does too.
+_LANGUAGE_BY_SUFFIX: Final[dict[str, str]] = {
+    ".c": "c",
+    ".cfg": "ini",
+    ".cpp": "cpp",
+    ".cs": "csharp",
+    ".css": "css",
+    ".go": "go",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".htm": "html",
+    ".html": "html",
+    ".ini": "ini",
+    ".java": "java",
+    ".js": "javascript",
+    ".json": "json",
+    ".jsx": "jsx",
+    ".kt": "kotlin",
+    ".lua": "lua",
+    ".md": "markdown",
+    ".php": "php",
+    ".pl": "perl",
+    ".py": "python",
+    ".rb": "ruby",
+    ".rs": "rust",
+    ".scss": "scss",
+    ".sh": "shell",
+    ".sql": "sql",
+    ".swift": "swift",
+    ".toml": "toml",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".txt": "text",
+    ".xml": "xml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+}
+
+#: What the pack's "File Format" section says, replacing the JSON style's own
+#: description of itself. Worded to match what repomix's Markdown style writes,
+#: because that is what is actually being rendered.
+_MARKDOWN_FILE_FORMAT: Final = """The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files, each consisting of:
+  a. A header with the file path (## File: path/to/file)
+  b. The full contents of the file in a code block"""
+
+#: A run of backticks at the start of a line, which is what a fence has to be
+#: longer than.
+_BACKTICK_RUN_RE: Final = re.compile(r"^`+", re.MULTILINE)
+
+#: The fence width repomix uses, and the minimum used here. Four rather than
+#: three so that ordinary three-backtick Markdown inside a packed file does not
+#: need a wider fence in the common case.
+_MIN_FENCE: Final = 4
+
+
+def _render_pack(raw: str) -> tuple[str, list[PackedFile]]:
+    """Turn repomix's JSON output into a Markdown pack and its file sections.
+
+    The rendering deliberately matches what ``--style markdown`` produces, so
+    that a user reading the pack sees what repomix has always shown them. What
+    changed is where the file boundaries come from: a mapping rather than a
+    regular expression a document can fool.
+
+    Args:
+        raw: Repomix's stdout, which should be one JSON object.
+
+    Returns:
+        The preamble — summary and directory tree — and one section per file,
+        in the order repomix listed them. Repomix sorts by git change count,
+        and that order is preserved rather than re-sorted: it is repomix's
+        opinion about what matters least, and the budget drops from the end.
+
+    Raises:
+        ValueError: If the output is not JSON, or not an object.
+        TypeError: If the object's fields are not the shapes documented above.
+    """
+    document = json.loads(raw)
+    if not isinstance(document, dict):
+        msg = f"expected a JSON object, got {type(document).__name__}"
+        raise TypeError(msg)
+
+    files = document.get("files") or {}
+    if not isinstance(files, dict):
+        msg = f"expected 'files' to be an object, got {type(files).__name__}"
+        raise TypeError(msg)
+
+    raw_summary = document.get("fileSummary")
+    summary: dict[str, object] = raw_summary if isinstance(raw_summary, dict) else {}
+    lines: list[str] = []
+    header = summary.get("generationHeader")
+    if isinstance(header, str):
+        # Before the heading, which is where repomix's own Markdown style puts
+        # it.
+        lines += [header, ""]
+    lines += ["# File Summary", ""]
+    for key, value in summary.items():
+        if key == "generationHeader" or not isinstance(value, str):
+            continue
+        # camelCase to Title Case, matching the headings repomix's own Markdown
+        # style writes: "usageGuidelines" -> "Usage Guidelines".
+        heading = re.sub(r"(?<!^)(?=[A-Z])", " ", key).title()
+        # `fileFormat` is the one field that describes the *serialisation*
+        # rather than the repository, so repomix's JSON copy of it describes
+        # JSON — "File path as a key, full contents as the value". We render
+        # Markdown, so quoting that would be a pack that misdescribes itself.
+        # Substituted, and only this one.
+        body = _MARKDOWN_FILE_FORMAT if key == "fileFormat" else value
+        lines += [f"## {heading}", body, ""]
+
+    structure = document.get("directoryStructure")
+    if isinstance(structure, str) and structure.strip():
+        lines += ["# Directory Structure", "````", structure.rstrip("\n"), "````", ""]
+
+    lines += ["# Files", ""]
+    preamble = "\n".join(lines) + "\n"
+
+    sections: list[PackedFile] = []
+    for path, content in files.items():
+        if not isinstance(path, str) or not isinstance(content, str):
+            msg = "expected 'files' to map string paths to string contents"
+            raise TypeError(msg)
+        sections.append(PackedFile(path=path, text=_render_file(path, content)))
+    return preamble, sections
+
+
+def _render_file(path: str, content: str) -> str:
+    """Render one file as the Markdown section repomix would have written.
+
+    Args:
+        path: The repository-relative path.
+        content: The file's text.
+
+    Returns:
+        The section, header included, ending in a blank line so sections
+        re-join into a readable pack.
+    """
+    language = _LANGUAGE_BY_SUFFIX.get(Path(path).suffix.lower(), "")
+    fence = "`" * _fence_width(content)
+    return f"## File: {path}\n{fence}{language}\n{content.rstrip(chr(10))}\n{fence}\n\n"
+
+
+def _fence_width(content: str) -> int:
+    """Return a fence long enough that ``content`` cannot escape it.
+
+    Repomix's ``--parsable-style`` does this and a reimplementation has to as
+    well: a packed file that itself contains a four-backtick fence would
+    otherwise close its own block early, and everything after it would be read
+    as pack structure rather than as file content.
+
+    Args:
+        content: The file's text.
+
+    Returns:
+        The number of backticks to use, never fewer than four.
+    """
+    longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(content)), default=0)
+    return max(_MIN_FENCE, longest + 1)

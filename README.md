@@ -5,21 +5,27 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-> **Status: Phase 2 — document backends.** Real document conversion works:
-> PDF, DOCX, PPTX and XLSX to Markdown through five adapters, with a per-format
-> preference map and a fallback chain that records which backend actually ran.
-> Web and repository backends arrive in Phases 3–4, and the GUI in Phase 8. The
-> suite is green on Linux, macOS and Windows across Python 3.11/3.12/3.13, and
-> token counting is verified against real tiktoken and HuggingFace vocabularies
-> in CI. See [`PROGRESS.md`](PROGRESS.md) for exactly where things stand,
-> including which claims are CI-verified rather than locally observed, and
-> [`docs/BACKENDS.md`](docs/BACKENDS.md) for what each backend gets *wrong* on
-> our own fixtures. Nothing below is claimed to work until `PROGRESS.md` records
-> a verification run for it.
+> **Status: 0.1.0, built and not yet published.** Documents, web pages and
+> repositories convert through 22 registered backends; there is a CLI, a Python
+> API and a browser GUI; the suite is green on Linux, macOS and Windows across
+> Python 3.11/3.12/3.13; and a 63-cell benchmark run is
+> [committed with its raw data](benchmarks/results/2026-08-27/).
+>
+> **Three things this project does not claim, stated here rather than in a
+> footnote.** The benchmark matrix is counted in **UTF-8 bytes, not model
+> tokens**, because the environment it was built in cannot reach a tokenizer
+> vocabulary; the CI job that would produce token figures exists and has never
+> run. **No GPU backend has ever converted a document** — six are wired up, none
+> is demonstrated. And **prompt compression's success path has never executed
+> anywhere**, for the same reason as the tokenizer.
+>
+> [`PROGRESS.md`](PROGRESS.md) records what was verified and how;
+> [`docs/BACKENDS.md`](docs/BACKENDS.md) records what each backend gets *wrong*
+> on our fixtures, quoted from real output.
 
 ---
 
-## What it will be
+## What it is
 
 Four input domains, one output pipeline, one measurement:
 
@@ -31,25 +37,58 @@ Four input domains, one output pipeline, one measurement:
 | Text | Raw prompt or context | Compressed text (opt-in, off by default) |
 
 Every conversion reports **tokens before → tokens after** under a tokenizer you
-choose. That measurement is the product, not a side feature.
+choose. That measurement is the product, not a side feature — and it is always
+reported next to a **fidelity score**, because a converter that emits an empty
+string scores a 100% reduction and four cells in our own benchmark do exactly
+that.
+
+![The convert tab: a source panel, post-processor options, the token panel showing 12,481 bytes in and 2,854 out with a per-stage breakdown, and the rendered output beside it](docs/images/01-convert.png)
 
 ### Why this and not one of the existing tools
 
 Every good open-source converter covers exactly one domain. MarkItDown and
 Docling do documents. Trafilatura does web pages. gitingest and Repomix do
-repositories. LLMLingua does prompts. No project unifies all four behind one
-interface with before/after token metering and a `pip install`-able plugin
-architecture — that gap is what tokenmill is for.
+repositories. LLMLingua does prompts. tokenmill does not compete with any of
+them — **it wraps them**, and adds the thing none of them does: a token count on
+both sides, in a unit you choose, with a fidelity score beside it.
+
+There are projects in adjacent space, and it is worth being specific about where
+they differ rather than waving at them:
+
+| | What it does | Where it differs |
+|---|---|---|
+| **MarkItDown** | Microsoft's document → Markdown converter. Excellent, broad format coverage. | One domain, no token accounting, no fidelity measurement, no choice of engine. tokenmill installs and uses it as a backend. |
+| **Docling** | IBM's document converter, the structure-fidelity leader in the survey. | One domain; ~122 packages and 5.2 GB with PyTorch. tokenmill keeps it behind an extra so a core install stays 141 MB, and wraps it as a backend. |
+| **omniparse** | A single service that ingests documents, web, media and code. Closest thing to the same ambition. | A **server** you deploy, GPU-oriented, and it does not report what a conversion cost in tokens. tokenmill is a library and a CLI first; the GUI is optional and runs on the core install. |
+| **docling-serve** | Docling behind an HTTP API. | The same single-engine, no-metering position as Docling, plus deployment. |
+| **MarkItDown GUI forks** | Community wrappers putting a window on MarkItDown. | A front end for one engine. The interesting question — *which* engine, at what cost, losing what — is the one they cannot ask. |
+
+**The honest version of the pitch:** if you have already decided which converter
+to use and you do not care what it costs, you do not need this. tokenmill is for
+the case where the answer is "it depends on the document", and it exists to make
+"it depends" measurable rather than a shrug.
+
+**The honest version of the caveat:** our measurements are on a 15-file
+synthetic corpus, in bytes rather than model tokens, on one machine. That is
+enough to show that the cheapest backend is routinely not the most faithful one.
+It is not enough to tell you which backend is best for *your* documents, and
+`tokenmill compare` exists because it cannot.
 
 ## Why token reduction is worth measuring
 
 These are the numbers we consider well-supported today. They come from
 [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md), which cites its
-sources. **They are other people's measurements, not ours.** Our own numbers
-land in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), which starts at Phase 3 and
-fills out from Phase 10's harness in `benchmarks/` on the corpus in
-`tests/fixtures/`. Read its "Units" section before quoting anything from it:
-byte reductions and token reductions are different claims and this project does
+sources. **They are other people's measurements, not ours.**
+
+Our own numbers are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md), and every one
+of them traces back to a committed raw result file in
+[`benchmarks/results/`](benchmarks/results/) — 63 cells over the generated
+corpus in `tests/fixtures/`, five timed repeats each, regenerated by one command.
+Read that page's [Limitations](docs/BENCHMARKS.md#limitations-read-before-quoting-any-of-this)
+section before quoting anything from it. The first limitation is the one that
+matters most here: **our matrix is counted in UTF-8 bytes, not model tokens**,
+because the sandbox this was built in cannot reach a tokenizer vocabulary at all.
+A byte reduction and a token reduction are different claims and this project does
 not conflate them.
 
 - **Boilerplate removal is the big win, ~70–90% on real web pages.** Cloudflare
@@ -79,22 +118,60 @@ own committed raw results.
 
 ## Install
 
-*(Not yet published to PyPI — that is Phase 11. Until then, install from a
-clone.)*
+> **Not on PyPI yet.** The release is built, verified on nine OS/Python cells
+> and tagged `v0.1.0`; the publish is a separate manual step that has not been
+> run. Until it is, install from a clone or from the built wheel attached to the
+> GitHub release. Every command below is the one that will work once it is.
+
+**As a command-line tool** — the usual case. Both of these put `tokenmill` on
+your `PATH` in an environment of its own, so it cannot collide with anything:
+
+```bash
+uv tool install tokenmill          # or:
+pipx install tokenmill
+```
+
+**As a library**, into a project's environment:
 
 ```bash
 pip install tokenmill              # core: pure Python, CPU-only, no system binary
 ```
 
+**With extras**, when you need a format the core tier does not cover:
+
 ```bash
 pip install "tokenmill[documents]"   # + MarkItDown and Kreuzberg: Office, mail, archives
+pip install "tokenmill[web]"         # + readability-lxml, a second-opinion extractor
+pip install "tokenmill[repo]"        # + gitingest, for packing a repository
 pip install "tokenmill[docling]"     # + Docling: best structure fidelity, ~5.2 GB, pulls PyTorch
 ```
 
+Extras compose: `pip install "tokenmill[documents,web,repo]"`. `tokenmill
+doctor` tells you what is installed, what is missing and the command for each
+gap.
+
+**With Docker**, if you want Pandoc and LibreOffice without installing them:
+
+```bash
+docker build -t tokenmill .                                   # or --target core
+docker run --rm -v "$PWD:/work" tokenmill convert report.docx --tokenizer bytes
+```
+
+Two targets. `full` (the default) carries Pandoc and LibreOffice as executables
+and is what makes those two backends work out of the box; `core` has neither and
+nothing under a copyleft licence. `docs/LICENSES.md` says exactly what each
+artefact contains, because putting a GPL program in an image you hand to someone
+is distribution and is worth being precise about.
+
+### What "core" means, and why it is enforced
+
 The core install is pure Python or wheel-shipping, permissively licensed, and
 takes about a second. It includes the two light PDF readers. No PyTorch, no
-CUDA, no system binary. A CI job installs with no extras on every commit, on
-nine OS/Python combinations, and fails the build if that ever stops being true.
+CUDA, no system binary. **Measured at 141.2 MB across 40 packages**, against a
+250 MB ceiling that CI enforces on every commit across nine OS/Python
+combinations *and* on the built wheel at release. If a heavy dependency ever
+leaks into the core tier, the build goes red rather than the number quietly
+drifting.
 
 ## Quickstart
 
@@ -142,7 +219,7 @@ tokens:   12,481 -> 6,802  (-45.5%, bytes)
 ```
 
 The comparison that *is* meaningful for a document is between backends on the
-same file, and that arrives with `tokenmill compare` in Phase 5.
+same file. That is what `tokenmill compare` does, below.
 
 The Markdown that came out has the fixture's 7×5 table intact, all 35 cells:
 
@@ -199,18 +276,32 @@ on the same input.
 
 ```console
 $ tokenmill compare tests/fixtures/tables.pdf --tokenizer bytes
+comparing tables.pdf across 5 backend(s)
+counts in bytes
 
-backend     tokens  vs best  time    fidelity  components
-----------  ------  -------  ------  --------  ----------
-pdfplumber  599     +29%     102 ms  0.667     3 scored
-kreuzberg   466     base     31 ms   0.500     3 scored
-markitdown  769     +65%     844 ms  0.606     3 scored
-pypdf       481     +3%      60 ms   0.333     3 scored
+backend      tokens  vs best  time     fidelity  components
+-----------  ------  -------  -------  --------  ----------
+pdfplumber   599     +29%     97 ms    0.667     3 scored
+kreuzberg    466     base     28 ms    0.500     3 scored
+markitdown   769     +65%     747 ms   0.606     3 scored
+pypdf        481     +3%      51 ms    0.333     3 scored
+pymupdf4llm  553     +19%     1287 ms  0.848     3 scored
 
 cheapest:      kreuzberg (466)
-most faithful: pdfplumber (0.667)
-The cheapest option is NOT the most faithful one.
+most faithful: pymupdf4llm (0.848)
+The cheapest option is NOT the most faithful one. A token saving without a fidelity number is not a result.
 ```
+
+**Read that table twice.** The cheapest output is 466 bytes at fidelity 0.500;
+the most faithful is 553 bytes at 0.848, and it costs 46× the wall time to get
+there. The 87 bytes between them are the table. A tool that showed you only the
+`tokens` column would be recommending the row that dropped it.
+
+The byte counts and fidelities here are the ones in
+[`benchmarks/results/2026-08-27/`](benchmarks/results/2026-08-27/); the `time`
+column is a single unrepeated run, which is what `compare` measures. The
+benchmark harness publishes medians of five and a spread — see
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 Rows stay in preference order rather than being sorted by size, because sorting
 by tokens is a leaderboard and a leaderboard on this data rewards whichever
@@ -231,19 +322,30 @@ measurement can be produced together.
 ```console
 $ tokenmill convert tests/fixtures/boilerplate.html -q |
       tokenmill fidelity - --against boilerplate.html
+fidelity: boilerplate.html
 
 component              score  count  detail
 ---------------------  -----  -----  ----------------------------------------
-heading_recall         1.000  6/6    6 of 6 headings recovered as headings
+heading_recall         1.000  6/6    6 of 6 headings recovered at the expected
+                                     level
 content_recall         1.000  3/3    3 of 3 required passages present
-table_integrity        1.000  35/35  35 of 35 expected cells came back ...
-structure_retention    n/a    -      ... names no list items, links or fences
+table_integrity        1.000  35/35  35 of 35 expected cells came back inside
+                                     1 parsed table(s); ground truth records no
+                                     cell values, so this is a shape check
+                                     rather than a value check
+structure_retention    n/a    -      this fixture's ground truth names no list
+                                     items, links or code fences
 boilerplate_rejection  1.000  6/6    6 of 6 markers that must be absent are
-reading_order          n/a    -      ... carries no order sentinels
+                                     absent
+reading_order          n/a    -      this fixture's ground truth carries no
+                                     order sentinels
 
 overall: 1.000 (unweighted mean of heading_recall, content_recall,
                 table_integrity, boilerplate_rejection)
 ```
+
+*(the `detail` column is wrapped here to fit the page; the real output is one
+line per component)*
 
 Six named components rather than one opaque number, because a score you cannot
 decompose is a score you cannot act on. **`n/a` is never zero**: a component
@@ -251,9 +353,10 @@ with no ground truth for that fixture did not apply, which is a different
 statement from scoring badly.
 
 The measurement it exists for: `jsrendered.html` is a page whose article is
-inserted by a script. Every parser-based backend reports a **−90.7% reduction**
-on it and scores **0.000 fidelity**, because it saved those bytes by losing all
-of the content. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+inserted by a script. All six HTML backends reduce it by **85.1% to 90.7%** and
+every one scores **0.000 fidelity**, because they saved those bytes by losing
+all of the content. The largest reduction in the whole corpus is a cell that
+extracted nothing. See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 From Python:
 
@@ -316,15 +419,40 @@ its adapter was written, not taken from a README.
 | `crawl4ai` | web | Apache-2.0 | `crawl4ai` | **pages that need JavaScript** | ✅ Phase 3 — weaker extraction; 677 MB |
 | `gitingest` | repo | MIT | `repo` | **packing a repository** with no external runtime | ✅ Phase 4 |
 | `repomix` | repo | MIT | Node binary | the most complete pack of the three | ✅ Phase 4 — subprocess |
-| `code2prompt` | repo | MIT | Rust binary | speed: 103 ms against 564 and 1,082 | ✅ Phase 4 — subprocess |
+| `code2prompt` | repo | MIT | Rust binary | the fastest of the three when installed (Phase 4: 103 ms) | ✅ Phase 4 — subprocess; not installed in the benchmark environment |
 | llmlingua2 | compress | MIT | `compress` | prompt compression | 🟨 Phase 6 — implemented, success path unverified |
 | `pymupdf4llm` | documents | **AGPL-3.0** | separate venv | **the most faithful backend here** — 0.848 on `tables.pdf` | ✅ Phase 7 — **never imported** |
 | `pandoc` | documents | **GPL-2.0-or-later** | system binary | EPUB, LaTeX, RST, Org and thirty more | ✅ Phase 7 — **never imported** |
 | `libreoffice` | documents | MPL-2.0 | system binary | legacy `.doc` / `.xls` / `.ppt` | ✅ Phase 7 — subprocess (C++, not a licence issue) |
-| marker, mineru, olmocr, surya, deepseek-ocr | documents | GPL-3.0 / varies | install docs only | GPU tier | Phase 9 |
+| `marker` | documents | **Apache-2.0** | separate venv | the structure-fidelity leader in the survey | 🟨 Phase 9 — **never run here** |
+| `surya` | documents | **Apache-2.0** | separate venv | OCR and reading order in 90+ languages | 🟨 Phase 9 — **never run here** |
+| `mineru` | documents | **`LicenseRef-MinerU`** | separate venv | formulas and tables; obligations on *you* | 🟨 Phase 9 — **never run here** |
+| `olmocr` | documents | Apache-2.0 | separate venv | Allen AI's OCR; genuinely needs NVIDIA | 🟨 Phase 9 — **never run here** |
+| `deepseek_ocr` | documents | MIT *(reported)* | HTTP service | **optical context compression** | 🟨 Phase 9 — **never run here** |
+| `dots_ocr` | documents | MIT *(reported)* | HTTP service | layout + text in one 1.7B model | 🟨 Phase 9 — **never run here** |
 
-**What these backends do not do.** None does OCR, so a scanned PDF converts to
-an empty document — loudly, with a warning, never silently. That is Phase 9.
+**The GPU tier is documented, not demonstrated.** Six adapters exist, `heavy = []`
+is still empty, and a clean core install is still 40 packages. But this project
+is built on a machine with no GPU that cannot reach the host the model weights
+live on, so **not one of them has ever converted a document.** What is verified
+is the path you will take if you do not have a GPU either: each reports itself
+unavailable and prints the exact commands that would change that. `tokenmill
+doctor` gathers all of it, and does not lie about your hardware — it
+distinguishes "no GPU" from "the driver is installed and no device answered",
+which is what a container started without `--gpus` looks like.
+
+Two licence corrections worth surfacing, both read from the published wheels
+rather than from our own research notes: **Marker and Surya are Apache-2.0**,
+not GPL-3.0 as `RESEARCH.md` records. They still run out of process — importing
+them would put PyTorch in the dependency tree, which is a different rule.
+**MinerU is neither**: Apache-2.0 plus a revenue threshold and an obligation to
+say you use it if you offer an online service, which `tokenmill gui --server`
+is. It warns you, every time.
+
+**What these backends do not do.** Nothing in the light or external tiers does
+OCR, so a scanned PDF converts to an empty document — loudly, with a warning,
+never silently. Surya is the backend that would change that, and it has not been
+run, so `scanned.pdf` still scores 0.000.
 
 **On the 70–90% figures above:** we measured our own equivalent on our own
 fixture and got **−83.1%**, in **real `o200k_base` tokens** — 3,716 → 629 —
@@ -343,10 +471,40 @@ from, and what one synthetic fixture can and cannot support.
 desktop window with `--native`) with the token panel as its centrepiece: before,
 after, the delta, the per-stage breakdown, and fidelity beside all of it.
 Unavailable backends are greyed out with an install hint rather than hidden, and
-it works on a core install with no extras. Screenshots in
-[`docs/images/`](docs/images/). `--server` binds every interface for LAN use and
-has **no authentication** — it says so at startup, and that is the only
-protection it has.
+it works on a core install with no extras.
+
+![The compare tab showing deck.pptx across three backends: kreuzberg 398 tokens at fidelity 1.000 in 28 ms, libreoffice failed, markitdown 753 tokens at 1.000 in 593 ms, with the LibreOffice error and its fix quoted underneath](docs/images/03-compare.png)
+
+*Compare, with a real failure in it. `libreoffice` returns `n/a` rather than a
+zero, and the note underneath is the actual error and the actual fix: it exits 0
+having converted nothing when the format filters are missing. Two backends
+produce identical fidelity at 398 against 753 tokens and a 21× time difference —
+which is a real answer, and not one a size-only table would give.*
+
+![The backends tab listing every registered backend with CPU/GPU, licence tier, licence, isolation mode and availability; code2prompt, Crawl4AI and Docling are greyed out with the exact install command under each](docs/images/04-backends.png)
+
+*Backends. Licence tier and isolation sit on the same line as availability,
+because "can I run this" and "may I ship what it produces" are the same question
+asked twice. Unavailable backends are greyed out with the command that fixes
+them, never hidden — `pandoc` is flagged copyleft and `PyMuPDF4LLM` AGPL, and
+both are marked `subprocess`, which is why that is fine.*
+
+<details>
+<summary>Two more: the batch queue and settings</summary>
+
+![The batch tab: a queue of files with per-item status, aggregate totals and a cancel control](docs/images/02-batch.png)
+
+![The settings tab: tokenizer, default backend, post-processor chain and output preferences](docs/images/05-settings.png)
+
+</details>
+
+`--server` binds every interface for LAN use and requires a **shared token** on
+every request — generated and printed with the URL to open when you have not set
+one, so the secure path is the default path. Be clear about what that is and is
+not: it stops another machine on your network converting your documents and
+reading the results. There is no TLS, no user accounts and no audit trail. Put
+HTTPS in front of it, or tunnel over SSH, if the network is not one you would
+trust with the documents themselves.
 
 ```console
 $ pip install "tokenmill[gui]"
@@ -422,7 +580,7 @@ The core install must stay light. Everything heavy lives behind extras:
 | `compress` | LLMLingua-2, transformers | Requires a model download |
 | `ocr` | pytesseract, PaddleOCR | Requires a system binary or model weights |
 | `gui` | NiceGUI + FastAPI | Only needed for `tokenmill gui` |
-| `heavy` | *(intentionally empty)* | Marker, MinerU, olmOCR, Surya run **out of process**; they are documented, never depended on |
+| `heavy` | *(intentionally empty, forever)* | Marker, MinerU, olmOCR, Surya, DeepSeek-OCR and dots.ocr run **out of process**; documented, never depended on. `tokenmill doctor` prints the install commands |
 
 ## Licence tiering
 
@@ -467,19 +625,41 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Documentation
 
+**Start here**
+
+| Document | Contents |
+|---|---|
+| [`docs/FAQ.md`](docs/FAQ.md) | The questions a reader actually has, answered without marketing — including the ones where the answer is "we don't know" |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results, and **[a seven-item Limitations section](docs/BENCHMARKS.md#limitations-read-before-quoting-any-of-this) to read before quoting any of them** |
+| [`docs/BACKENDS.md`](docs/BACKENDS.md) | Per-backend reference: what each one is best at and, in detail, what it gets **wrong** on our fixtures |
+
+**Reference**
+
+| Document | Contents |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Plugin/adapter design, data model, pipeline, error taxonomy |
+| [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
+| [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, what each distributed artefact contains, and the audits actually run |
+| [`benchmarks/README.md`](benchmarks/README.md) | How to run the harness and what each result file is |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed, in Keep a Changelog format |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Setup, the checks that must pass, the non-negotiable rules, and the release checklist |
+
+**Writing about this project**
+
+| Document | Contents |
+|---|---|
+| [`docs/article/`](docs/article/) | The support pack: generated tables and charts, the five findings that surprised us, and **[`CLAIMS.md`](docs/article/CLAIMS.md)** — every claim labelled Measured, Cited or Unverified |
+
+**Project history**
+
 | Document | Contents |
 |---|---|
 | [`PROGRESS.md`](PROGRESS.md) | Living project state, verification log, decisions, open questions |
 | [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) | The phased build plan |
-| [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md) | The landscape survey this project is built on |
-| [`CHANGELOG.md`](CHANGELOG.md) | What changed, in Keep a Changelog format |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Plugin/adapter design, data model, pipeline, error taxonomy |
-| [`docs/BACKENDS.md`](docs/BACKENDS.md) | Per-backend reference, including observed failure modes |
-| [`docs/ADDING_A_BACKEND.md`](docs/ADDING_A_BACKEND.md) | Contributor tutorial with a complete working example |
-| [`docs/LICENSES.md`](docs/LICENSES.md) | What tokenmill is licensed as, what it pulls in, and the audits actually run |
-| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Our own measured results *(partial; the full harness is Phase 10)* |
+| [`docs/research/RESEARCH.md`](docs/research/RESEARCH.md) | The landscape survey this project is built on — **and wrong about four licences**, which is why every licence here is read from installed metadata instead |
+| [`docs/REVIEW_PHASES_0_12.md`](docs/REVIEW_PHASES_0_12.md) | The final re-evaluation: every acceptance criterion with its evidence, the whole corpus, and a defects list including the ones this project introduced |
+| [`docs/REVIEW_PHASES_0_8.md`](docs/REVIEW_PHASES_0_8.md), [`0_6`](docs/REVIEW_PHASES_0_6.md), [`0_4`](docs/REVIEW_PHASES_0_4.md) | Superseded reviews, kept as a record of what each phase actually saw |
 | [`docs/CI_BILLING_CHECK.md`](docs/CI_BILLING_CHECK.md) | Why CI stopped scheduling runners and how to check the Actions billing page, written for a novice |
-| [`docs/REVIEW_PHASES_0_6.md`](docs/REVIEW_PHASES_0_6.md) | A full re-evaluation after Phase 6: every acceptance criterion with its evidence, the whole corpus with tokens beside fidelity, and an honest defects list including the ones it introduced |
 
 ## Non-goals
 

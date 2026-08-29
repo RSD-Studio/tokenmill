@@ -47,7 +47,7 @@ They report as skips, not silence:
 
 ```bash
 uv run pytest -q -m network    # real tokenizer vocabulary downloads
-uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path, Phase 9)
+uv run pytest -q -m heavy      # GPU or multi-gigabyte model downloads (docling's PDF path)
 uv run pytest -q -m compress   # the compress extra plus a model (Phase 6)
 uv run pytest -q -m browser    # drives a real Chromium (crawl4ai, Phase 3)
 ```
@@ -76,10 +76,19 @@ requirement in the default dependency set. Anything heavy goes behind an
 `optional-dependencies` group and a lazy import.
 
 **2. Copyleft dependencies are never imported.** AGPL and GPL tools
-(PyMuPDF4LLM, Marker, Surya, Pandoc, Firecrawl core, omniparse) are invoked via
-subprocess or a service boundary, never `import`ed into the tokenmill process.
-Every adapter declares its licence in `BackendInfo`. See
+(PyMuPDF4LLM, Pandoc, Firecrawl core, omniparse) are invoked via subprocess or a
+service boundary, never `import`ed into the tokenmill process. So are
+**source-available** ones — MinerU's licence is Apache-2.0 plus a revenue
+threshold and an attribution obligation, which is its own tier. Every adapter
+declares its licence in `BackendInfo`. See
 [`docs/LICENSES.md`](docs/LICENSES.md).
+
+Note that rule 1 and rule 2 are separate, and some backends are out of process
+for the *first* reason. Marker and Surya are Apache-2.0 as of `marker-pdf` 2.0.0
+and `surya-ocr` 0.22.1 — verified from the wheels, against what `RESEARCH.md`
+says — so importing them would be legal. It would also put PyTorch in the
+dependency tree, which rule 1 forbids. LibreOffice is the same shape for a third
+reason: it is C++.
 
 **3. Backends import lazily.** A backend module must import cleanly with its
 heavy dependency absent. The real import happens inside `convert()`. A missing
@@ -195,6 +204,22 @@ that can discard information the user might have wanted must set
 `destructive = True`; the default chain is built by excluding those, so it
 cannot damage a document.
 
+A post-processor that wants to warn the user, or to attach a structured fact to
+the result, adds an **optional** third parameter:
+
+```python
+def process(self, text, options, context=None) -> str:
+    if context is not None:
+        context.warn("there was no front matter to strip")
+        context.note("removed_lines", 0)
+    return text
+```
+
+The registry reads your signature and calls you with two arguments or three
+accordingly, so a post-processor written against the original two-parameter
+contract keeps working untouched — including one that subclasses
+`BasePostProcessor`, whose declaration deliberately stays at two parameters.
+
 ## Design decisions
 
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) records why the architecture is
@@ -238,4 +263,83 @@ the substitute.
 
 ## Release checklist
 
-*(Fills out in Phase 11 when publishing exists.)*
+Commands, not intentions. Everything up to the tag is reversible; everything
+after it is not, and the workflow is built around that asymmetry.
+
+### Before the tag
+
+```bash
+# 1. Everything green, from a clean tree.
+uv run ruff check . && uv run ruff format --check .
+uv run mypy
+uv run pytest -q
+
+# 2. The corpus is the one the generator makes.
+uv run python scripts/make_fixtures.py --check      # "OK: 24 files reproduced byte-for-byte"
+
+# 3. The benchmark data matches the code that produced it.
+uv run python -m benchmarks.run --out benchmarks/results/$(date +%F) --repeats 5 --allow-network
+#    Check the manifest says `"git_dirty": false`. If it does not, something
+#    outside benchmarks/results/ is uncommitted and the run is a measurement of
+#    an unrecorded tree.
+
+# 4. The version is set in ONE place. hatchling reads it from the source.
+grep '__version__' src/tokenmill/__init__.py
+
+# 5. CHANGELOG.md has a `## [x.y.z] - YYYY-MM-DD` section. The release
+#    workflow lifts the notes straight out of it; no section, no notes.
+
+# 6. Build and check the way PyPI will.
+uv build
+uv tool run --from twine twine check --strict dist/*
+
+# 7. Install the WHEEL somewhere with no source tree and make it convert.
+#    A source tree in the working directory is exactly how a packaging bug
+#    hides: `import tokenmill` finds `src/` and passes.
+python -m venv /tmp/relcheck
+/tmp/relcheck/bin/pip install dist/tokenmill-*.whl
+cd /tmp && /tmp/relcheck/bin/tokenmill --version && /tmp/relcheck/bin/tokenmill backends
+```
+
+CI does steps 6 and 7 for you across nine OS/Python cells, and builds both
+container targets, but do step 7 by hand once anyway. It is the step that
+catches the mistakes the others cannot.
+
+### The tag
+
+```bash
+git tag -a v0.1.0 -m "tokenmill 0.1.0"
+git push origin v0.1.0
+```
+
+That fires `.github/workflows/release.yml`, which builds, verifies, builds both
+container images, and **drafts** a GitHub Release with the artefacts attached.
+It does not publish anything.
+
+### Publishing, which is a separate act
+
+**A version number is spent the moment PyPI accepts it.** There is no
+republishing and no undo, which is why a tag push cannot reach the publish job.
+
+```
+Actions -> Release -> Run workflow
+  publish:    true
+  repository: testpypi        # then, having installed from there, pypi
+```
+
+Then install from TestPyPI in a clean environment and convert something before
+running it again against `pypi`.
+
+**One-time setup on PyPI, before the first publish.** Publishing uses trusted
+publishing (OIDC), so no API token is stored in this repository and there is
+nothing to leak or rotate. On PyPI: *Your projects -> tokenmill -> Manage ->
+Publishing -> Add a new publisher*, GitHub, owner `RSD-Studio`, repository
+`tokenmill`, workflow `release.yml`, environment `pypi` (and the same again for
+`testpypi` on test.pypi.org). Until that exists the publish job fails at the
+credential exchange, having published nothing — which is the correct failure.
+
+### After
+
+- Publish the drafted GitHub Release once you have read its notes.
+- Open a new `## [Unreleased]` section in `CHANGELOG.md`.
+- Bump `__version__` for the next cycle.

@@ -1,75 +1,84 @@
-"""The batch queue, and why it does not use a thread pool.
+"""The batch queue, and how many conversions it runs at once.
 
-**This is where defect D2 comes due.** `docs/REVIEW_PHASES_0_6.md` §4 counts the
-process-global state a conversion touches, and none of it is thread-safe:
+**Phase 8 ran one at a time, and defect D2 was why.** `Pipeline.run` could not
+safely go on a thread pool: several adapters reach for process-global state —
+the warnings filter list, the stdlib root logger's handlers, `os.environ`,
+loguru's activation registry — and none of it survives two threads interleaving
+their save and restore. `docs/ARCHITECTURE.md` and
+`tokenmill.core.globalstate` carry the worked example. Batch throughput was
+bounded by a defect rather than by the work, and the acceptance criterion — a
+responsive interface, not a fast one — hid that.
 
-```
-src/tokenmill/backends/_common.py                    warnings.catch_warnings
-src/tokenmill/backends/documents/docling_adapter.py  warnings.catch_warnings
-src/tokenmill/backends/repo/gitingest_repo.py        warnings.catch_warnings
-src/tokenmill/post/compress.py                       warnings.catch_warnings
-src/tokenmill/backends/repo/gitingest_repo.py        os.environ, the stdlib root
-                                                     logger's handlers and level,
-                                                     loguru's activation registry
-```
+**Phase 9 fixed D2 and this became a thread pool.** Every block that touches
+global state now runs under one process-wide reentrant lock, and, more
+importantly, those blocks were narrowed first: for the document and web
+adapters they cover an *import*, which after the first conversion is a
+`sys.modules` lookup. So the lock costs microseconds for most backends and the
+pool is real.
 
-`warnings.catch_warnings` saves and restores a **module-global** filter list. Two
-threads entering it at once interleave their save and restore, and the loser
-leaves the process with the other's filters — which under this project's
-`filterwarnings = ["error"]` means a warning that should have been forwarded as a
-`ConversionWarning` becomes a raised exception in an unrelated conversion, or
-the reverse. The gitingest adapter is worse: it reconfigures the *root logger's
-handlers and level* and restores them afterwards.
+Two backends still serialise against themselves, and that is stated here rather
+than left in a benchmark footnote:
 
-So `Pipeline.run` cannot go on a thread pool, and the handover says so directly.
+* **docling** — its deprecation filter has to be active while the document is
+  converted, not merely while the module is imported.
+* **gitingest** — pathspec warns while it builds ignore rules, loguru's registry
+  must stay set while it logs, and `GITHUB_TOKEN` is read at the top of the
+  call.
 
-**What this does instead: one worker thread, conversions serialised.**
+Everything else — pdfplumber, pypdf, plaintext, trafilatura, readability,
+markdownify_html, markitdown, kreuzberg, pandoc, LibreOffice, PyMuPDF4LLM,
+repomix, code2prompt — runs fully in parallel.
 
-The acceptance criterion is "a 20-file batch runs with a responsive UI and
-correct aggregate totals" — which asks for the UI not to block, not for
-parallelism. A single worker gives exactly that: the work is off the event loop,
-so the interface stays live, and only one conversion touches the global state at
-a time, so it stays correct.
+**Whether the pool helps depends entirely on the backend, and the difference is
+large.** Measured on this container (4 cores), 12 files, median of 5 runs,
+2026-08-27:
 
-**Why not a process pool**, which would be both safe and parallel: it is the
-right answer eventually and the wrong one now.
+| Batch | Serial | 4 workers | Speedup |
+|---|---|---|---|
+| In-process (pdfplumber, markitdown, trafilatura — auto-selected) | 1.13 s | 1.25 s | **0.91x** |
+| `pymupdf4llm` (a separate Python interpreter per conversion) | 14.59 s | 9.50 s | **1.54x** |
+| `pandoc` + `libreoffice` (real external programs) | 11.89 s | 3.82 s | **3.12x** |
 
-* `ConversionResult` would have to cross a pickle boundary, and it carries the
-  whole converted text. A 20-file batch of large documents copies every byte
-  twice for no benefit the user can see.
-* It would put a *sixth* kind of process-global concern — child process
-  lifecycle — into a project whose review is already tracking that count as a
-  defect, and the handover asks to be told before the number moves.
-* Several backends already spawn their own children. A process pool of
-  conversions each starting `soffice` or a second Python interpreter multiplies
-  processes rather than parallelising work.
+The GIL explains both ends. An in-process backend parsing a PDF holds it, so
+threads add contention and overlap nothing — parallelism *costs* 9%. A
+subprocess backend spends its time in `wait()` with the GIL released, so four
+really do run at once.
 
-**One argument that does *not* hold, recorded because it was the first one
-reached for.** Worker start-up looked expensive and is not: `import tokenmill`
-plus building the registry and scanning entry points measures **0.133 s**
-(median of five, this container, 2026-08-26), not the several tenths guessed
-at. Per-worker start-up is a real cost and a small one, and the case against a
-process pool rests on the three reasons above rather than on that.
+**The default is 4 anyway, and that is a judgement rather than a measurement.**
+It costs 9% of 1.13 s on the cheapest workload and saves 8 seconds on the
+expensive one. Nobody notices the first; everybody notices the second.
+`BatchRunner(..., workers=1)` restores the Phase 8 behaviour exactly, for anyone
+converting only with in-process backends who would rather have the 9%.
 
-The honest position is that batch throughput is bounded by one conversion at a
-time, that this is a consequence of D2 rather than a design preference, and that
-fixing D2 properly — making the adapters stop reaching for global state — is
-what unlocks parallelism. `PROGRESS.md` records it as deferred work with that
-reasoning, and the cost is measured rather than asserted: see
-`docs/BENCHMARKS.md`.
+Capped at 4 rather than set to the core count: several backends spawn their own
+children and one of them is LibreOffice, so a pool as wide as the machine
+multiplies processes instead of parallelising work.
+
+**Why not a process pool**, which would sidestep the shared interpreter
+entirely: `ConversionResult` carries the whole converted text across a pickle
+boundary, so a batch of large documents copies every byte twice; and several
+backends already spawn children, so a pool of conversions each starting
+`soffice` multiplies processes. Measured start-up is not the objection — that is
+0.133 s — and `docs/ARCHITECTURE.md` records the reasoning.
+
+**Ordering is by index, not by completion.** `items` is always in the order the
+caller supplied, whatever order the pool finishes in, because a list that
+reorders itself while a user watches is worse than a slower one.
 
 **Cancellation is cooperative and honest about it.** A conversion already handed
 to a backend cannot be interrupted — a subprocess has its own timeout and an
 in-process C library has nothing to interrupt — so cancelling marks every
-*queued* item cancelled and lets the running one finish. The UI says that rather
+*queued* item cancelled and lets running ones finish. The UI says that rather
 than pretending the button stops work instantly.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Final
@@ -77,7 +86,14 @@ from typing import Final
 from tokenmill.core.pipeline import Pipeline
 from tokenmill.gui.api import ConversionRequest, ConversionSummary, convert
 
-__all__ = ["BatchItem", "BatchRunner", "BatchTotals", "ItemState", "requests_for"]
+__all__ = [
+    "BatchItem",
+    "BatchRunner",
+    "BatchTotals",
+    "ItemState",
+    "default_workers",
+    "requests_for",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -182,18 +198,43 @@ class BatchTotals:
 #: How long :meth:`BatchRunner.wait` polls between checks.
 _POLL_S: Final = 0.02
 
+#: The most conversions to run at once when the caller does not say.
+#:
+#: Capped rather than set to the core count: several backends spawn their own
+#: child processes and one of them is LibreOffice, so a pool as wide as the
+#: machine multiplies processes instead of parallelising work. Four overlaps the
+#: subprocess and I/O waits that dominate this workload without doing that.
+_DEFAULT_WORKERS: Final = 4
+
+
+def default_workers() -> int:
+    """How many conversions a :class:`BatchRunner` runs at once by default.
+
+    A function rather than the module constant so the interface can state the
+    real number instead of repeating a literal. The GUI's batch caption said
+    "one at a time" for a whole phase after this stopped being true, which is
+    the kind of claim a reader believes precisely because it sits next to the
+    numbers.
+
+    Returns:
+        The default pool width.
+    """
+    return _DEFAULT_WORKERS
+
 
 class BatchRunner:
-    """Runs a batch on one background thread, leaving the caller's thread free.
+    """Runs a batch on a pool of background threads, leaving the caller free.
 
     Thread-safety here is about the runner's *own* state — the item list and the
-    cancel flag — which is guarded by one lock. The conversions themselves are
-    serialised onto a single worker for the reason in the module docstring.
+    cancel flag — which is guarded by one lock. The conversions are safe to
+    overlap because of `tokenmill.core.globalstate`; see the module docstring
+    for the two backends that still serialise against themselves.
 
     Attributes:
         on_change: Called after every state transition, with the runner. Used by
-            the UI to refresh; called on the worker thread, so a UI toolkit that
+            the UI to refresh; called on a worker thread, so a UI toolkit that
             needs its own thread must marshal.
+        workers: How many conversions run at once.
     """
 
     def __init__(
@@ -202,6 +243,7 @@ class BatchRunner:
         *,
         pipeline: Pipeline | None = None,
         on_change: Callable[[BatchRunner], None] | None = None,
+        workers: int | None = None,
     ) -> None:
         """Prepare a batch without starting it.
 
@@ -211,10 +253,24 @@ class BatchRunner:
                 when omitted, so that entry-point scanning is not paid on the
                 caller's thread either.
             on_change: Called after each state transition.
+            workers: How many conversions to run at once. Defaults to
+                ``min(4, cpu_count)``; ``1`` restores the Phase 8 behaviour,
+                which is what the benchmark in ``docs/BENCHMARKS.md`` compares
+                against.
+
+        Raises:
+            ValueError: If ``workers`` is less than one. A pool of zero would
+                accept the batch and never run it.
         """
+        if workers is not None and workers < 1:
+            msg = f"workers must be at least 1, got {workers}"
+            raise ValueError(msg)
         self._requests = list(requests)
         self._pipeline = pipeline
         self.on_change = on_change
+        self.workers = (
+            workers if workers is not None else min(_DEFAULT_WORKERS, os.cpu_count() or 1)
+        )
         self._lock = threading.Lock()
         self._items: list[BatchItem] = [
             BatchItem(index=i, name=r.source.name) for i, r in enumerate(self._requests)
@@ -315,7 +371,9 @@ class BatchRunner:
         """
         if self._thread is not None or not self._requests:
             return
-        self._thread = threading.Thread(target=self._run, name="tokenmill-batch", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="tokenmill-batch-supervisor", daemon=True
+        )
         self._thread.start()
 
     def cancel(self) -> None:
@@ -355,26 +413,49 @@ class BatchRunner:
     # ------------------------------------------------------------------ worker
 
     def _run(self) -> None:
-        """Convert every queued item in order, on the worker thread."""
+        """Convert every queued item, on a pool of worker threads."""
         pipeline = self._pipeline if self._pipeline is not None else Pipeline()
         try:
-            for index, request in enumerate(self._requests):
-                if self._cancel.is_set():
-                    self._set(index, state=ItemState.CANCELLED)
-                    continue
-                self._set(index, state=ItemState.RUNNING)
-                summary = convert(request, pipeline=pipeline)
-                self._set(
-                    index,
-                    state=ItemState.DONE if summary.ok else ItemState.FAILED,
-                    summary=summary,
-                )
+            if self.workers == 1:
+                for index in range(len(self._requests)):
+                    self._run_one(index, pipeline)
+                return
+            with ThreadPoolExecutor(
+                max_workers=self.workers, thread_name_prefix="tokenmill-batch"
+            ) as pool:
+                # `map` rather than submitting and gathering: nothing here reads
+                # a return value — every result is written into the item list as
+                # it lands — and `map` propagates an exception from a worker
+                # into this thread, where the `finally` below still releases
+                # anything waiting.
+                list(pool.map(lambda i: self._run_one(i, pipeline), range(len(self._requests))))
         finally:
             # In a finally block so that an unexpected error still releases
             # anything waiting on this batch. A UI that hung because the worker
             # died would be worse than one that showed a failed item.
             self._finished.set()
             self._notify()
+
+    def _run_one(self, index: int, pipeline: Pipeline) -> None:
+        """Convert one item, unless the batch has been cancelled.
+
+        Args:
+            index: Which item.
+            pipeline: The pipeline to run it through. Shared across the pool:
+                it holds registries, which are read-only after discovery, and
+                building one per worker would pay for entry-point scanning
+                once per thread.
+        """
+        if self._cancel.is_set():
+            self._set(index, state=ItemState.CANCELLED)
+            return
+        self._set(index, state=ItemState.RUNNING)
+        summary = convert(self._requests[index], pipeline=pipeline)
+        self._set(
+            index,
+            state=ItemState.DONE if summary.ok else ItemState.FAILED,
+            summary=summary,
+        )
 
     def _set(
         self,

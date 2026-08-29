@@ -182,6 +182,14 @@ because the fidelity column is right there.
 `repomix` needs `--allow-network`, because `npx` downloads it; its row is with
 that passed.
 
+> **Superseded, and left as it was measured.** `repomix`'s 3,978 is a Phase 8
+> figure. Phase 9 switched that adapter to `--style json` to fix defect D6, and
+> the same cell now measures **3,786** — 192 bytes of repomix's own boilerplate,
+> with every file and every byte of every file identical. The current numbers are
+> in [`benchmarks/results/2026-08-27/`](../benchmarks/results/2026-08-27/) and
+> `docs/BENCHMARKS.md`. This table is a record of what Phase 8 saw, not a claim
+> about the code today.
+
 ### What this table says that the last one could not
 
 **The AGPL tool is the best PDF converter in the corpus, on every PDF.**

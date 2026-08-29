@@ -267,10 +267,26 @@ kreuzberg = "tokenmill.backends.documents.kreuzberg_adapter:KreuzbergConverter"
 docling = "tokenmill.backends.documents.docling_adapter:DoclingConverter"
 # Phase 7 — out of process. The first two are copyleft and may never be
 # imported; LibreOffice is MPL-2.0 and is isolated only because it is not
-# Python. tokenmill.backends.isolated.__init__ keeps that distinction.
-pymupdf4llm = "tokenmill.backends.isolated.pymupdf4llm_pdf:PyMuPDF4LLMConverter"
-pandoc = "tokenmill.backends.isolated.pandoc_doc:PandocConverter"
-libreoffice = "tokenmill.backends.isolated.libreoffice_doc:LibreOfficeConverter"
+# Python. tokenmill.backends.external.__init__ keeps that distinction.
+pymupdf4llm = "tokenmill.backends.external.pymupdf4llm_pdf:PyMuPDF4LLMConverter"
+pandoc = "tokenmill.backends.external.pandoc_doc:PandocConverter"
+libreoffice = "tokenmill.backends.external.libreoffice_doc:LibreOfficeConverter"
+# Phase 9 — the GPU tier. Registered so `tokenmill backends` can show what
+# exists and how to install it; NEVER a dependency, and `heavy = []` above stays
+# empty forever. Each runs from an environment of its own or in a container.
+#
+# They are registered despite Phase 7's rule against "a row for a container
+# nobody is running", and the difference is that these are actionable: an
+# unavailable heavy backend carries the exact commands that would install it,
+# which is the whole deliverable of this phase. A ServiceConverter with no
+# address still says "you have not told me where it is", which is a different
+# and equally actionable sentence.
+marker = "tokenmill.backends.heavy.marker:MarkerConverter"
+surya = "tokenmill.backends.heavy.surya:SuryaConverter"
+mineru = "tokenmill.backends.heavy.mineru:MinerUConverter"
+olmocr = "tokenmill.backends.heavy.olmocr:OlmOcrConverter"
+deepseek_ocr = "tokenmill.backends.heavy.deepseek_ocr:DeepSeekOcrConverter"
+dots_ocr = "tokenmill.backends.heavy.dots_ocr:DotsOcrConverter"
 
 [project.entry-points."tokenmill.postprocessors"]
 # Exactly one of these is non-destructive, and that is the whole default chain.
@@ -304,7 +320,24 @@ path = "src/tokenmill/__init__.py"
 packages = ["src/tokenmill"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/tokenmill", "tests", "scripts", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
+# `benchmarks` and `docker` are here for a specific reason. Phase 10's
+# acceptance criterion is that a full benchmark run is "re-runnable by a third
+# party", and a third party's copy is the sdist. Without them it shipped
+# `benchmarks/README.md` and `docker/README.md` — documentation for a harness
+# and a compose file that were not in the archive — which is worse than shipping
+# neither. `benchmarks/results/` comes too: the raw data every number in
+# `docs/BENCHMARKS.md` traces back to, about 100 kB.
+include = [
+    "src/tokenmill",
+    "tests",
+    "scripts",
+    "docs",
+    "benchmarks",
+    "docker",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff — lint + format
@@ -355,6 +388,9 @@ convention = "google"
     "D100", "D101", "D102", "D103", "D104", "D107",
     "ANN001", "ANN201", "ANN202",
 ]
+# This test asserts on the U+2212 MINUS SIGN the article tables deliberately
+# emit, so it has to contain one.
+"tests/unit/test_article_pack.py" = ["RUF001"]
 # The error taxonomy is fixed by DEVELOPMENT_PLAN.md §1.4, which names
 # UnsupportedFormat, BackendUnavailable, BackendFailed, Timeout, CorruptSource
 # and NetworkRequired. Those names are the architecture contract that backends
@@ -369,6 +405,18 @@ convention = "google"
 "scripts/make_fixtures.py" = ["T201", "E501", "RUF001", "RUF002", "RUF003"]
 # The CLI presentation layer is the one place allowed to write to stdout.
 "src/tokenmill/cli/**" = ["T201"]
+# The benchmark harness has command-line entry points of its own, and their
+# progress and summary lines are the interface. Same rule as the CLI, applied to
+# the two modules that are one.
+"benchmarks/run.py" = ["T201"]
+"benchmarks/merge.py" = ["T201"]
+# The article pack's generator is a script with a summary line, same rule again.
+# RUF001 because it deliberately emits U+2212 MINUS SIGN rather than a hyphen:
+# these tables are written to be pasted into prose, and a saving printed as
+# "-77.1%" with a hyphen is the typographic version of the sign bug this project
+# has now shipped twice.
+"docs/article/make_tables.py" = ["T201", "RUF001"]
+"docs/article/make_charts.py" = ["T201"]
 # The network-marked benchmark test prints the measured figure on purpose: the
 # CI log is the only place a real model-token number can be *read out* of a run
 # in this project, and CONTRIBUTING.md rule 4 says a figure that is not in
@@ -388,7 +436,11 @@ docstring-code-format = true
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.11"
-files = ["src", "scripts", "tests"]
+# `benchmarks` is here from Phase 10 onwards. It is not a script directory: it
+# produces the numbers this project publishes, and a harness that silently
+# recorded a `None` where a count belonged would be the most expensive kind of
+# bug here — one that is wrong in a committed file somebody later cites.
+files = ["src", "scripts", "tests", "benchmarks", "docs/article"]
 # The sample_repo fixture is synthetic source code used as conversion input.
 exclude = ["^tests/fixtures/"]
 strict = true
@@ -434,6 +486,17 @@ module = [
     "llmlingua.*",
     "chonkie.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# matplotlib is deliberately NOT a dependency of this project: the core install
+# is capped at 250 MB and a plotting library only the article pack needs has no
+# business in it. `docs/article/make_charts.py` runs under
+# `uv run --with matplotlib`, so mypy checking the repository will never find it
+# and should not fail over that. The script's own imports are inside functions
+# and guarded by an ImportError path that prints the command instead of a
+# traceback.
+module = ["matplotlib.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

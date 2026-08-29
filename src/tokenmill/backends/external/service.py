@@ -1,7 +1,8 @@
 r"""Reaching a converter over HTTP instead of running it.
 
-The third isolation mode. ``SUBPROCESS`` needs the tool installed on the same
-machine; ``SERVICE`` does not, and that is the whole point for Phase 9: Marker,
+The third isolation mode, and the only one that does not need the tool on this
+machine at all. ``SUBPROCESS`` needs it installed alongside us; ``SERVICE``
+does not, and that is the whole point for Phase 9: Marker,
 MinerU, olmOCR and Surya want a GPU, several gigabytes of weights and a
 dependency tree that must never touch ours. Running them in a container and
 talking to them over HTTP is how they become usable without being installed.

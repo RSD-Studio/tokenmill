@@ -358,3 +358,115 @@ class TestTheProcessorsCompose:
                 continue
             text = processor.process(text, options)
         assert len(text) < len(structured)
+
+
+@pytest.mark.integration
+@pytest.mark.requires("markitdown")
+class TestAggressiveWhitespaceEarnsItsPlace:
+    """Defect N5, closed by measuring — and reversed.
+
+    `docs/REVIEW_PHASES_0_8.md` recorded that `aggressive_whitespace` "has never
+    demonstrated a benefit on this corpus" at +0.0%, +0.0% and -0.1%, and the owner
+    leaned towards deleting it. Those were three cells. Measured across all
+    fifty backend-by-fixture cells the corpus actually has, it saves on ten of
+    them, and on one it saves **18.3% at no fidelity cost at all**.
+
+    The reason is specific and worth keeping: MarkItDown pads its Markdown
+    table columns so they line up in a text editor. That alignment is pure
+    presentation — no model reads it — and it is 18% of the document. Collapsing
+    it leaves a valid Markdown table, which is why the fidelity score does not
+    move.
+
+    So the processor stays, and these tests are what make the claim decay
+    loudly. **If MarkItDown stops padding its tables, this fails**, and the
+    number in `docs/BENCHMARKS.md` gets corrected instead of quietly becoming a
+    lie about a tool that has since changed.
+    """
+
+    @staticmethod
+    def _bytes(fixture_dir: Path, chain: tuple[str, ...] | None) -> int:
+        """Convert `tables.pdf` through markitdown and return its size.
+
+        Args:
+            fixture_dir: The corpus.
+            chain: The post-processor chain, or None for the default.
+
+        Returns:
+            The output's size in UTF-8 bytes.
+        """
+        from tokenmill.core.models import Source
+        from tokenmill.core.pipeline import Pipeline
+
+        result = Pipeline().run(
+            Source.from_path(fixture_dir / "tables.pdf"),
+            ConvertOptions(
+                tokenizer="bytes",
+                backend="markitdown",
+                fallback=False,
+                post_processors=chain,
+            ),
+        )
+        assert result.tokens_after is not None
+        return result.tokens_after.value
+
+    def test_markitdown_pads_its_table_columns(self, fixture_dir: Path) -> None:
+        """The premise, asserted before the saving that depends on it."""
+        from tokenmill.core.models import Source
+        from tokenmill.core.pipeline import Pipeline
+
+        result = Pipeline().run(
+            Source.from_path(fixture_dir / "tables.pdf"),
+            ConvertOptions(tokenizer="bytes", backend="markitdown", fallback=False),
+        )
+
+        assert "| markitdown  | MIT      | CPU     |" in result.text, (
+            "MarkItDown no longer pads its table columns to align them. That is "
+            "an improvement upstream and it invalidates the 18.3% figure for "
+            "aggressive_whitespace in docs/BENCHMARKS.md — re-measure and "
+            "correct the number rather than loosening this assertion."
+        )
+
+    def test_it_saves_a_double_digit_percentage_on_a_padded_table(self, fixture_dir: Path) -> None:
+        default = self._bytes(fixture_dir, None)
+        aggressive = self._bytes(fixture_dir, ("normalize_whitespace", "aggressive_whitespace"))
+
+        saving = (default - aggressive) / default
+        assert saving > 0.15, (
+            f"aggressive_whitespace saved {saving:.1%} on tables.pdf through "
+            f"markitdown, where docs/BENCHMARKS.md publishes 18.3%. If this has "
+            f"dropped, MarkItDown's output has changed; re-measure and correct "
+            f"the documented figure."
+        )
+
+    def test_the_table_survives_the_collapse(self, fixture_dir: Path) -> None:
+        """The saving is only worth having because nothing was lost for it.
+
+        A whitespace collapse that broke the table would score exactly the same
+        18% and would be a destroyed document. This is the assertion that makes
+        the number mean something.
+        """
+        from tokenmill.core.models import Source
+        from tokenmill.core.pipeline import Pipeline
+        from tokenmill.fidelity.ground_truth import load_ground_truth
+        from tokenmill.fidelity.scorer import score
+
+        truth = load_ground_truth(fixture_dir)["tables.pdf"]
+        scores = []
+        for chain in (None, ("normalize_whitespace", "aggressive_whitespace")):
+            result = Pipeline().run(
+                Source.from_path(fixture_dir / "tables.pdf"),
+                ConvertOptions(
+                    tokenizer="bytes",
+                    backend="markitdown",
+                    fallback=False,
+                    post_processors=chain,
+                ),
+            )
+            scores.append(score(result.text, truth, fixture="tables.pdf", backend_id="markitdown"))
+
+        before, after = scores
+        assert after.overall == pytest.approx(before.overall), (
+            f"aggressive_whitespace changed the fidelity of tables.pdf through "
+            f"markitdown from {before.overall:.3f} to {after.overall:.3f}. The "
+            f"18.3% saving is only publishable while this stays equal."
+        )

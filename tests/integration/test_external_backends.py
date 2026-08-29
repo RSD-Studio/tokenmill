@@ -19,9 +19,9 @@ from typing import Any
 
 import pytest
 
-from tokenmill.backends.isolated.libreoffice_doc import LibreOfficeConverter
-from tokenmill.backends.isolated.pandoc_doc import PandocConverter
-from tokenmill.backends.isolated.pymupdf4llm_pdf import PyMuPDF4LLMConverter
+from tokenmill.backends.external.libreoffice_doc import LibreOfficeConverter
+from tokenmill.backends.external.pandoc_doc import PandocConverter
+from tokenmill.backends.external.pymupdf4llm_pdf import PyMuPDF4LLMConverter
 from tokenmill.core.errors import BackendFailed, ConversionError, CorruptSource
 from tokenmill.core.models import (
     AvailabilityStatus,
@@ -96,6 +96,11 @@ class TestTheAbsentRuntimeCase:
         assert availability.status in {
             AvailabilityStatus.MISSING_BINARY,
             AvailabilityStatus.MISSING_DEPENDENCY,
+            # UNSUPPORTED joined this set when the LibreOffice probe learned to
+            # spot a core-only install: the binary is genuinely present, so
+            # MISSING_BINARY would be false, and the user still needs a package
+            # name. What the criterion is really about is the last line here.
+            AvailabilityStatus.UNSUPPORTED,
         }
         assert availability.hint, f"{converter.info.id} is unavailable with no install hint"
 
@@ -385,3 +390,86 @@ class TestLibreOfficeIsIsolatedOnlyBecauseItIsNotPython:
 
         assert first.text.strip()
         assert second.text.strip()
+
+
+class TestLibreOfficeWithoutItsComponents:
+    """A binary that starts and converts nothing is not an available backend.
+
+    This is defect R0, found on a fresh container that had `libreoffice-core`
+    and not `libreoffice-writer`: six tests failed where they should have
+    skipped, because `is_available()` answered the question "is soffice on
+    PATH" rather than "can soffice load a document".
+
+    The probe is exercised against synthetic install trees rather than against
+    whatever this machine happens to have. `docs/REVIEW_PHASES_0_8.md` N12
+    recorded two tests that asserted environment-dependent answers and passed
+    here while failing in CI; a test for this that read the real LibreOffice
+    would be a third.
+    """
+
+    @staticmethod
+    def _install(root: Path, *, components: bool, registry: bool = True) -> Path:
+        """Build a fake LibreOffice tree and return its executable.
+
+        Args:
+            root: Where to build it.
+            components: Whether to write a `writer.xcd`.
+            registry: Whether the registry directory exists at all.
+
+        Returns:
+            The path to the fake `soffice`.
+        """
+        program = root / "program"
+        program.mkdir(parents=True)
+        binary = program / "soffice"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+        if registry:
+            share = root / "share" / "registry"
+            share.mkdir(parents=True)
+            (share / "main.xcd").write_text("<oor:data/>")
+            if components:
+                (share / "writer.xcd").write_text("<oor:data/>")
+        return binary
+
+    @staticmethod
+    def _probe_against(binary: Path) -> Any:
+        """Run the availability probe against one fake install.
+
+        Args:
+            binary: The executable the converter should believe it found.
+
+        Returns:
+            The availability.
+        """
+        converter = LibreOfficeConverter()
+        converter._resolved = str(binary)  # the discovery cache is the seam under test
+        return converter.is_available()
+
+    def test_a_core_only_install_is_unavailable_and_names_the_packages(
+        self, tmp_path: Path
+    ) -> None:
+        binary = self._install(tmp_path / "lo", components=False)
+
+        availability = self._probe_against(binary)
+
+        assert not availability
+        assert availability.status is AvailabilityStatus.UNSUPPORTED
+        assert availability.hint is not None
+        assert "libreoffice-writer" in availability.hint
+
+    def test_a_full_install_is_available(self, tmp_path: Path) -> None:
+        binary = self._install(tmp_path / "lo", components=True)
+
+        assert self._probe_against(binary)
+
+    def test_an_unrecognised_layout_keeps_the_binary_s_answer(self, tmp_path: Path) -> None:
+        """No registry found is not the same fact as no filters installed.
+
+        The probe may only downgrade on positive evidence. Guessing the other
+        way would make a working LibreOffice vanish from the backend list of
+        anyone whose install does not look like Debian's, macOS's or Windows's.
+        """
+        binary = self._install(tmp_path / "lo", components=False, registry=False)
+
+        assert self._probe_against(binary)

@@ -1,28 +1,46 @@
 # Benchmarks
 
-**Status: partial, and deliberately so.** This page starts at Phase 3 because
-Phase 3's exit gate names it. The full harness — a corpus × backends × formats
-matrix with wall time, peak memory and a **fidelity score against hand-labelled
-ground truth** — is Phase 10, and `README.md` is right that this page is a Phase
-10 deliverable. Creating it now, small, means the numbers that exist have
-somewhere honest to live from the start instead of accumulating in commit
-messages.
+**Status: the harness exists and its first full result set is committed.**
+Phase 10 built it; everything on this page now traces back to a file in
+[`benchmarks/results/`](../benchmarks/results/) or to a named test.
+
+The whole-matrix data lives at
+[`benchmarks/results/2026-08-27/`](../benchmarks/results/2026-08-27/):
+`report.md` for reading, `results.csv` for a spreadsheet, `results.json` for
+every individual repeat, and `manifest.json` for the commit, the corpus digest,
+the platform and the version of every backend that took part. Regenerate the
+whole thing with one command:
+
+```
+uv run python -m benchmarks.run --out benchmarks/results/$(date +%F) --repeats 5 --allow-network
+```
 
 Every number here comes from running tokenmill on the generated corpus in
 `tests/fixtures/`. Nothing is quoted from a vendor page. Where a figure could
 not be produced in the environment that wrote this, it says so and is left
 absent rather than estimated.
 
+**Before you quote anything from this page, read
+[Limitations](#limitations-read-before-quoting-any-of-this).** There are seven,
+they are not small, and two of them mean a figure here would not reproduce on
+your machine.
+
 ---
 
 ## The rule this page follows
 
 [`benchmarks/README.md`](../benchmarks/README.md) sets it: *every number
-published here must trace back to a committed raw result file*. Phase 10 builds
-the harness that writes those files. Until it exists, this page carries only
-numbers that are **asserted by a test in the repository**, and names the test.
-That is a weaker guarantee than a committed result file and a stronger one than
-a number in prose, and it is the best available before the harness lands.
+published here must trace back to a committed raw result file*. As of Phase 10
+that is met for the matrix — the corpus crossed with every backend the registry
+says claims it, in
+[`benchmarks/results/2026-08-27/`](../benchmarks/results/2026-08-27/).
+
+Figures from earlier phases that the matrix does not cover — post-processor
+savings, serialisation-format comparisons, the batch-parallelism measurement —
+are **asserted by a test in the repository**, and this page names the test. That
+is a weaker guarantee than a committed result file and a stronger one than a
+number in prose. Where a figure came out of a CI log rather than a local run,
+the run number and commit are given so it can be found again.
 
 The other rule, from `benchmarks/README.md` and worth repeating at the top of
 any page of token savings:
@@ -77,6 +95,175 @@ So: **a byte figure on this page is a lower bound on cost and an upper bound on
 saving, and it is not a reliable ordering.** Asserted by
 `tests/unit/test_formats_tokens_network.py`, which originally asserted the
 opposite and was corrected by the measurement rather than the other way round.
+
+## The whole matrix (Phase 10)
+
+Every fixture crossed with every backend the registry says claims its format.
+**63 cells: 51 conversions, 8 failures, and 4 successes that produced nothing.**
+Five timed repeats each after a discarded warm-up, plus one extra instrumented
+pass for memory. Raw data:
+[`benchmarks/results/2026-08-27/`](../benchmarks/results/2026-08-27/), commit
+`e8a2065`, corpus digest `cd2d48ccf99bddb4`, on Linux 6.18.44 / x86-64 / Python
+3.11.15 / 4 cores. Counted in **UTF-8 bytes** — see [Units](#units-read-this-before-quoting-anything).
+
+This section pulls out what the matrix says that the project did not already
+know. The full tables are in the result files; nothing here is a summary
+statistic invented for this page.
+
+### Do not average a backend across the corpus
+
+The obvious table — one row per backend, mean fidelity — was computed and
+thrown away, and it is worth saying why, because it is the table everyone wants.
+`kreuzberg` scores on eleven fixtures and `pymupdf4llm` on three. Those three
+are the three hardest PDFs in the corpus. A mean over different inputs ranks the
+backend that was asked easier questions, and it would have put `pymupdf4llm`
+— which wins every head-to-head below — in the middle of the field.
+
+**Every comparison here is between backends given the identical input.**
+
+### PDF: cost and fidelity are ordered almost exactly backwards
+
+| Fixture | Backend | Bytes out | Fidelity | Median | Added RSS |
+|---|---|---|---|---|---|
+| `tables.pdf` | `pypdf` | 481 | **0.333** | 5 ms | 0 MiB |
+| `tables.pdf` | `kreuzberg` | 466 | 0.500 | 9 ms | 0 MiB |
+| `tables.pdf` | `markitdown` | 769 | 0.606 | 50 ms | 0 MiB |
+| `tables.pdf` | `pdfplumber` | 599 | 0.667 | 26 ms | 0 MiB |
+| `tables.pdf` | `pymupdf4llm` | 553 | **0.848** | **1,168 ms** | **280 MiB** |
+| `twocolumn.pdf` | `pypdf` | 4,050 | 0.667 | 13 ms | 0 MiB |
+| `twocolumn.pdf` | `pdfplumber` | 4,050 | 0.528 | 151 ms | 0 MiB |
+| `twocolumn.pdf` | `markitdown` | 4,062 | 0.528 | 311 ms | 0 MiB |
+| `twocolumn.pdf` | `kreuzberg` | 4,061 | 0.667 | 24 ms | 0 MiB |
+| `twocolumn.pdf` | `pymupdf4llm` | 4,069 | **0.972** | **1,316 ms** | 282 MiB |
+| `simple.pdf` | `pypdf` | 2,371 | 0.500 | 9 ms | 0 MiB |
+| `simple.pdf` | `pdfplumber` | 2,370 | 0.500 | 79 ms | 0 MiB |
+| `simple.pdf` | `markitdown` | 2,377 | 0.500 | 135 ms | 0 MiB |
+| `simple.pdf` | `kreuzberg` | 2,371 | 0.900 | 15 ms | 0 MiB |
+| `simple.pdf` | `pymupdf4llm` | 2,410 | **1.000** | **1,152 ms** | 322 MiB |
+
+`pymupdf4llm` is the most faithful PDF backend on all three scorable PDFs and it
+is the most expensive on all three: **103×, 133× and 234× the wall time of
+`pypdf`** on `twocolumn.pdf`, `simple.pdf` and `tables.pdf` respectively, and
+280–322 MiB of resident memory against `pypdf`'s nothing measurable. That is the trade tokenmill exists to make visible, and it is not
+the trade a size-only comparison would show.
+
+### `twocolumn.pdf` is the argument for fidelity scoring, in one row
+
+Five backends. Byte counts 4,050 / 4,050 / 4,061 / 4,062 / 4,069 — a spread of
+**0.47%**, which on any cost-only leaderboard is a five-way tie. Fidelity
+0.528 to 0.972.
+
+**The cost column cannot tell these five apart and the difference between them
+is whether the two columns interleave.** A tool that published the first column
+and not the second would be recommending a coin flip.
+
+### The cheapest output is the one that dropped the table
+
+On `tables.pdf`, `pypdf` emits 481 bytes at fidelity 0.333 and `pymupdf4llm`
+emits 553 at 0.848. The 15% "extra" is the table. This is the failure mode named
+at the top of [`benchmarks/README.md`](../benchmarks/README.md), caught by the
+harness on its first full run, and it is why the report's fixture table is
+ordered by the registry's preference and **never sorted by size**: sorting it
+would rank the destruction.
+
+### Four cells that succeed and mean nothing
+
+`scanned.pdf` has no text layer. Four backends return successfully with an empty
+string:
+
+| Fixture | Backend | Reduction | Fidelity |
+|---|---|---|---|
+| `scanned.pdf` | `pdfplumber` | 100% | 0.000 |
+| `scanned.pdf` | `kreuzberg` | 100% | 0.000 |
+| `scanned.pdf` | `markitdown` | 100% | 0.000 |
+| `scanned.pdf` | `pypdf` | 100% | 0.000 |
+
+A perfect score on the headline metric, from four tools that extracted nothing.
+`pymupdf4llm` is the only backend that treats it as a failure and says to try an
+OCR backend. The report gives these their own section rather than a row in the
+main table; `check_report()` refuses to render a token column with no fidelity
+column beside it, so this pairing cannot be separated by accident.
+
+The same shape appears on `jsrendered.html`, where all six HTML backends reduce
+by **85–91%** at fidelity **0.000**. The content is assembled in the browser and
+was never in the response. Six honest conversions of nothing.
+
+### The registry's preference order does not match the measurement
+
+On both `.docx` fixtures, `libreoffice` is last on fidelity, last on wall time
+and last on memory:
+
+| Fixture | Backend | Fidelity | Median | Added RSS |
+|---|---|---|---|---|
+| `report.docx` | `markitdown` | **0.841** | 346 ms | 0 MiB |
+| `report.docx` | `pandoc` | **0.841** | 167 ms | 125 MiB |
+| `report.docx` | `kreuzberg` | 0.614 | 7 ms | 0 MiB |
+| `report.docx` | `libreoffice` | **0.375** | **1,466 ms** | **263 MiB** |
+| `unicode.docx` | `kreuzberg` | **1.000** | 7 ms | 0 MiB |
+| `unicode.docx` | `pandoc` | **1.000** | 167 ms | 124 MiB |
+| `unicode.docx` | `markitdown` | **0.955** | 322 ms | 0 MiB |
+| `unicode.docx` | `libreoffice` | 0.500 | **1,446 ms** | 263 MiB |
+
+It also fails outright on `data.xlsx` and `deck.pptx` in this container, exiting
+0 having written nothing — the failure mode its adapter was hardened against in
+repair R0. **LibreOffice's value here is format coverage, not quality**, and
+`docs/BACKENDS.md` should be read with this table in hand. It is kept because it
+converts formats nothing else in the core install will, and because a
+`.doc`/`.odt`/`.rtf` path has to exist somewhere.
+
+`pandoc` and `markitdown` tie on `report.docx` at 0.841 by different routes.
+`markitdown` gets there in-process for no measurable resident memory; `pandoc`
+pays 125 MiB for the process boundary and is twice as fast for it.
+
+### The process boundary costs about 250 MiB, consistently
+
+`added RSS` is the peak of this process **and its descendants** during the cell,
+minus a reading taken immediately before it. The in-process backends measure
+zero — they allocate in Python, which `tracemalloc` sees and the resident set
+mostly does not. Everything that spawns something lands in the same band:
+
+| Backend | What it spawns | Added RSS, across its cells |
+|---|---|---|
+| `pandoc` | `pandoc` | 28, 64, 108, 111, 123, 124, 125 MiB |
+| `libreoffice` | `soffice` | 263 MiB, both cells |
+| `repomix` | `npx` → `node` | 279 MiB |
+| `pymupdf4llm` | nothing — in-process C | 280, 282, 322 MiB |
+| everything else | nothing | 0 MiB |
+
+`pandoc`'s spread is the honest one to look at. Its seven cells range from 28 to
+125 MiB against inputs from a 1.5 kB Markdown file to a 79 kB one, which is what
+a sampled figure looks like when the work is short enough that the 5 ms sampler
+catches a different part of the process's growth each time. Read it as a band,
+not as seven measurements.
+
+`pymupdf4llm` is the interesting row: it is an in-process backend whose memory
+is invisible to `tracemalloc` (0.1 MiB reported) and plainly visible in the
+resident set. That is the entire reason both figures are published rather than
+one.
+
+### Repository packing
+
+| Backend | Bytes out | Fidelity | Scored | Median | Added RSS | Version |
+|---|---|---|---|---|---|---|
+| `gitingest` | 2,944 | 1.000 | 2 | 271 ms | 0 MiB | 0.3.1 |
+| `repomix` | 3,786 | 1.000 | 2 | 1,518 ms | 279 MiB | — |
+
+The fixture is nine tracked files (four Python, two Markdown, a
+`pyproject.toml`, a `.gitignore` and a binary blob) plus a `.gitignore`d
+`secrets.env` that neither emits. Two fidelity components apply to a packed
+repository — content recall and boilerplate rejection — and both engines score
+1.000 on both. **So this is a like-for-like cost comparison at equal measured
+fidelity**, and on it `gitingest` produces 22% less output in a sixth of the
+time (5.6×) with no subprocess at all.
+
+Read the "equal measured fidelity" carefully. Two of six components is all the
+corpus can score here; `repomix`'s extra 842 bytes are structure — a directory
+tree and per-file metadata — that nothing in the fidelity score rewards and that
+may still be worth paying for. This measurement cannot say whether they are.
+
+`repomix` reports no version because it runs through `npx`, which the adapter
+invokes once per conversion without a separate `--version` probe. The report
+prints `—` rather than guessing.
 
 ## Web extraction — `boilerplate.html`
 
@@ -338,9 +525,28 @@ runtimes installed.
 
 | Backend | Files packed | Output bytes | Wall time | Secret leaked |
 |---|---|---|---|---|
-| `gitingest` | 7 | 2,862 | 564 ms | no |
-| `repomix` | 8 | 3,978 | 1,082 ms | no |
+| `gitingest` | 7 | 2,944 | 564 ms | no |
+| `repomix` | 8 | 3,786 | 1,082 ms | no |
 | `code2prompt` | 7 | 2,246 | 103 ms | no |
+
+`gitingest`'s figure read **2,862** here until Phase 10's harness measured the
+same cell at 2,944. Both were right and the column heading was not: 2,862 is the
+*character* count and 2,944 is the UTF-8 byte count, and the file contains
+multibyte characters. Corrected to bytes, which is what the heading says and
+what every other figure on this page is. `repomix` is unaffected because its
+output is pure ASCII. A reminder that the unit is the easiest thing on a
+benchmark page to get wrong.
+
+The wall times predate Phase 10 and are single unrepeated runs; the matrix
+above supersedes them with medians of five.
+
+`repomix`'s figure was **3,978** until Phase 9 switched the adapter to
+`--style json` (defect D6). The 192-byte difference is entirely repomix's own
+boilerplate — its JSON style's summary omits two sentences its Markdown style
+includes — and every file, and every byte of every file, is identical.
+`docs/BACKENDS.md` has the reason for the switch, which was a mis-split rather
+than a tidiness: a repository containing a document that quotes `## File:`
+produced a phantom file in the breakdown.
 
 Asserted by `tests/integration/test_repo_backends.py`. The wall times are from
 this development sandbox on a warm cache and are indicative only — repomix's
@@ -414,7 +620,11 @@ clean bill of health.** It removed a title, a tag list and a draft flag, and no
 component tracks front matter. A fidelity score of 1.000 means *nothing ground
 truth asked about was lost*, which is not the same as *nothing was lost*.
 
-### On real converter output, the whitespace processors do almost nothing
+### `aggressive_whitespace`: the three cells said worthless, the fifty said 18%
+
+**Correcting a published claim.** Until Phase 9 this page said
+`aggressive_whitespace` was "close to worthless on this corpus", on the strength
+of three cells:
 
 | Fixture | Backend | Base | `aggressive_whitespace` | `dedupe_blocks` |
 |---|---|---|---|---|
@@ -422,18 +632,110 @@ truth asked about was lost*, which is not the same as *nothing was lost*.
 | `report.docx` | `markitdown` | 3,494 | 3,491 (−0.1%) | 3,205 (**−8.3%**) |
 | `boilerplate.html` | `markdownify_html` | 6,802 | 6,802 (+0.0%) | 6,802 (+0.0%) |
 
-This is reported because it is unflattering and because it is the useful
-finding. **`aggressive_whitespace` is close to worthless on this corpus**: the
-converters already emit tidy Markdown and `normalize_whitespace` runs before it,
-so there is almost no padding left to remove. It earns its place on
-hand-written or scraped input, not on output from the backends here — and the
-honest recommendation is to measure it on your own documents before enabling it.
+`docs/REVIEW_PHASES_0_8.md` recorded that as defect N5 and the owner's §3.6 said
+to find input where it earns its place or delete it. Measured across **all fifty
+backend-by-fixture cells the corpus has**, in bytes, on 2026-08-27:
+
+| Fixture | Backend | Base | `+aggressive_whitespace` | Change | Fidelity |
+|---|---|---|---|---|---|
+| `tables.pdf` | `markitdown` | 769 | 628 | **−18.3%** | 0.606 → **0.606** |
+| `article.html` | `kreuzberg` | 3,063 | 2,957 | −3.5% | 1.000 → **1.000** |
+| `article.html` | `pandoc` | 3,072 | 2,966 | −3.5% | 1.000 → **1.000** |
+| `structured.md` | `pandoc` | 1,609 | 1,571 | −2.4% | 0.977 → **0.977** |
+| `boilerplate.html` | `kreuzberg` | 6,120 | 6,014 | −1.7% | 0.750 → **0.750** |
+| `boilerplate.html` | `pandoc` | 7,346 | 7,240 | −1.4% | 0.750 → **0.750** |
+| `report.docx` | `pandoc` | 3,567 | 3,531 | −1.0% | 0.841 → **0.841** |
+
+It saves on **10 of 50 cells** and does nothing on the other 40. **Fidelity is
+identical in every one**, which is the half that makes the saving worth having.
+
+**Why `tables.pdf` through `markitdown` is 18%.** MarkItDown pads its table
+columns so they line up in a text editor:
+
+```text
+| Backend     | License  | Runtime | Tables Pages/sec |      |
+| markitdown  | MIT      | CPU     | weak             | 12.0 |
+```
+
+becomes
+
+```text
+| Backend | License | Runtime | Tables Pages/sec | |
+| markitdown | MIT | CPU | weak | 12.0 |
+```
+
+That alignment is pure presentation — no model reads a column edge — and on this
+document it is 18% of the bytes. The result is still a valid Markdown table,
+which is exactly why the fidelity score does not move.
+
+**The lesson is about the measurement, not the processor.** The earlier claim
+was not a lie; it was three cells generalised to a corpus, and the three happened
+to be ones where every backend already emits tidy Markdown. Reading them as "it
+is close to worthless" is the same mistake as reading a benchmark's best row as
+its typical one. `tests/unit/test_post_phase5.py::TestAggressiveWhitespaceEarnsItsPlace`
+now asserts the padding, the saving and the unchanged fidelity, so if MarkItDown
+stops padding its tables this number fails rather than quietly becoming a lie
+about a tool that has improved.
 
 `dedupe_blocks` finds real redundancy where real redundancy exists
 (`report.docx` repeats a "detail" paragraph per section) and correctly finds
 none where there is none.
 
-## The isolated backends (Phase 7)
+## Batch parallelism, and the workload that decides it (Phase 9, defect D2)
+
+Phase 8's batch queue ran one conversion at a time, because the adapters reach
+for process-global state that two threads cannot share. Phase 9 put that state
+behind one lock and — the part that mattered — narrowed the blocks first, so for
+most backends the lock covers an *import* rather than a conversion. See
+`docs/ARCHITECTURE.md`.
+
+**Whether the resulting thread pool helps depends entirely on the backend.**
+Measured on this container (4 cores, Python 3.11.15), 12 files, median of 5
+runs, 2026-08-27, `--tokenizer bytes`:
+
+| Batch | Serial | 4 workers | Speedup |
+|---|---|---|---|
+| In-process (pdfplumber, markitdown, trafilatura — auto-selected) | 1.13 s | 1.25 s | **0.91x** |
+| `pymupdf4llm` (a separate Python interpreter per conversion) | 14.59 s | 9.50 s | **1.54x** |
+| `pandoc` + `libreoffice` (real external programs) | 11.89 s | 3.82 s | **3.12x** |
+
+And the 20-file corpus batch the Phase 8 acceptance criterion used, N=7 runs per
+cell:
+
+| Workers | Median | Min | Max | Speedup |
+|---|---|---|---|---|
+| 1 | 2.07 s | 1.98 | 4.28 | 1.00x |
+| 2 | 2.46 s | 2.30 | 2.51 | 0.84x |
+| 4 | 2.40 s | 2.31 | 2.63 | 0.86x |
+| 8 | 2.61 s | 2.36 | 2.90 | 0.79x |
+
+**The honest headline is that parallelism made the published batch slower**, and
+the reason is the GIL rather than the lock. That 20-file batch is entirely
+in-process backends parsing documents in Python; every one of them holds the
+interpreter lock, so threads add contention and overlap nothing. A subprocess
+backend spends its time in `wait()` with the GIL released, and four really do
+run at once — which is where the 3.12x comes from.
+
+**The default is 4 workers anyway.** It costs 9% of 1.13 s on the cheapest
+workload and saves 8 seconds on the expensive one; nobody notices the first and
+everybody notices the second. `BatchRunner(..., workers=1)` restores the Phase 8
+behaviour exactly.
+
+**Two backends still serialise against themselves** whatever the worker count,
+because their global-state block covers the whole conversion rather than an
+import: `docling` (its deprecation filter fires while the document is being
+converted) and `gitingest` (pathspec warns while it builds ignore rules, loguru's
+registry must stay set while it logs, and `GITHUB_TOKEN` is read at the top of
+the call).
+
+**Limitations of these figures.** One machine, one core count, a warm page
+cache, and a corpus of small files — the largest is 81 KB. A batch of
+hundred-page PDFs would shift every row, and the in-process case would shift
+furthest, because per-conversion overhead stops dominating. The numbers say what
+happens on *this* workload on *this* box, which is the only thing a single
+machine can say.
+
+## The external backends (Phase 7)
 
 Measured 2026-08-27, `--tokenizer bytes`, fidelity beside every figure.
 
@@ -483,7 +785,7 @@ marker is gone. A benchmark sorted by size recommends it.
 This is why `tokenmill compare` is not sorted by size and why the GUI's
 comparison table has no sortable columns.
 
-### What the isolation costs
+### What the process boundary costs
 
 | Backend | `tables.pdf` | Why |
 |---|---|---|
@@ -677,20 +979,105 @@ strip boilerplate.** That is why the default post-processing chain is exactly
 one non-destructive step, why every format encoder is lossless, and why the
 cheapest option is never the recommended one on any page here.
 
-## What is not measured yet, and why
+## Limitations: read before quoting any of this
 
-- **Model tokens for anything.** See "Units" above. CI-only until the egress
-  policy changes.
-- **Wall time and peak memory.** Recorded ad hoc in `PROGRESS.md`; not
-  systematically, and the numbers in this sandbox would not transfer.
-- ~~**Fidelity as a score.**~~ **Done**, ahead of Phase 5 — see "Fidelity" above.
-  What remains for Phase 10 is the harness around it: wall time, peak memory and
-  committed raw result files.
-- ~~**Serialisation formats.**~~ **Done** — see "Serialisation formats" above.
-  What is still not measured is any of it **in model tokens**, which is the unit
-  the published comparisons use and the one this environment cannot produce.
-- **Accuracy.** Every trade-off named on this page is cited from
-  `RESEARCH.md`, not measured here. tokenmill measures cost and fidelity to
-  ground truth; whether a model answers better from CSV or from key-value is a
-  question this project does not have the apparatus to answer, and it should
-  not be read as though it did.
+Seven of them. Two mean a figure on this page would not reproduce on your
+machine; the rest bound what the numbers can be used to argue.
+
+### 1. Almost everything here is in bytes, not model tokens
+
+The environment tokenmill was developed in denies
+`openaipublic.blob.core.windows.net` and `huggingface.co` at an egress proxy —
+re-probed on 2026-08-27, still `403 Forbidden` on
+`/encodings/o200k_base.tiktoken`. **No model-token count can be produced there
+at all.** The whole-matrix data is therefore in UTF-8 bytes.
+
+This is not a small caveat. On this project's own tabular data the two units
+disagreed by 24 points and did not rank the five serialisation formats in the
+same order ("The byte proxy is optimistic", above). **A byte figure is a lower
+bound on cost, an upper bound on saving, and not a reliable ordering.**
+
+The fix is built and unfired: `.github/workflows/benchmark.yml` runs the same
+matrix in `o200k_base` on a GitHub runner and merges its rows in. The merge is
+keyed by (fixture, backend, **tokenizer**), so a byte figure cannot land under a
+token heading, and `python -m benchmarks.run` exits non-zero if a unit it was
+asked for produced no counts — so a failed vocabulary download cannot quietly
+commit a table of dashes. Until someone dispatches it, **the token half of this
+page does not exist.**
+
+### 2. The corpus is small, synthetic and generated
+
+Fourteen files and one two-file repository, all produced by
+`scripts/make_fixtures.py` and byte-for-byte reproducible (`--check` verifies
+24 files). That is what makes every number here re-runnable by a stranger, and
+it is also the ceiling on what they mean. `tables.pdf` is one 6×5 table.
+`twocolumn.pdf` is one synthetic two-column layout. A real corpus of scanned
+invoices or academic PDFs would rank these backends differently and this page
+cannot tell you how.
+
+**These are not "PDF backend" results. They are results on five specific PDFs.**
+
+### 3. One machine, one run, N=5
+
+Timings come from a single container: Linux 6.18.44, x86-64, 4 cores, Python
+3.11.15. Wall time does not transfer between machines and the memory figures
+transfer less. Five repeats is enough for the median to survive one slow run and
+not enough to characterise a distribution; the report publishes the spread
+(`slowest / fastest`) beside every median so you can see where it was noisy —
+`markitdown` on `article.html` spread 3.2×, `pdfplumber` on `simple.pdf` 3.5×.
+
+Nothing is parallelised during a run, deliberately: a wall-clock measurement
+taken while three other conversions compete for four cores measures the
+scheduler.
+
+### 4. The memory figures are lower bounds, and one of them is uncomparable
+
+`added RSS` samples `/proc` every 5 ms, so **a peak between two samples is
+missed**. `peak RSS` is published beside it for checkability and **must not be
+compared between rows**: a Python process's resident set does not shrink, so
+that column climbs through the run as each cell inherits the imports of every
+cell before it. `peak Python` is `tracemalloc`'s figure — exact for Python
+objects, blind to C arenas and to every child process. Neither is *the* memory
+used. On macOS and Windows there is no `/proc`, so `added RSS` is absent rather
+than zero and the report says `tracemalloc-only`.
+
+### 5. Fidelity is a structural score, not an accuracy score
+
+It measures heading recall, content recall, table integrity and structure
+retention against hand-labelled ground truth. It does **not** measure whether a
+model answers questions better from the output. `None` is not zero: a component
+with no ground truth for that fixture is excluded from the mean and the report
+prints how many components were scored, because a 1.000 from one component and
+a 1.000 from four are different claims.
+
+Every accuracy trade-off named elsewhere on this page is cited from
+`docs/research/RESEARCH.md`, not measured here.
+
+### 6. Nine backends have no rows, and it is not because they lost
+
+`code2prompt`, `crawl4ai`, `docling`, `marker`, `surya`, `mineru`, `olmocr`,
+`deepseek_ocr` and `dots_ocr` are absent from the matrix. Six of them need a GPU
+and model weights; the rest need an install this container does not have. The
+manifest lists them by name so their absence is legible. **Every OCR row in this
+project is missing, not zero** — which also means `scanned.pdf`, the one fixture
+that needs OCR, has no backend here that can do anything with it.
+
+### 7. `repomix` ran with `--allow-network`
+
+The flag was on, because `npx` has to fetch `repomix` before it can run it. The
+warm-up run absorbs the download and the five timed repeats should not include
+it, but this is the one timing on the page with a plausible mechanism for being
+wrong, and the manifest records that the flag was set. `repomix`'s row also
+carries no version for the reason given above.
+
+## What is still not measured
+
+- **Model tokens for the matrix.** Limitation 1. The workflow exists; nobody
+  has dispatched it.
+- **Any GPU backend.** Limitation 6. `tokenmill doctor` reports what a machine
+  is missing; no measurement of what those backends produce exists in this
+  repository, and none should be inferred from the fact that they are wired up.
+- **Accuracy.** Limitation 5.
+- **A real-world corpus.** Limitation 2. The generator is the guarantee of
+  reproducibility and the reason the corpus is not representative; those are the
+  same property and it cannot have both.
