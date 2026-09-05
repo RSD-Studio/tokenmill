@@ -1,6 +1,6 @@
 # `tokenfold` — Development Plan
 
-**Version:** 1.0 · **Date:** 2026-08-19 · **Audience:** Claude Code (implementer)
+**Version:** 1.0 · **Date:** 2026-08-19 · **Audience:** engineering team (implementer)
 
 This document defines the complete build sequence. It is paired with `RESEARCH.md`,
 which supplies the tool catalog, licenses, and evidence base. Where this plan names

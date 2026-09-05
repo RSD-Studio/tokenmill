@@ -3,14 +3,14 @@ name: CI
 on:
   push:
     # Phase 1 found this workflow had never run once: the filter named `main`,
-    # which did not exist, and every phase lived on a `claude/**` branch.
+    # which did not exist, and every phase lived on a feature branch.
     #
     # Phase 2 found the second half of the same bug. The default branch is now
     # `Main`, with a capital M, and GitHub matches these patterns
     # case-sensitively — so a push to the default branch still would not have
     # triggered anything. Both spellings are listed until the branch is renamed;
     # see PROGRESS.md, Open questions.
-    branches: ["main", "Main", "claude/**"]
+    branches: ["main", "Main", "**"]
   pull_request:
   workflow_dispatch:
   schedule:

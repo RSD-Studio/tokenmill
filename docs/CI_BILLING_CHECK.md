@@ -117,7 +117,7 @@ three sessions is unverified until CI runs.
 1. Go to <https://github.com/RSD-Studio/tokenmill/actions>
 2. Click **"CI"** in the left-hand sidebar.
 3. Click the **"Run workflow"** button on the right.
-4. Pick the branch — use `Main`, or `claude/phases-10-5-6-work-qxl2rh` to test
+4. Pick the branch — use `Main`, or `phases-10-5-6-work-qxl2rh` to test
    the newest work.
 5. Click the green **"Run workflow"** button to confirm.
 6. Wait about 30 seconds, then refresh the page.
