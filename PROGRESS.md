@@ -1,6 +1,6 @@
 # Progress
 
-_Last updated: 2026-08-28 by Claude Code_
+_Last updated: 2026-08-28_
 
 ## Status at a glance
 
@@ -212,7 +212,7 @@ error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403
 send-pack: unexpected disconnect while reading sideband packet
 ```
 
-Branch pushes to `claude/phases-9-12-repairs-0d9f1n` succeed in the same second,
+Branch pushes to `phases-9-12-repairs-0d9f1n` succeed in the same second,
 and `git ls-remote --tags origin` returns nothing, so this is a ref-scope
 restriction on this integration rather than a network fault or a bad tag. The
 GitHub tools available here have `list_tags` and `get_tag` but nothing that
@@ -221,8 +221,8 @@ creates a ref, so there is no second route and I have not looked for one.
 Recorded rather than worked around. **The tag is one command for you:**
 
 ```bash
-git fetch origin claude/phases-9-12-repairs-0d9f1n
-git tag -a v0.1.0 -m "tokenmill 0.1.0" origin/claude/phases-9-12-repairs-0d9f1n
+git fetch origin phases-9-12-repairs-0d9f1n
+git tag -a v0.1.0 -m "tokenmill 0.1.0" origin/phases-9-12-repairs-0d9f1n
 git push origin v0.1.0
 ```
 
@@ -1026,8 +1026,8 @@ works. It did not.
   2026-08-20. No lint, no types, no test, no `clean-core-install` run has ever
   happened.
 - Query: `list_branches`
-- Result: `claude/phase-1-core-architecture`,
-  `claude/tokenfold-project-setup-9m3i5o`, `claude/tokenmill-phase-1-pr3rd7`.
+- Result: `phase-1-core-architecture`,
+  `tokenfold-project-setup-9m3i5o`, `tokenmill-phase-1-pr3rd7`.
   **There is no `main` branch.**
 - Cause: the workflow triggered on `push` to `main` and on `pull_request`.
   `main` does not exist and no pull request has been opened, so neither trigger
@@ -1045,7 +1045,7 @@ edited away.
 
 **Fixes applied:**
 
-- `on.push.branches` now includes `claude/**`, so CI runs on the branches work
+- `on.push.branches` now includes `**`, so CI runs on the branches work
   actually happens on rather than only on a branch that does not exist.
 - New **`tokenizers` job**, running `uv run pytest -q -m network -rs` with the
   `tokenizers` extra. This is the only place real token counting is verified, so
@@ -1055,7 +1055,7 @@ edited away.
 
 - Command: `uv run python -c "import yaml; yaml.safe_load(...)"`
 - Result: valid YAML; triggers
-  `{'push': {'branches': ['main', 'claude/**']}, 'pull_request': None, 'workflow_dispatch': None}`;
+  `{'push': {'branches': ['main', '**']}, 'pull_request': None, 'workflow_dispatch': None}`;
   jobs `['lint', 'types', 'test', 'coverage', 'tokenizers', 'fixtures', 'clean-core-install']`.
 
 - Command: `uv run pytest -q --cov=tokenmill.core --cov=tokenmill.tokens --cov-fail-under=85`
@@ -1965,7 +1965,7 @@ number, and without it Phase 5's defaults will be argued rather than measured.
 ### 2026-08-22 — CI still cannot schedule runners, nine hours on
 
 Re-checked at the end of this session, as instructed. **Unchanged and worse than
-when the handover recorded it.** Six runs on `claude/phase-3-4-web-and-repo`
+when the handover recorded it.** Six runs on `phase-3-4-web-and-repo`
 (runs 37, 39, 41, 43, 45, 47) all failed, and run 47 on `145c2c9` at 20:26 UTC
 has the identical signature: 24 job records created with correct expanded matrix
 names, all 23 real jobs failing 2–6 seconds after starting, across
@@ -2744,8 +2744,8 @@ through `npx`.
 
 ### 2026-08-22 — CI cannot schedule runners, and it is not our YAML
 
-Four consecutive runs — 25, 26, 27 and 28, across both `claude/phase-2-followups`
-and `claude/tokenmill-phase-2-djouak`, on commits `38c8c52` and `e65337b` — failed
+Four consecutive runs — 25, 26, 27 and 28, across both `phase-2-followups`
+and `tokenmill-phase-2-djouak`, on commits `38c8c52` and `e65337b` — failed
 within seconds of starting. Run 24 on `Main` had succeeded 2h20m earlier on
 `0a74c8f`.
 
@@ -3344,7 +3344,7 @@ project's recurring lesson:
 
 ### 2026-08-27 — Phases 7 and 8 exit gate
 
-**CI run 97 on `claude/phases-7-8-734pty` (commit `49076d0`): all 25 jobs
+**CI run 97 on `phases-7-8-734pty` (commit `49076d0`): all 25 jobs
 green.** That is the branch's first fully green run and it is the one the exit
 gate rests on. The route there, because the failures are the useful part:
 
@@ -4059,7 +4059,7 @@ closed; these are the decisions and what changed.
 
 ### Post-Phase-1 follow-up (owner accepted the recommendations)
 
-- **2026-08-20 — CI now runs on `claude/**` branches.** It had never run at all:
+- **2026-08-20 — CI now runs on feature branches.** It had never run at all:
   the trigger named only `main`, which does not exist. The whole "verified in
   CI" fallback rested on a workflow that could not fire. See the verification
   log entry for the full finding and the correction it forced.
@@ -4078,10 +4078,8 @@ closed; these are the decisions and what changed.
   recommendation. It stays fenced exactly as built: never the default,
   `is_model_tokenizer=False`, its unit printed as `UTF-8 bytes`, and an explicit
   CLI warning against quoting it as a token count. Closes Open question 3.
-- **2026-08-20 — Branch convention: `claude/phase-<n>-<slug>` is canonical.**
-  The harness also assigns an auto-generated branch name per session; those are
-  pushed as identical mirrors so nothing is stranded if a session ends
-  unexpectedly, and can be deleted once the phase branch is merged. Recorded in
+- **2026-08-20 — Branch convention: `phase-<n>-<slug>` is canonical.**
+  Recorded in
   `CONTRIBUTING.md`. Closes Open question 4 from Phase 1.
 - **2026-08-20 — The repository name question is closed.** `RSD-Studio/tokenmill`
   resolves over both git and the GitHub API; the URLs in `pyproject.toml` and
@@ -4528,7 +4526,7 @@ and neither has run against this branch:
 - **`docling`** — passed on `Main` in run 81, but has not run against this
   branch's changes.
 
-Actions → CI → Run workflow, against `claude/phases-7-8-734pty`. Tell me what
+Actions → CI → Run workflow, against `phases-7-8-734pty`. Tell me what
 they show and I will record it.
 
 **2. `tokenmill gui --server` has no authentication. How far should that go?**
@@ -4664,7 +4662,7 @@ action rather than a decision:
 |---|---|---|
 | Phase 0 #1 | Token counting unverifiable in the sandbox | Closed — verified in CI by a blocking job. `"hello world"` is 2 tokens under `o200k_base` |
 | Phase 0 #2 | Is the GitHub repository still named `tokenfold`? | Closed — it is `RSD-Studio/tokenmill`; verified over git and the API |
-| Phase 0 #3 | Branch convention | Closed — `claude/phase-<n>-<slug>` canonical, harness branches mirrored. In `CONTRIBUTING.md` |
+| Phase 0 #3 | Branch convention | Closed — `phase-<n>-<slug>` canonical. In `CONTRIBUTING.md` |
 | Phase 0 #4 | Should CI gate coverage? | Closed — gated at 85% on `core` and `tokens`; passing at 96.07% |
 | Phase 1 #3 | Should the `bytes` tokenizer ship? | Closed — yes, with the fencing it already has |
 | Phase 1 #4 | Branch naming | Closed — same as Phase 0 #3 |

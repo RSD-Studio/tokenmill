@@ -244,17 +244,11 @@ chore(ci): add the clean-core-install job
 Keep commits small and coherent, and keep the tree clean — no drive-by
 reformatting mixed into a behaviour change.
 
-**One branch per phase**, named `claude/phase-<n>-<slug>` — for example
-`claude/phase-1-core-architecture`. That is the canonical branch for a phase and
+**One branch per phase**, named `phase-<n>-<slug>` — for example
+`phase-1-core-architecture`. That is the canonical branch for a phase and
 the one to review and merge.
 
-Sessions run by the Claude Code harness are also assigned an auto-generated
-branch name (`claude/tokenmill-phase-1-pr3rd7` and the like). Those are pushed
-as mirrors of the canonical branch so no work is stranded if a session ends
-unexpectedly; they carry identical commits and can be deleted once the phase
-branch is merged.
-
-CI runs on every push to `main` and to any `claude/**` branch, and on every pull
+CI runs on every push to `main` and to any feature branch, and on every pull
 request.
 
 Each completed phase records its final commit SHA in `PROGRESS.md`. The plan

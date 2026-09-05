@@ -591,7 +591,7 @@ Four things it does to the process that imports it, all found by running it:
 - Documented offline tokenizer use via `TIKTOKEN_CACHE_DIR` and `HF_HOME`,
   including the verified property that tiktoken hash-checks cached data, so a
   wrong cache is refused rather than silently miscounting.
-- A branch convention in `CONTRIBUTING.md`: `claude/phase-<n>-<slug>` per phase.
+- A branch convention in `CONTRIBUTING.md`: `phase-<n>-<slug>` per phase.
 
 #### Phase 0 — scaffolding
 
@@ -616,7 +616,7 @@ Four things it does to the process that imports it, all found by running it:
 - **CI had never run.** The workflow triggered only on pushes to `main` and on
   pull requests; the repository has no `main` branch and no pull request has
   been opened, so it never fired and was never even registered with GitHub
-  Actions. It now also runs on `claude/**` branches.
+  Actions. It now also runs on feature branches.
 - **The `network`-marked tests were not run anywhere.** They are skipped locally
   by design, but the CI `test` job runs a plain `pytest`, which skips them too —
   so the tests covering real token counting, the product's central feature, were

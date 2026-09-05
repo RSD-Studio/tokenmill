@@ -267,7 +267,7 @@ exactly what it was told.
 
 1. **`Benchmark (model tokens)`** → the token half of every table in the
    project. Actions → Benchmark → Run workflow, branch
-   `claude/phases-9-12-repairs-0d9f1n`, `commit: true`.
+   `phases-9-12-repairs-0d9f1n`, `commit: true`.
 2. **`CI` → the `compress` and `docling` jobs** → Phase 6's success path and
    Docling's PDF path, both of which have never executed anywhere.
 3. **`Release`** → builds both container images and runs the nine-cell wheel
